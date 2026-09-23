@@ -1,0 +1,14 @@
+# fidocad.conf — all keys are also CLI flags / env vars
+stdlib = 1
+# lib_dir = /home/dante/Drive/Resources/FidoLibs
+extensions = 1
+verbose = 0
+json = 0
+scale = 0
+margin = 12
+width = 1200
+height = 900
+grid = 0
+ppm = 0
+tex = 1
+bg = FFFFFF

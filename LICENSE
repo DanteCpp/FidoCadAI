@@ -1,0 +1,6 @@
+FidoCadAI is licensed under the GNU General Public License v3.0.
+
+The bundled files in share/lib/ are the English FidoCadJ/FidoCadJS standard
+libraries and are likewise GPL-3.0.
+
+See https://www.gnu.org/licenses/gpl-3.0.html
