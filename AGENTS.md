@@ -37,6 +37,7 @@ Spec: `~/Projects/FidoCadJS/FIDOSPECS.md`. Behaviour should match FidoCadJS
 - `src/cli.c` — `fcai` commands and config
 - `src/sys.c` — platform glue: executable path, share/ search
 - `share/lib/` — English standard libraries
+- `share/skills/fidocad/` — the agent skill for `fcai`; `make install` copies it into every agent harness (`scripts/install-skill.sh`)
 - `tests/test_core.c` — no framework, just `EXPECT`
 
 ## Checks after a change
@@ -57,5 +58,7 @@ fcai render file.fcd -o /tmp/d.png
 fcai lib                  # keys an MC may use
 fcai config               # every knob currently in effect
 ```
+
+When a CLI command, flag or parser rule changes, update `share/skills/fidocad/` to match — it is what other agents read.
 
 Every knob is a CLI flag, env var, or `key = value` config entry. Do not hard-code user paths; use `FIDO_LIB_DIR` / `--lib-dir`.

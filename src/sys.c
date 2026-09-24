@@ -92,6 +92,10 @@ int fc_exe_path(char *out, size_t cap) {
     return exe_from_argv0(out, cap);
 }
 
+int fc_stdin_is_tty(void) {
+    return isatty(STDIN_FILENO);
+}
+
 int fc_find_data(const char *sub, int (*try_dir)(void *ctx, const char *dir), void *ctx) {
     static const char *const k_prefixes[] = {"/usr/local/share/fidocad", "/opt/homebrew/share/fidocad",
                                              "/usr/share/fidocad", NULL};

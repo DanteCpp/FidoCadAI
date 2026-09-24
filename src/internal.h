@@ -95,6 +95,7 @@ int fc_exe_path(char *out, size_t cap);
 /* Calls try_dir(ctx, dir) on each candidate for share/<sub> (next to the binary, then
  * install prefixes, then ./share); stops and returns 1 when it returns non-zero. */
 int fc_find_data(const char *sub, int (*try_dir)(void *ctx, const char *dir), void *ctx);
+int fc_stdin_is_tty(void);
 
 int fc_ttf_init(void);
 int fc_ttf_ready(void);

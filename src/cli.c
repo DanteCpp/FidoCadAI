@@ -543,6 +543,13 @@ int main(int argc, char **argv) {
         return rc == FC_OK ? 0 : 1;
     }
 
+    /* an omitted file at a terminal would block on stdin; "-" still reads it explicitly */
+    if (!o.file && fc_stdin_is_tty()) {
+        fputs(k_help, stderr);
+        fc_lib_free(lib);
+        return 2;
+    }
+
     fc_drawing_init(&d);
     rc = fc_parse_file(&d, o.file ? o.file : "-");
     if (rc != FC_OK) {

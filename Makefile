@@ -19,7 +19,7 @@ OBJ := $(patsubst src/%.c,build/%.o,$(SRC))
 CLI_OBJ := build/cli.o
 TEST_OBJ := build/test_core.o
 
-.PHONY: all test clean install sanitize
+.PHONY: all test clean install install-skill sanitize
 
 all: build/fcai
 
@@ -57,11 +57,22 @@ sanitize:
 	$(MAKE) CFLAGS="-std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -O1 -g -fsanitize=address,undefined" \
 		LDFLAGS="-fsanitize=address,undefined" test
 
+# The agent skill ships in DATADIR and is copied into each agent harness found in the
+# user's home (scripts/install-skill.sh). Staged installs (DESTDIR) never touch $HOME.
 install: build/fcai
 	install -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(DATADIR)/lib $(DESTDIR)$(DATADIR)/fonts
+	install -d $(DESTDIR)$(DATADIR)/skills/fidocad/references
 	install -m 755 build/fcai $(DESTDIR)$(BINDIR)/fcai
 	install -m 644 share/lib/*.fcl $(DESTDIR)$(DATADIR)/lib/
 	install -m 644 share/fonts/*.ttf $(DESTDIR)$(DATADIR)/fonts/
+	install -m 644 share/skills/fidocad/SKILL.md $(DESTDIR)$(DATADIR)/skills/fidocad/
+	install -m 644 share/skills/fidocad/references/*.md $(DESTDIR)$(DATADIR)/skills/fidocad/references/
+ifeq ($(DESTDIR),)
+	sh scripts/install-skill.sh share/skills/fidocad
+endif
+
+install-skill:
+	sh scripts/install-skill.sh share/skills/fidocad
 
 clean:
 	rm -rf build

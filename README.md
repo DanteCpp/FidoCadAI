@@ -28,6 +28,8 @@ make sanitize   # ASan + UBSan
 make install PREFIX=/usr/local
 ```
 
+`make install` also installs the agent skill (`share/skills/fidocad/`): a copy goes to `$(PREFIX)/share/fidocad/skills/`, and — unless `DESTDIR` is set — a copy into each agent harness found in your home (Claude Code, Codex, Antigravity, Pi, Hermes, `~/.agents`). Run under `sudo`, the copies are made as the invoking user. `make install-skill` refreshes just the skill; `FIDO_SKILL_DIRS=dir1:dir2` overrides the targets.
+
 Builds on Linux and macOS (Apple clang or gcc, no extra packages); CI runs `make test` and `make sanitize` on both.
 
 Standard libraries ship in `share/lib/` (English FidoCadJ bundles) and fonts in `share/fonts/`. `fcai` finds them via `FIDO_STDLIB_DIR` / `FIDO_FONT_DIR`, next to the binary (it resolves its own path through `/proc/self/exe` on Linux, `_NSGetExecutablePath` on macOS, else `argv[0]` + `$PATH`), or under `/usr/local`, `/opt/homebrew` or `/usr` `share/fidocad/`. `fcai config` prints the resolved executable and whether TTF fonts were found.
@@ -93,6 +95,7 @@ See `include/fidocad.h` for the data model (`FcPrim`, layers, config).
 include/fidocad.h   public API
 src/                parser, emitter, libs, rasterizer, CLI
 share/lib/          bundled .fcl
+share/skills/        agent skill (installed by make install)
 tests/              fixtures + unit tests
 ```
 
