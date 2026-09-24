@@ -30,6 +30,54 @@ If `fcai` is missing, build and install it from the FidoCadAI repo:
 `make && sudo make install`. Always give `fcai` a file or pipe into it;
 with no file it reads stdin.
 
+## Working with the user
+
+Drawing is a conversation: the user watches the picture grow and edits it
+back. Keep them able to see what you are doing at every step.
+
+**Show before you build.** When asked to draw something, first create the
+`.fcd` file (`[FIDOCAD]` alone is enough), render it and open the picture for
+the user, and only then start adding parts:
+
+```bash
+fcai render amp.fcd -o amp.png && open amp.png     # Linux: xdg-open amp.png
+```
+
+Keep the PNG next to the `.fcd`, same name, so the user knows which is which.
+After every meaningful step (a block of parts placed, a group of wires routed,
+labels added) re-render and run `open` again so the window refreshes, and say
+in one line what changed ("placed R1, R2 and Q1; wiring the divider next").
+Do not batch the whole drawing into one silent write at the end.
+
+**Snapshot what you hand over.** Each time you stop and give the drawing back,
+save its canonical form as the reference for the next round:
+
+```bash
+fcai emit amp.fcd -o "${TMPDIR:-/tmp}/amp.fcai-last.fcd"
+```
+
+**When the user sends the drawing back modified, acknowledge the changes
+first.** Before doing anything else, diff it against the snapshot in
+canonical form (so formatting noise disappears) and tell the user what they
+changed, in circuit terms:
+
+```bash
+fcai emit amp.fcd | diff "${TMPDIR:-/tmp}/amp.fcai-last.fcd" -
+fcai context amp.fcd | head -20          # names/values to describe the diff
+```
+
+- Say it back concretely: "You moved Q1 from (100,45) to (110,45), changed R2
+  from 22k to 47k, and added a wire from (60,80) to (60,95)." Name parts by
+  their reference designator, not by line number.
+- Point out what the edit broke or left dangling (a wire end that no longer
+  meets a pin after the move, a new `UNRESOLVED` macro, a free `TY` that got
+  captured as a label) and ask before fixing it — the edit may be deliberate.
+- Treat their version as the new truth: never overwrite it from your own
+  earlier copy. Re-render, `open` it, then continue from there.
+- If there is no snapshot (a new session, or a file you did not write), say
+  so, summarize the drawing with `context` instead, and take that as the
+  baseline.
+
 ## Reading a drawing
 
 ```bash
