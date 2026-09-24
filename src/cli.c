@@ -315,6 +315,11 @@ static int cmd_config(const Opt *o, const FcLib *lib) {
     }
     fc_buf_printf(&b, "macros_loaded = %d\n", fc_lib_count(lib));
     {
+        char exe[4096];
+        fc_buf_printf(&b, "# exe = %s\n", fc_exe_path(exe, sizeof exe) ? exe : "(unknown)");
+    }
+    fc_buf_printf(&b, "# fonts = %s\n", fc_ttf_init() ? "ttf" : "stroke (no Liberation TTF found)");
+    {
         int rc = write_out(o, b.p ? b.p : "", b.n);
         fc_buf_free(&b);
         return rc;
@@ -398,6 +403,7 @@ int main(int argc, char **argv) {
 
     opt_init(&o);
     o.argv0 = argv[0];
+    fc_set_argv0(argv[0]);
 
     /* parse argv: flags anywhere, first non-flag is command if it matches, else file */
     for (i = 1; i < argc; i++) {

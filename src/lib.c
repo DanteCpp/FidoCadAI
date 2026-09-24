@@ -2,7 +2,6 @@
 
 #include <dirent.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 static void slot_insert(int *slot, int nslot, const char *key, int idx) {
     int j = (int)(fc_hash(key) & (uint32_t)(nslot - 1));
@@ -299,56 +298,13 @@ static int try_stdlib_dir(FcLib *lib, const char *dir) {
     return ok;
 }
 
-static void dirname_of(const char *path, char *out, size_t cap) {
-    const char *slash = strrchr(path, '/');
-    if (!slash) {
-        snprintf(out, cap, ".");
-        return;
-    }
-    if (slash == path) {
-        snprintf(out, cap, "/");
-        return;
-    }
-    {
-        size_t n = (size_t)(slash - path);
-        if (n >= cap) n = cap - 1;
-        memcpy(out, path, n);
-        out[n] = 0;
-    }
-}
+static int try_stdlib_cb(void *ctx, const char *dir) { return try_stdlib_dir((FcLib *)ctx, dir); }
 
 int fc_lib_load_stdlib(FcLib *lib, const char *argv0) {
-    char exe[1024];
-    char dir[1024];
-    char cand[1400];
-    const char *env;
-    ssize_t n;
-
-    env = getenv("FIDO_STDLIB_DIR");
+    const char *env = getenv("FIDO_STDLIB_DIR");
     if (env && try_stdlib_dir(lib, env)) return FC_OK;
-
-    n = readlink("/proc/self/exe", exe, sizeof exe - 1);
-    if (n > 0) {
-        exe[n] = 0;
-        dirname_of(exe, dir, sizeof dir);
-        snprintf(cand, sizeof cand, "%s/../share/fidocad/lib", dir);
-        if (try_stdlib_dir(lib, cand)) return FC_OK;
-        snprintf(cand, sizeof cand, "%s/../share/lib", dir);
-        if (try_stdlib_dir(lib, cand)) return FC_OK;
-        snprintf(cand, sizeof cand, "%s/share/lib", dir);
-        if (try_stdlib_dir(lib, cand)) return FC_OK;
-    }
-    if (argv0) {
-        dirname_of(argv0, dir, sizeof dir);
-        snprintf(cand, sizeof cand, "%s/share/lib", dir);
-        if (try_stdlib_dir(lib, cand)) return FC_OK;
-        snprintf(cand, sizeof cand, "%s/../share/lib", dir);
-        if (try_stdlib_dir(lib, cand)) return FC_OK;
-    }
-    if (try_stdlib_dir(lib, "/usr/local/share/fidocad/lib")) return FC_OK;
-    if (try_stdlib_dir(lib, "/usr/share/fidocad/lib")) return FC_OK;
-    if (try_stdlib_dir(lib, "share/lib")) return FC_OK;
-    return FC_ERR_IO;
+    fc_set_argv0(argv0);
+    return fc_find_data("lib", try_stdlib_cb, lib) ? FC_OK : FC_ERR_IO;
 }
 
 /* Appends a deep copy of src (strings and point arrays go into dst's arena). */

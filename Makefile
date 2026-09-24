@@ -1,6 +1,12 @@
 CC      ?= cc
 CFLAGS  ?= -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Wshadow -O2 -g
-CPPFLAGS += -Iinclude -Ivendor
+DEFS    ?=
+CPPFLAGS += -Iinclude -Ivendor $(DEFS)
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+# _POSIX_C_SOURCE hides Darwin extensions such as _NSGetExecutablePath's headers
+CPPFLAGS += -D_DARWIN_C_SOURCE
+endif
 LDFLAGS ?=
 LDLIBS  ?= -lm
 
@@ -8,7 +14,7 @@ PREFIX  ?= /usr/local
 BINDIR  ?= $(PREFIX)/bin
 DATADIR ?= $(PREFIX)/share/fidocad
 
-SRC := src/util.c src/parse.c src/emit.c src/lib.c src/tex.c src/font.c src/ttf.c src/vendor_impl.c src/render.c
+SRC := src/util.c src/sys.c src/parse.c src/emit.c src/lib.c src/tex.c src/font.c src/ttf.c src/vendor_impl.c src/render.c
 OBJ := $(patsubst src/%.c,build/%.o,$(SRC))
 CLI_OBJ := build/cli.o
 TEST_OBJ := build/test_core.o

@@ -540,6 +540,21 @@ static void test_edge_fixture(void) {
     fc_drawing_free(&d);
 }
 
+static void test_exe_path(void) {
+    char exe[4096], dir[4096];
+    size_t n;
+    EXPECT(fc_exe_path(exe, sizeof exe));
+    n = strlen(exe);
+    EXPECT(exe[0] == '/');
+    EXPECT(n > 10 && strcmp(exe + n - 10, "/test_core") == 0);
+    fc_dirname(exe, dir, sizeof dir);
+    EXPECT(strlen(dir) == n - 10);
+    fc_dirname("fcai", dir, sizeof dir);
+    EXPECT(strcmp(dir, ".") == 0);
+    fc_dirname("/fcai", dir, sizeof dir);
+    EXPECT(strcmp(dir, "/") == 0);
+}
+
 static void test_full_pattern_file(void) {
     FcDrawing d;
     char *rep = NULL;
@@ -551,7 +566,9 @@ static void test_full_pattern_file(void) {
     fc_drawing_free(&d);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    (void)argc;
+    fc_set_argv0(argv[0]);
     test_parse_line();
     test_te_upgrade();
     test_fcj_arrow();
@@ -579,6 +596,7 @@ int main(void) {
     test_render_huge();
     test_many_macros_and_json();
     test_edge_fixture();
+    test_exe_path();
     printf("%d passed, %d failed\n", g_ok, g_fail);
     return g_fail ? 1 : 0;
 }

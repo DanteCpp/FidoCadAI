@@ -4,7 +4,6 @@
 #include <math.h>
 #include <stdio.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 typedef struct {
     unsigned char *data;
@@ -67,47 +66,32 @@ static int try_dir(const char *dir) {
     return n;
 }
 
-static void dirname_of(const char *path, char *out, size_t cap) {
-    const char *slash = strrchr(path, '/');
-    if (!slash) {
-        snprintf(out, cap, ".");
-        return;
-    }
-    if (slash == path) {
-        snprintf(out, cap, "/");
-        return;
-    }
-    {
-        size_t n = (size_t)(slash - path);
-        if (n >= cap) n = cap - 1;
-        memcpy(out, path, n);
-        out[n] = 0;
-    }
+/* keep searching: faces missing in one directory may be in the next */
+static int try_dir_cb(void *ctx, const char *dir) {
+    (void)ctx;
+    try_dir(dir);
+    return 0;
 }
 
 int fc_ttf_init(void) {
-    char exe[1024], dir[1024], cand[1400];
     const char *env;
-    ssize_t n;
     int i;
     if (ttf_inited) return fc_ttf_ready();
     ttf_inited = 1;
     env = getenv("FIDO_FONT_DIR");
     if (env) try_dir(env);
-    n = readlink("/proc/self/exe", exe, sizeof exe - 1);
-    if (n > 0) {
-        exe[n] = 0;
-        dirname_of(exe, dir, sizeof dir);
-        snprintf(cand, sizeof cand, "%s/../share/fidocad/fonts", dir);
-        try_dir(cand);
-        snprintf(cand, sizeof cand, "%s/../share/fonts", dir);
-        try_dir(cand);
-        snprintf(cand, sizeof cand, "%s/share/fonts", dir);
+    fc_find_data("fonts", try_dir_cb, NULL);
+    /* system copies of Liberation (Linux packages, macOS font folders) */
+    try_dir("/usr/share/fonts/liberation");
+    try_dir("/usr/share/fonts/truetype/liberation");
+    try_dir("/usr/share/fonts/TTF");
+    env = getenv("HOME");
+    if (env) {
+        char cand[1400];
+        snprintf(cand, sizeof cand, "%s/Library/Fonts", env);
         try_dir(cand);
     }
-    try_dir("share/fonts");
-    try_dir("/usr/share/fonts/liberation");
-    try_dir("/usr/share/fonts/TTF");
+    try_dir("/Library/Fonts");
     /* Regular is required for a family to count as available */
     for (i = 0; i < 3; i++) {
         if (!faces[i * 4].loaded) {

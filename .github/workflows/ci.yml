@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test
+        run: make test
+
+      - name: Sanitize (ASan + UBSan)
+        run: make sanitize
+
+      - name: Installed binary finds its libraries and fonts via PATH
+        run: |
+          make clean
+          make install PREFIX="$RUNNER_TEMP/prefix"
+          cd "$RUNNER_TEMP"
+          PATH="$RUNNER_TEMP/prefix/bin:$PATH" fcai config | tee config.txt
+          grep -q '^# fonts = ttf' config.txt
+          ! grep -q '^macros_loaded = 0' config.txt
+
+      - name: Portable argv[0] fallback (no /proc, no _NSGetExecutablePath)
+        run: |
+          make clean
+          make install PREFIX="$RUNNER_TEMP/prefix2" DEFS=-DFC_EXE_FROM_ARGV0
+          cd "$RUNNER_TEMP"
+          PATH="$RUNNER_TEMP/prefix2/bin:$PATH" fcai config | tee config2.txt
+          grep -q '^# fonts = ttf' config2.txt
+          ! grep -q '^macros_loaded = 0' config2.txt

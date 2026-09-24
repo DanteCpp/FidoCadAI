@@ -28,7 +28,9 @@ make sanitize   # ASan + UBSan
 make install PREFIX=/usr/local
 ```
 
-Standard libraries ship in `share/lib/` (English FidoCadJ bundles). `fcai` finds them next to the binary, via `FIDO_STDLIB_DIR`, or under `$PREFIX/share/fidocad/lib`.
+Builds on Linux and macOS (Apple clang or gcc, no extra packages); CI runs `make test` and `make sanitize` on both.
+
+Standard libraries ship in `share/lib/` (English FidoCadJ bundles) and fonts in `share/fonts/`. `fcai` finds them via `FIDO_STDLIB_DIR` / `FIDO_FONT_DIR`, next to the binary (it resolves its own path through `/proc/self/exe` on Linux, `_NSGetExecutablePath` on macOS, else `argv[0]` + `$PATH`), or under `/usr/local`, `/opt/homebrew` or `/usr` `share/fidocad/`. `fcai config` prints the resolved executable and whether TTF fonts were found.
 
 ## CLI for agents
 

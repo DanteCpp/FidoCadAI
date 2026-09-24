@@ -13,7 +13,7 @@ Spec: `~/Projects/FidoCadJS/FIDOSPECS.md`. Behaviour should match FidoCadJS
 
 ## Rules
 
-- C11, POSIX, `-Wall -Wextra`. Link only `-lm`.
+- C11, POSIX, `-Wall -Wextra`. Link only `-lm`. Must build on Linux and macOS; OS-specific code lives only in `src/sys.c` (exe path, data-dir search).
 - No headers-in-headers beyond `fidocad.h`. Internals live in `src/internal.h`.
 - Arena for drawing/library strings and vertex arrays; `realloc` for growable tables.
 - Locale-independent numbers (`fc_parse_double` / `fc_fmt_num`). Never `atof`/`printf %f` for FCD.
@@ -35,6 +35,7 @@ Spec: `~/Projects/FidoCadJS/FIDOSPECS.md`. Behaviour should match FidoCadJS
 - `src/lib.c` — `.fcl` loader, hash lookup, `fc_expand`
 - `src/render.c` — software rasterizer, PNG/PPM
 - `src/cli.c` — `fcai` commands and config
+- `src/sys.c` — platform glue: executable path, share/ search
 - `share/lib/` — English standard libraries
 - `tests/test_core.c` — no framework, just `EXPECT`
 

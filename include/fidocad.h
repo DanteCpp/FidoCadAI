@@ -245,6 +245,8 @@ void fc_lib_free(FcLib *lib);
 int fc_lib_load_text(FcLib *lib, const char *text, size_t len, const char *prefix);
 int fc_lib_load_file(FcLib *lib, const char *path, const char *prefix);
 int fc_lib_load_dir(FcLib *lib, const char *dir);
+/* argv0 helps locate share/ when the OS cannot report the executable path */
+void fc_set_argv0(const char *argv0);
 int fc_lib_load_stdlib(FcLib *lib, const char *argv0);
 const FcMacro *fc_lib_find(const FcLib *lib, const char *key);
 int fc_lib_count(const FcLib *lib);
