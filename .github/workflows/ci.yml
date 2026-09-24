@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt6 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev
+
+      - name: Install Qt6 (macOS)
+        if: runner.os == 'macOS'
+        run: brew install qt pkg-config
+
+      - name: Test (core + Qt6 GUI)
+        run: |
+          pkg-config --exists Qt6Widgets
+          make test
+          test -x build/fcai-gui
+          test -x build/test_gui
+
+      - name: Sanitize (ASan + UBSan)
+        run: make sanitize
+
+      - name: Installed binary finds its libraries, fonts and skill via PATH
+        run: |
+          make clean
+          make install PREFIX="$RUNNER_TEMP/prefix"
+          cd "$RUNNER_TEMP"
+          PATH="$RUNNER_TEMP/prefix/bin:$PATH" fcai config | tee config.txt
+          grep -q '^# fonts = ttf' config.txt
+          ! grep -q '^macros_loaded = 0' config.txt
+          PATH="$RUNNER_TEMP/prefix/bin:$PATH" fcai skill path | grep -q SKILL.md
+
+      - name: Portable argv[0] fallback (no /proc, no _NSGetExecutablePath)
+        run: |
+          make clean
+          make install PREFIX="$RUNNER_TEMP/prefix2" DEFS=-DFC_EXE_FROM_ARGV0
+          cd "$RUNNER_TEMP"
+          PATH="$RUNNER_TEMP/prefix2/bin:$PATH" fcai config | tee config2.txt
+          grep -q '^# fonts = ttf' config2.txt
+          ! grep -q '^macros_loaded = 0' config2.txt
+
+      - name: System installer (scripts/install.sh) and skill registration
+        run: |
+          scripts/install.sh install --prefix "$RUNNER_TEMP/sysprefix" \
+            --no-path --no-hook --no-link -q
+          "$RUNNER_TEMP/sysprefix/bin/fcai" version
+          test -f "$RUNNER_TEMP/sysprefix/share/fidocad/skills/fidocad/SKILL.md"
+          test -f "$HOME/.agents/skills/fidocad/SKILL.md"
+          scripts/install.sh status --prefix "$RUNNER_TEMP/sysprefix" | tee status.txt
+          grep -q "prefix:   $RUNNER_TEMP/sysprefix" status.txt
+          scripts/install.sh uninstall --prefix "$RUNNER_TEMP/sysprefix" --no-path -q
+
+      - name: Staged (DESTDIR) install never touches \$HOME
+        run: |
+          make clean
+          stage="$RUNNER_TEMP/stage"
+          make install DESTDIR="$stage" PREFIX=/usr/local
+          test -x "$stage/usr/local/bin/fcai"
+          test -f "$stage/usr/local/share/fidocad/skills/fidocad/SKILL.md"

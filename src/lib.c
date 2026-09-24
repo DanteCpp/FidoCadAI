@@ -2,25 +2,28 @@
 
 #include <dirent.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
-static void lib_rehash(FcLib *lib) {
+static void slot_insert(int *slot, int nslot, const char *key, int idx) {
+    int j = (int)(fc_hash(key) & (uint32_t)(nslot - 1));
+    while (slot[j] >= 0) j = (j + 1) & (nslot - 1);
+    slot[j] = idx;
+}
+
+/* Grows the table so it stays at most half full. Returns 0 on success. */
+static int lib_reserve_slots(FcLib *lib, int n) {
     int i, nslot;
     int *slot;
-    nslot = 8;
-    while (nslot < lib->n * 2 + 8) nslot *= 2;
+    if (lib->nslot >= 2 * n + 8) return 0;
+    nslot = lib->nslot ? lib->nslot : 8;
+    while (nslot < 2 * n + 8) nslot *= 2;
     slot = (int *)malloc((size_t)nslot * sizeof(int));
-    if (!slot) return;
+    if (!slot) return -1;
     for (i = 0; i < nslot; i++) slot[i] = -1;
-    for (i = 0; i < lib->n; i++) {
-        uint32_t h = fc_hash(lib->macros[i].key);
-        int j = (int)(h & (uint32_t)(nslot - 1));
-        while (slot[j] >= 0) j = (j + 1) & (nslot - 1);
-        slot[j] = i;
-    }
+    for (i = 0; i < lib->n; i++) slot_insert(slot, nslot, lib->macros[i].key, i);
     free(lib->slot);
     lib->slot = slot;
     lib->nslot = nslot;
+    return 0;
 }
 
 static int lib_find_index(const FcLib *lib, const char *key) {
@@ -69,7 +72,11 @@ const FcMacro *fc_lib_at(const FcLib *lib, int i) {
 static FcMacro *lib_upsert(FcLib *lib, const char *key) {
     int idx = lib_find_index(lib, key);
     FcMacro *m;
+    const char *k;
     if (idx >= 0) return &lib->macros[idx];
+    if (lib_reserve_slots(lib, lib->n + 1) != 0) return NULL;
+    k = fc_arena_strdup(&lib->arena, key);
+    if (!k) return NULL;
     if (lib->n >= lib->cap) {
         int ncap = FC_GROW(lib->cap);
         FcMacro *nm = (FcMacro *)realloc(lib->macros, (size_t)ncap * sizeof(FcMacro));
@@ -77,13 +84,12 @@ static FcMacro *lib_upsert(FcLib *lib, const char *key) {
         lib->macros = nm;
         lib->cap = ncap;
     }
-    m = &lib->macros[lib->n++];
+    m = &lib->macros[lib->n];
     memset(m, 0, sizeof *m);
-    m->key = fc_arena_strdup(&lib->arena, key);
-    lib_rehash(lib);
-    /* pointer may have moved */
-    idx = lib_find_index(lib, key);
-    return idx >= 0 ? &lib->macros[idx] : NULL;
+    m->key = k;
+    slot_insert(lib->slot, lib->nslot, k, lib->n);
+    lib->n++;
+    return m;
 }
 
 static int is_blankish(const char *s) {
@@ -378,73 +384,34 @@ static int try_stdlib_dir(FcLib *lib, const char *dir) {
     return ok;
 }
 
-static void dirname_of(const char *path, char *out, size_t cap) {
-    const char *slash = strrchr(path, '/');
-    if (!slash) {
-        snprintf(out, cap, ".");
-        return;
-    }
-    if (slash == path) {
-        snprintf(out, cap, "/");
-        return;
-    }
-    {
-        size_t n = (size_t)(slash - path);
-        if (n >= cap) n = cap - 1;
-        memcpy(out, path, n);
-        out[n] = 0;
-    }
-}
+static int try_stdlib_cb(void *ctx, const char *dir) { return try_stdlib_dir((FcLib *)ctx, dir); }
 
 int fc_lib_load_stdlib(FcLib *lib, const char *argv0) {
-    char exe[1024];
-    char dir[1024];
-    char cand[1400];
-    const char *env;
-    ssize_t n;
-
-    env = getenv("FIDO_STDLIB_DIR");
+    const char *env = getenv("FIDO_STDLIB_DIR");
     if (env && try_stdlib_dir(lib, env)) return FC_OK;
-
-    n = readlink("/proc/self/exe", exe, sizeof exe - 1);
-    if (n > 0) {
-        exe[n] = 0;
-        dirname_of(exe, dir, sizeof dir);
-        snprintf(cand, sizeof cand, "%s/../share/fidocad/lib", dir);
-        if (try_stdlib_dir(lib, cand)) return FC_OK;
-        snprintf(cand, sizeof cand, "%s/../share/lib", dir);
-        if (try_stdlib_dir(lib, cand)) return FC_OK;
-        snprintf(cand, sizeof cand, "%s/share/lib", dir);
-        if (try_stdlib_dir(lib, cand)) return FC_OK;
-    }
-    if (argv0) {
-        dirname_of(argv0, dir, sizeof dir);
-        snprintf(cand, sizeof cand, "%s/share/lib", dir);
-        if (try_stdlib_dir(lib, cand)) return FC_OK;
-        snprintf(cand, sizeof cand, "%s/../share/lib", dir);
-        if (try_stdlib_dir(lib, cand)) return FC_OK;
-    }
-    if (try_stdlib_dir(lib, "/usr/local/share/fidocad/lib")) return FC_OK;
-    if (try_stdlib_dir(lib, "/usr/share/fidocad/lib")) return FC_OK;
-    if (try_stdlib_dir(lib, "share/lib")) return FC_OK;
-    return FC_ERR_IO;
+    fc_set_argv0(argv0);
+    return fc_find_data("lib", try_stdlib_cb, lib) ? FC_OK : FC_ERR_IO;
 }
 
-static void copy_prim(FcDrawing *dst, const FcPrim *src) {
+/* Appends a deep copy of src (strings and point arrays go into dst's arena). */
+static FcPrim *copy_prim(FcDrawing *dst, const FcPrim *src) {
     FcPrim *p = fc_drawing_push(dst);
-    int i;
-    if (!p) return;
+    if (!p) return NULL;
     *p = *src;
     if (src->kind == FC_POLY && src->u.poly.n > 0) {
         p->u.poly.pts =
             (FcPoint *)fc_arena_alloc(&dst->arena, (size_t)src->u.poly.n * sizeof(FcPoint));
         if (p->u.poly.pts)
             memcpy(p->u.poly.pts, src->u.poly.pts, (size_t)src->u.poly.n * sizeof(FcPoint));
+        else
+            p->u.poly.n = 0;
     } else if (src->kind == FC_CURVE && src->u.curve.n > 0) {
         p->u.curve.pts =
             (FcPoint *)fc_arena_alloc(&dst->arena, (size_t)src->u.curve.n * sizeof(FcPoint));
         if (p->u.curve.pts)
             memcpy(p->u.curve.pts, src->u.curve.pts, (size_t)src->u.curve.n * sizeof(FcPoint));
+        else
+            p->u.curve.n = 0;
     }
     if (src->kind == FC_MACRO && src->u.macro.key)
         p->u.macro.key = fc_arena_strdup(&dst->arena, src->u.macro.key);
@@ -460,84 +427,137 @@ static void copy_prim(FcDrawing *dst, const FcPrim *src) {
         if (src->value.font) p->value.font = fc_arena_strdup(&dst->arena, src->value.font);
         if (src->value.text) p->value.text = fc_arena_strdup(&dst->arena, src->value.text);
     }
-    (void)i;
+    return p;
 }
 
-static int expand_into(FcDrawing *dst, const FcDrawing *src, const FcLib *lib, int depth);
+enum { BODY_NONE = 0, BODY_BUILDING, BODY_DONE };
 
-static int expand_macro_body(FcDrawing *dst, const FcMacro *m, const FcLib *lib, int orient,
-                             int mirror, double ox, double oy, int depth) {
-    FcDrawing body, flat;
-    int i;
-    if (depth >= FC_MAX_MACRO_DEPTH) return FC_OK;
-    fc_drawing_init(&body);
-    fc_parse(&body, m->body, fc_strlen(m->body));
-    fc_drawing_init(&flat);
-    expand_into(&flat, &body, lib, depth + 1);
-    for (i = 0; i < flat.nprims; i++) {
-        FcPrim tmp = flat.prims[i];
-        /* deep-copy points into dst arena via copy_prim after xform */
-        if (tmp.kind == FC_POLY && tmp.u.poly.n) {
-            FcPoint *pts =
-                (FcPoint *)fc_arena_alloc(&dst->arena, (size_t)tmp.u.poly.n * sizeof(FcPoint));
-            if (pts) memcpy(pts, tmp.u.poly.pts, (size_t)tmp.u.poly.n * sizeof(FcPoint));
-            tmp.u.poly.pts = pts;
+/* Each macro body is parsed and flattened once per fc_expand call, then stamped out
+ * per instance. A body met again while it is still being built is a cycle. */
+typedef struct {
+    const FcLib *lib;
+    FcDrawing *top;     /* diagnostics go here */
+    FcDrawing *flat;    /* per macro index */
+    unsigned char *state;
+    unsigned char *warned; /* per macro index: diagnostic already given */
+    int line;           /* source line of the top-level MC being expanded */
+    long total;         /* primitives created so far, cached bodies included */
+    int over_budget;
+} ExpandCtx;
+
+static int expand_into(ExpandCtx *cx, FcDrawing *dst, const FcDrawing *src, int depth);
+
+static int budget_ok(ExpandCtx *cx) {
+    if (!cx->over_budget && cx->total < FC_MAX_EXPANDED_PRIMS) return 1;
+    if (!cx->over_budget)
+        fc_drawing_diag(cx->top, cx->line, FC_DIAG_ERR, "macro expansion stopped at %d primitives",
+                        FC_MAX_EXPANDED_PRIMS);
+    cx->over_budget = 1;
+    return 0;
+}
+
+static const FcDrawing *macro_body(ExpandCtx *cx, const FcMacro *m, int depth) {
+    int idx = (int)(m - cx->lib->macros);
+    FcDrawing body;
+    if (cx->state[idx] == BODY_DONE) return &cx->flat[idx];
+    if (cx->state[idx] == BODY_BUILDING || depth >= FC_MAX_MACRO_DEPTH) {
+        if (!cx->warned[idx]) {
+            if (cx->state[idx] == BODY_BUILDING)
+                fc_drawing_diag(cx->top, cx->line, FC_DIAG_WARN,
+                                "recursive macro '%s' not expanded", m->key);
+            else
+                fc_drawing_diag(cx->top, cx->line, FC_DIAG_WARN, "macro '%s' nested deeper than %d",
+                                m->key, FC_MAX_MACRO_DEPTH);
         }
-        if (tmp.kind == FC_CURVE && tmp.u.curve.n) {
-            FcPoint *pts =
-                (FcPoint *)fc_arena_alloc(&dst->arena, (size_t)tmp.u.curve.n * sizeof(FcPoint));
-            if (pts) memcpy(pts, tmp.u.curve.pts, (size_t)tmp.u.curve.n * sizeof(FcPoint));
-            tmp.u.curve.pts = pts;
-        }
-        fc_xform_prim(&tmp, orient, mirror, ox, oy);
-        copy_prim(dst, &tmp);
+        cx->warned[idx] = 1;
+        return NULL;
     }
+    cx->state[idx] = BODY_BUILDING;
+    fc_drawing_init(&body);
+    fc_drawing_init(&cx->flat[idx]);
+    fc_parse(&body, m->body, fc_strlen(m->body));
+    expand_into(cx, &cx->flat[idx], &body, depth + 1);
     fc_drawing_free(&body);
-    fc_drawing_free(&flat);
-    return FC_OK;
+    cx->state[idx] = BODY_DONE;
+    return &cx->flat[idx];
 }
 
-static int expand_into(FcDrawing *dst, const FcDrawing *src, const FcLib *lib, int depth) {
-    int i;
+/* copy_prim that counts against the expansion budget */
+static FcPrim *emit_prim(ExpandCtx *cx, FcDrawing *dst, const FcPrim *src) {
+    FcPrim *q = copy_prim(dst, src);
+    if (q) cx->total++;
+    return q;
+}
+
+static void push_label_text(ExpandCtx *cx, FcDrawing *dst, const FcLabel *l) {
+    FcPrim t;
+    fc_prim_init(&t);
+    t.kind = FC_TEXT;
+    t.layer = l->layer;
+    t.u.text = *l;
+    emit_prim(cx, dst, &t);
+}
+
+static int expand_into(ExpandCtx *cx, FcDrawing *dst, const FcDrawing *src, int depth) {
+    int i, j;
     for (i = 0; i < src->nprims; i++) {
         const FcPrim *p = &src->prims[i];
-        if (p->kind == FC_MACRO) {
-            const FcMacro *m = lib ? fc_lib_find(lib, p->u.macro.key) : NULL;
-            if (!m) {
-                FcPrim *q;
-                copy_prim(dst, p);
-                q = &dst->prims[dst->nprims - 1];
-                q->unresolved = 1;
-                continue;
-            }
-            expand_macro_body(dst, m, lib, p->u.macro.orient, p->u.macro.mirror, p->u.macro.p.x,
-                              p->u.macro.p.y, depth);
-            /* name/value of the instance live in parent space — emit as text */
-            if (p->has_name) {
-                FcPrim t;
-                fc_prim_init(&t);
-                t.kind = FC_TEXT;
-                t.layer = p->name.layer;
-                t.u.text = p->name;
-                copy_prim(dst, &t);
-            }
-            if (p->has_value) {
-                FcPrim t;
-                fc_prim_init(&t);
-                t.kind = FC_TEXT;
-                t.layer = p->value.layer;
-                t.u.text = p->value;
-                copy_prim(dst, &t);
-            }
-        } else {
-            copy_prim(dst, p);
+        const FcDrawing *body = NULL;
+        if (depth == 0) cx->line = p->src_line;
+        if (!budget_ok(cx)) return FC_ERR_ARG;
+        if (p->kind != FC_MACRO) {
+            if (!emit_prim(cx, dst, p)) return FC_ERR_NOMEM;
+            continue;
         }
+        {
+            const FcMacro *m = fc_lib_find(cx->lib, p->u.macro.key);
+            if (m) body = macro_body(cx, m, depth);
+        }
+        if (!body) {
+            FcPrim *q = emit_prim(cx, dst, p);
+            if (!q) return FC_ERR_NOMEM;
+            q->unresolved = 1;
+            continue;
+        }
+        for (j = 0; j < body->nprims; j++) {
+            FcPrim *q;
+            if (!budget_ok(cx)) return FC_ERR_ARG;
+            q = emit_prim(cx, dst, &body->prims[j]);
+            if (!q) return FC_ERR_NOMEM;
+            fc_xform_prim(q, p->u.macro.orient, p->u.macro.mirror, p->u.macro.p.x, p->u.macro.p.y);
+        }
+        /* name/value of the instance live in parent space — emit as text */
+        if (p->has_name) push_label_text(cx, dst, &p->name);
+        if (p->has_value) push_label_text(cx, dst, &p->value);
     }
-    dst->cfg = src->cfg;
-    memcpy(dst->layers, src->layers, sizeof dst->layers);
     return FC_OK;
 }
 
 int fc_expand(const FcDrawing *src, FcDrawing *dst, const FcLib *lib) {
-    return expand_into(dst, src, lib, 0);
+    ExpandCtx cx;
+    int i, n = fc_lib_count(lib), rc;
+    memset(&cx, 0, sizeof cx);
+    cx.lib = lib;
+    cx.top = dst;
+    if (n > 0) {
+        cx.flat = (FcDrawing *)calloc((size_t)n, sizeof *cx.flat);
+        cx.state = (unsigned char *)calloc((size_t)n, 1);
+        cx.warned = (unsigned char *)calloc((size_t)n, 1);
+        if (!cx.flat || !cx.state || !cx.warned) {
+            free(cx.flat);
+            free(cx.state);
+            free(cx.warned);
+            return FC_ERR_NOMEM;
+        }
+    }
+    rc = expand_into(&cx, dst, src, 0);
+    if (cx.over_budget) rc = FC_ERR_ARG;
+    dst->cfg = src->cfg;
+    memcpy(dst->layers, src->layers, sizeof dst->layers);
+    for (i = 0; i < n; i++)
+        if (cx.state[i] != BODY_NONE) fc_drawing_free(&cx.flat[i]);
+    free(cx.flat);
+    free(cx.state);
+    free(cx.warned);
+    return rc;
 }

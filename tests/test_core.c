@@ -1,4 +1,5 @@
 #include "fidocad.h"
+#include "../src/internal.h" /* fc_xform_* */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -363,6 +364,272 @@ static void test_tex(void) {
     fc_drawing_free(&dr);
 }
 
+static int count_kind(const FcDrawing *d, FcKind k) {
+    int i, n = 0;
+    for (i = 0; i < d->nprims; i++)
+        if (d->prims[i].kind == k) n++;
+    return n;
+}
+
+static void test_fmt_num_saturates(void) {
+    char b[64];
+    FcDrawing d;
+    char *out = NULL;
+    fc_fmt_num(b, sizeof b, 1e30);
+    EXPECT(strcmp(b, "1000000000000000") == 0);
+    fc_fmt_num(b, sizeof b, -0.0001);
+    EXPECT(strcmp(b, "0") == 0);
+    fc_drawing_init(&d);
+    fc_parse(&d, "PL 0 0 10 10 999999999999999999999999 0\nPA 5 5 -99999999999 3 0 0 0\n", 0);
+    EXPECT(d.prims[0].u.pcb_line.width == FC_MAX_COORD);
+    EXPECT(d.prims[1].u.pad.rx == -FC_MAX_COORD);
+    fc_emit(&d, &out, NULL);
+    EXPECT(out && strstr(out, "PL 0 0 10 10 1000000 0\n"));
+    free(out);
+    fc_drawing_free(&d);
+}
+
+static void test_label_pair_roundtrip(void) {
+    FcDrawing d;
+    char *rep = NULL;
+    fc_drawing_init(&d);
+    fc_parse(&d,
+             "LI 0 0 10 10 0\nFCJ 0 1\nTY 5 5 4 3 0 0 0 * name\nFCJ\n"
+             "TY 50 50 4 3 0 0 0 * standalone\n",
+             0);
+    EXPECT(d.nprims == 2);
+    EXPECT(d.prims[0].has_name && !d.prims[0].has_value);
+    EXPECT(fc_validate(&d, &rep) == FC_OK);
+    free(rep);
+    fc_drawing_free(&d);
+}
+
+static void test_validate_degenerate(void) {
+    FcDrawing d;
+    char *rep = NULL;
+    fc_drawing_init(&d);
+    fc_parse(&d, "LI 5 5 5 5 0\nLI 0 0 10 10 0\n", 0);
+    EXPECT(fc_validate(&d, &rep) == FC_OK);
+    EXPECT(rep && strstr(rep, "1 degenerate primitive dropped"));
+    free(rep);
+    fc_drawing_free(&d);
+}
+
+static void test_recursive_macro(void) {
+    FcLib *lib = fc_lib_new();
+    FcDrawing d, exp;
+    int i, nwarn = 0;
+    fc_lib_load_text(lib,
+                     "[FIDOLIB t]\n{c}\n[A a]\nMC 100 100 0 0 a\nMC 100 100 0 0 a\nMC 100 100 0 0 a\n"
+                     "MC 100 100 0 0 a\nLI 100 100 110 100 0\n[B b]\nMC 100 100 0 0 a\n",
+                     0, "");
+    fc_drawing_init(&d);
+    fc_drawing_init(&exp);
+    fc_parse(&d, "MC 10 10 0 0 b\n", 0);
+    EXPECT(fc_expand(&d, &exp, lib) == FC_OK);
+    for (i = 0; i < exp.ndiags; i++)
+        if (strstr(exp.diags[i].msg, "recursive macro 'a'")) nwarn++;
+    EXPECT(nwarn == 1);
+    EXPECT(count_kind(&exp, FC_LINE) == 1);
+    fc_drawing_free(&d);
+    fc_drawing_free(&exp);
+    fc_lib_free(lib);
+}
+
+static void test_expand_budget(void) {
+    /* 8 levels of 10x fan-out would be 10^8 lines */
+    char text[4096];
+    size_t n = 0;
+    int lvl, k;
+    FcLib *lib = fc_lib_new();
+    FcDrawing d, exp;
+    n += (size_t)snprintf(text + n, sizeof text - n, "[FIDOLIB t]\n{c}\n[M0 m0]\nLI 100 100 101 100 0\n");
+    for (lvl = 1; lvl <= 8; lvl++) {
+        n += (size_t)snprintf(text + n, sizeof text - n, "[M%d m]\n", lvl);
+        for (k = 0; k < 10; k++)
+            n += (size_t)snprintf(text + n, sizeof text - n, "MC 100 100 0 0 m%d\n", lvl - 1);
+    }
+    fc_lib_load_text(lib, text, n, "");
+    fc_drawing_init(&d);
+    fc_drawing_init(&exp);
+    fc_parse(&d, "MC 10 10 0 0 m8\n", 0);
+    EXPECT(fc_expand(&d, &exp, lib) != FC_OK);
+    EXPECT(exp.nprims <= FC_MAX_EXPANDED_PRIMS);
+    EXPECT(exp.ndiags == 1 && exp.diags[0].level == FC_DIAG_ERR);
+    fc_drawing_free(&d);
+    fc_drawing_free(&exp);
+    fc_lib_free(lib);
+}
+
+static void test_nested_mirror(void) {
+    FcLib *lib = fc_lib_new();
+    FcDrawing d, exp;
+    int i;
+    fc_lib_load_text(lib,
+                     "[FIDOLIB t]\n{c}\n[IN in]\nTY 100 100 4 3 0 0 0 * T\n"
+                     "LI 100 100 110 100 0\n[OUT out]\nMC 100 100 0 1 in\n",
+                     0, "");
+    fc_drawing_init(&d);
+    fc_drawing_init(&exp);
+    /* mirrored twice: text reads normally again */
+    fc_parse(&d, "MC 50 50 0 1 out\n", 0);
+    fc_expand(&d, &exp, lib);
+    for (i = 0; i < exp.nprims; i++)
+        if (exp.prims[i].kind == FC_TEXT) {
+            EXPECT((exp.prims[i].u.text.style & FC_STYLE_MIRROR) == 0);
+            EXPECT(exp.prims[i].u.text.rotation == 0);
+        }
+    fc_drawing_free(&exp);
+    fc_drawing_free(&d);
+    /* mirrored + orient 1: the text runs the same way as the line (+y, i.e. -90 deg) */
+    fc_drawing_init(&d);
+    fc_drawing_init(&exp);
+    fc_parse(&d, "MC 50 50 1 1 in\n", 0);
+    fc_expand(&d, &exp, lib);
+    for (i = 0; i < exp.nprims; i++) {
+        if (exp.prims[i].kind == FC_TEXT) {
+            EXPECT(exp.prims[i].u.text.style & FC_STYLE_MIRROR);
+            EXPECT(exp.prims[i].u.text.rotation == 270);
+        }
+        if (exp.prims[i].kind == FC_LINE) EXPECT(exp.prims[i].u.line.b.y == 60);
+    }
+    fc_drawing_free(&exp);
+    fc_drawing_free(&d);
+    fc_lib_free(lib);
+}
+
+static void test_macro_xform_compose(void) {
+    /* (orient 1, mirror 1) placed under (orient 1, mirror 0) must map points the same
+     * way as transforming step by step */
+    FcPrim p;
+    FcPoint q = {110, 100}, ref = {110, 100};
+    memset(&p, 0, sizeof p);
+    p.kind = FC_MACRO;
+    p.u.macro.p.x = 100;
+    p.u.macro.p.y = 100;
+    p.u.macro.orient = 1;
+    p.u.macro.mirror = 1;
+    fc_xform_prim(&p, 1, 0, 100, 100);
+    fc_xform_point(&ref, 1, 1, 100, 100);
+    fc_xform_point(&ref, 1, 0, 100, 100);
+    fc_xform_point(&q, p.u.macro.orient, p.u.macro.mirror, 100, 100);
+    EXPECT(q.x == ref.x && q.y == ref.y);
+}
+
+static int read_ppm(const char *path, int *w, int *h, unsigned char px[3]) {
+    FILE *fp = fopen(path, "rb");
+    int ok;
+    if (!fp) return 0;
+    ok = fscanf(fp, "P6 %d %d 255", w, h) == 2 && fgetc(fp) != EOF && fread(px, 1, 3, fp) == 3;
+    fclose(fp);
+    return ok;
+}
+
+static void test_render_opts_zero(void) {
+    FcDrawing d;
+    FcRenderOpts o;
+    int w = 0, h = 0;
+    unsigned char px[3] = {1, 1, 1};
+    fc_drawing_init(&d);
+    fc_parse(&d, "LI 0 0 10 10 0\n", 0);
+    fc_render_opts_init(&o);
+    o.scale = 2;
+    o.margin = 0;
+    o.bg = 0x000000;
+    o.ppm = 1;
+    EXPECT(fc_render_file(&d, NULL, &o, "build/test_opts.ppm") == FC_OK);
+    EXPECT(read_ppm("build/test_opts.ppm", &w, &h, px));
+    EXPECT(w == 20 && h == 20);
+    EXPECT(px[0] == 0 && px[1] == 0 && px[2] == 0);
+    fc_drawing_free(&d);
+}
+
+static void test_render_huge(void) {
+    FcDrawing d;
+    FcRenderOpts o;
+    int w = 0, h = 0;
+    unsigned char px[3];
+    fc_drawing_init(&d);
+    fc_parse(&d,
+             "EV 0 0 1000000 1000000 0\nPA 10 10 99999999999999 5 0 0 0\n"
+             "PL 0 0 10 10 999999999 0\nTY 0 0 99999999 3 0 0 0 * X\n"
+             "BE 10 150 30 130 70 170 90 150 0\nFCJ 3 1 3 1 0 0\n"
+             "CV 0 10 20 30 40 50 20 0\nFCJ 3 0 3 1 0 0\nMC 60 60 0 0 missing\n",
+             0);
+    fc_render_opts_init(&o);
+    o.ppm = 1;
+    o.grid = 1;
+    EXPECT(fc_render_file(&d, NULL, &o, "build/test_huge.ppm") == FC_OK);
+    EXPECT(read_ppm("build/test_huge.ppm", &w, &h, px));
+    /* auto scale fits the requested box instead of cropping at the raster limit */
+    EXPECT(w <= 1200 && h <= 900);
+    fc_drawing_free(&d);
+}
+
+static void test_many_macros_and_json(void) {
+    FcLib *lib = fc_lib_new();
+    FcDrawing d;
+    char *js;
+    char *text = (char *)malloc(5000 * 40);
+    size_t n = 0;
+    int i, found = 0;
+    n += (size_t)sprintf(text, "[FIDOLIB t]\n{c}\n");
+    for (i = 0; i < 5000; i++) n += (size_t)sprintf(text + n, "[K%d k]\nLI 0 0 1 1 0\n", i);
+    fc_lib_load_text(lib, text, n, "p");
+    free(text);
+    EXPECT(fc_lib_count(lib) == 5000);
+    for (i = 0; i < 5000; i++) {
+        char key[32];
+        snprintf(key, sizeof key, "p.k%d", i);
+        if (fc_lib_find(lib, key)) found++;
+    }
+    EXPECT(found == 5000);
+    fc_lib_free(lib);
+    fc_drawing_init(&d);
+    fc_parse(&d, "LI 0 0 1 1 0\nMC 50 50 0 0 nope\n", 0);
+    js = fc_to_json(&d, NULL);
+    EXPECT(js && strstr(js, "\"alpha\":1,"));
+    EXPECT(js && strstr(js, "\"alpha\":0.95,"));
+    /* unresolved macros are drawn as a placeholder box, so the bbox covers it */
+    EXPECT(js && strstr(js, "\"max_x\":"));
+    free(js);
+    {
+        FcRect bb;
+        EXPECT(fc_bounds(&d, NULL, &bb) && bb.max_y >= 54);
+    }
+    fc_drawing_free(&d);
+}
+
+static void test_edge_fixture(void) {
+    FcDrawing d;
+    char *rep = NULL;
+    fc_drawing_init(&d);
+    EXPECT(fc_parse_file(&d, "tests/fixtures/edge-cases.fcd") == FC_OK);
+    /* FidoCadJS ParserActions only attaches name/value TY lines to SA/PL/PA/MC
+     * when an explicit FCJ marker introduced them; the trailing TY after MC is
+     * a standalone text primitive. */
+    EXPECT(d.nprims == 8);
+    EXPECT(count_kind(&d, FC_TEXT) == 2);
+    EXPECT(fc_validate(&d, &rep) == FC_OK);
+    free(rep);
+    fc_drawing_free(&d);
+}
+
+static void test_exe_path(void) {
+    char exe[4096], dir[4096];
+    size_t n;
+    EXPECT(fc_exe_path(exe, sizeof exe));
+    n = strlen(exe);
+    EXPECT(exe[0] == '/');
+    EXPECT(n > 10 && strcmp(exe + n - 10, "/test_core") == 0);
+    fc_dirname(exe, dir, sizeof dir);
+    EXPECT(strlen(dir) == n - 10);
+    fc_dirname("fcai", dir, sizeof dir);
+    EXPECT(strcmp(dir, ".") == 0);
+    fc_dirname("/fcai", dir, sizeof dir);
+    EXPECT(strcmp(dir, "/") == 0);
+}
+
 static void test_full_pattern_file(void) {
     FcDrawing d;
     char *rep = NULL;
@@ -374,7 +641,9 @@ static void test_full_pattern_file(void) {
     fc_drawing_free(&d);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    (void)argc;
+    fc_set_argv0(argv[0]);
     test_parse_line();
     test_te_upgrade();
     test_fcj_arrow();
@@ -393,6 +662,18 @@ int main(void) {
     test_json_and_describe();
     test_tex();
     test_full_pattern_file();
+    test_fmt_num_saturates();
+    test_label_pair_roundtrip();
+    test_validate_degenerate();
+    test_recursive_macro();
+    test_expand_budget();
+    test_nested_mirror();
+    test_macro_xform_compose();
+    test_render_opts_zero();
+    test_render_huge();
+    test_many_macros_and_json();
+    test_edge_fixture();
+    test_exe_path();
     printf("%d passed, %d failed\n", g_ok, g_fail);
     return g_fail ? 1 : 0;
 }

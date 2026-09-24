@@ -250,7 +250,10 @@ void fc_fmt_num(char *buf, size_t cap, double v) {
     }
     int neg = v < 0;
     if (neg) v = -v;
+    /* keep v * 1000 inside long long; parsed values are clamped far below this */
+    if (v > FC_MAX_NUM) v = FC_MAX_NUM;
     long long milli = (long long)(v * 1000.0 + 0.5);
+    if (milli == 0) neg = 0;
     long long ip = milli / 1000;
     int frac = (int)(milli % 1000);
     char tmp[64];
@@ -650,9 +653,18 @@ void fc_xform_point(FcPoint *pt, int orient, int mirror, double ox, double oy) {
 }
 
 void fc_xform_label(FcLabel *l, int orient, int mirror, double ox, double oy) {
+    /* The renderer draws text as R(rotation) * M^style_mirror, while points map as
+     * M^mirror * R(90 * orient). Composing them: a mirror flips the text's mirror bit
+     * and negates its total rotation (M * R(t) == R(-t) * M). */
+    int rot = l->rotation + (orient & 3) * 90;
     fc_xform_point(&l->p, orient, mirror, ox, oy);
-    l->rotation += orient * 90;
-    if (mirror) l->style |= FC_STYLE_MIRROR;
+    if (mirror) {
+        rot = -rot;
+        l->style ^= FC_STYLE_MIRROR;
+    }
+    rot %= 360;
+    if (rot < 0) rot += 360;
+    l->rotation = rot;
 }
 
 void fc_xform_prim(FcPrim *p, int orient, int mirror, double ox, double oy) {
@@ -688,8 +700,13 @@ void fc_xform_prim(FcPrim *p, int orient, int mirror, double ox, double oy) {
         fc_xform_point(&p->u.pad.p, orient, mirror, ox, oy);
         break;
     case FC_MACRO:
+        /* outer M^mo R^oo applied to inner M^mi R^oi: if the inner one is mirrored,
+         * R^oo * M == M * R^-oo, so the rotations subtract */
         fc_xform_point(&p->u.macro.p, orient, mirror, ox, oy);
-        p->u.macro.orient = (p->u.macro.orient + orient) & 3;
+        if (p->u.macro.mirror)
+            p->u.macro.orient = (p->u.macro.orient - orient) & 3;
+        else
+            p->u.macro.orient = (p->u.macro.orient + orient) & 3;
         if (mirror) p->u.macro.mirror = !p->u.macro.mirror;
         break;
     case FC_TEXT:

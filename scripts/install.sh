@@ -11,15 +11,19 @@
 #
 # install/update build the tree, stage a `make install` into the prefix, create
 # the user library directory (~/Documents/FidoLib) and deliver
-# share/skills/fidocad through the Omarchy default-agents channel: one
-# canonical copy (the install prefix) with a symlink at
-# /usr/share/omarchy/default/agents/skills/fidocad and symlinks from every
-# coding agent's skills directory, exactly how Omarchy ships its own skills.
-# That keeps a single skill on disk and pi/like agents deduplicate it.
+# share/skills/fidocad to the local coding agents: when the Omarchy
+# default-agents channel is present (Linux) it gets one canonical copy with a
+# symlink at /usr/share/omarchy/default/agents/skills/fidocad, otherwise every
+# agent's skills directory gets a symlink to the installed copy. That keeps a
+# single skill on disk and pi/like agents deduplicate it.
 #
-# The first install may need sudo for /opt, /usr/local/bin and the Omarchy
-# channel; the prefix is then owned by the invoking user, so later updates
-# run without sudo.
+# Works on Linux and macOS: system PATH files are /etc/profile.d +
+# environment.d + fish on Linux and /etc/paths.d on macOS, and the Omarchy
+# channel is used only where it exists.
+#
+# The first install may need sudo for /opt, /usr/local/bin and the system PATH
+# files; the prefix is then owned by the invoking user, so later updates run
+# without sudo.
 #
 # Options:
 #   --prefix DIR     install prefix (default: $FIDO_PREFIX or /opt/FidoCadAI)
@@ -44,9 +48,11 @@ DEFAULT_PREFIX="/opt/FidoCadAI"
 LINK_DIR="/usr/local/bin"
 MARKER="install-info"
 HOOK_MARK="# FidoCadAI automatic update"
+UNAME_S=$(uname -s 2>/dev/null || echo unknown)
 PROFILE_FILE="/etc/profile.d/fidocadai.sh"
 ENV_FILE="/etc/environment.d/99-fidocadai.conf"
 FISH_FILE="/etc/fish/conf.d/fidocadai.fish"
+PATHS_FILE="/etc/paths.d/fidocadai"
 
 CMD="install"
 HOOK_ACTION="enable"
@@ -311,6 +317,7 @@ link_bins() {
             warn "$dst exists and is not a symlink; leaving it (use --force)"
             continue
         fi
+        [ -d "$LINK_DIR" ] || run_root mkdir -p "$LINK_DIR"
         if [ -w "$LINK_DIR" ]; then
             ln -sfn "$PREFIX/bin/$b" "$dst"
         else
@@ -345,24 +352,32 @@ write_etc_file() {
     chmod 644 "$1" 2>/dev/null || true
 }
 
-# Make `fcai` (and `fcai-gui`) callable everywhere: POSIX login shells via
-# /etc/profile.d, systemd user sessions (graphical agents) via environment.d,
-# and fish. The /usr/local/bin symlinks cover the common case; these guarantee
-# it even where that directory is missing from PATH.
+# Make `fcai` (and `fcai-gui`) callable everywhere. Linux: POSIX login shells
+# via /etc/profile.d, systemd user sessions (graphical agents) via
+# environment.d, fish via conf.d. macOS: /etc/paths.d, read by path_helper in
+# login shells. The /usr/local/bin symlinks cover the common case; these
+# guarantee it even where that directory is missing from PATH.
 ensure_path() {
     [ "$WITH_PATH" -eq 1 ] || return 0
     bindir="$PREFIX/bin"
     tmp=$(mktemp)
 
-    {
-        printf '# FidoCadAI: put fcai/fcai-gui on PATH (managed by scripts/install.sh).\n'
-        printf 'case ":$PATH:" in\n'
-        printf '    *:%s:*) ;;\n' "$bindir"
-        printf '    *) export PATH="%s:$PATH" ;;\n' "$bindir"
-        printf 'esac\n'
-    } > "$tmp"
-    if ! write_etc_file "$PROFILE_FILE" "$tmp"; then
-        warn "cannot write $PROFILE_FILE; fcai may not be on PATH"
+    if [ "$UNAME_S" = "Darwin" ]; then
+        printf '%s\n' "$bindir" > "$tmp"
+        if ! write_etc_file "$PATHS_FILE" "$tmp"; then
+            warn "cannot write $PATHS_FILE; fcai may not be on PATH"
+        fi
+    elif [ -d /etc/profile.d ]; then
+        {
+            printf '# FidoCadAI: put fcai/fcai-gui on PATH (managed by scripts/install.sh).\n'
+            printf 'case ":$PATH:" in\n'
+            printf '    *:%s:*) ;;\n' "$bindir"
+            printf '    *) export PATH="%s:$PATH" ;;\n' "$bindir"
+            printf 'esac\n'
+        } > "$tmp"
+        if ! write_etc_file "$PROFILE_FILE" "$tmp"; then
+            warn "cannot write $PROFILE_FILE; fcai may not be on PATH"
+        fi
     fi
 
     if [ -d /usr/lib/environment.d ] || [ -d /etc/environment.d ]; then
@@ -388,7 +403,7 @@ ensure_path() {
     fi
 
     rm -f "$tmp"
-    log "PATH: $bindir (profile.d, environment.d, and /usr/local/bin symlinks)"
+    log "PATH: $bindir (system PATH files and /usr/local/bin symlinks)"
 }
 
 remove_path_files() {
@@ -402,6 +417,14 @@ remove_path_files() {
             log "removed $f"
         fi
     done
+    if [ -f "$PATHS_FILE" ] && grep -qxF "$PREFIX/bin" "$PATHS_FILE" 2>/dev/null; then
+        if [ -w "$PATHS_FILE" ]; then
+            rm -f "$PATHS_FILE"
+        else
+            run_root rm -f "$PATHS_FILE" || true
+        fi
+        log "removed $PATHS_FILE"
+    fi
 }
 
 # ---- user library directory --------------------------------------------
@@ -659,6 +682,21 @@ do_uninstall() {
     log "kept $(user_lib_dir) (your libraries)"
 }
 
+# readlink -f is GNU-only; resolve a symlink chain by hand (macOS has no -f).
+real_path() {
+    p=$1
+    i=0
+    while [ -L "$p" ] && [ "$i" -lt 40 ]; do
+        t=$(readlink "$p") || break
+        case $t in
+            /*) p=$t ;;
+            *) p=$(dirname "$p")/$t ;;
+        esac
+        i=$((i + 1))
+    done
+    printf '%s\n' "$p"
+}
+
 do_status() {
     printf '%s\n' "prefix:   $PREFIX"
     if [ -f "$PREFIX/share/fidocad/$MARKER" ]; then
@@ -669,7 +707,7 @@ do_status() {
     for b in fcai fcai-gui; do
         p=$(command -v "$b" 2>/dev/null || true)
         if [ -n "$p" ]; then
-            printf '%-9s %s -> %s\n' "$b:" "$p" "$(readlink -f "$p" 2>/dev/null || echo "$p")"
+            printf '%-9s %s -> %s\n' "$b:" "$p" "$(real_path "$p")"
         else
             printf '%-9s not on PATH\n' "$b:"
         fi
@@ -681,8 +719,8 @@ do_status() {
         printf 'path:     fcai callable (%s)\n' "$(command -v fcai)"
     elif path_has "$PREFIX/bin"; then
         printf 'path:     %s on PATH\n' "$PREFIX/bin"
-    elif [ -f "$PROFILE_FILE" ] || [ -f "$ENV_FILE" ] || [ -f "$FISH_FILE" ]; then
-        printf 'path:     drop-ins present (%s; new shells/sessions pick it up)\n' "$PROFILE_FILE"
+    elif [ -f "$PROFILE_FILE" ] || [ -f "$ENV_FILE" ] || [ -f "$FISH_FILE" ] || [ -f "$PATHS_FILE" ]; then
+        printf 'path:     system PATH files present (%s; new shells/sessions pick it up)\n' "$PREFIX/bin"
     else
         printf 'path:     fcai not on PATH (run scripts/install.sh install)\n'
     fi

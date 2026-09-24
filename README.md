@@ -4,6 +4,8 @@ A **dependency-free C11** interpreter for the [FidoCad](https://github.com/Darwi
 
 Reference implementations: `~/Projects/FidoCadJS` (TypeScript) and `~/Projects/FidoCadJ` (Java). Language spec: `FidoCadJS/FIDOSPECS.md`.
 
+Builds and runs on **Linux and macOS** (Apple clang or gcc); CI runs `make test` and `make sanitize` on both.
+
 ## Status (v0.1)
 
 | Piece | State |
@@ -31,14 +33,17 @@ make install PREFIX=/usr/local
 make system-install   # /opt/FidoCadAI + agent skill + update hook (scripts/install.sh)
 ```
 
+Qt6 is optional for the GUI: `qt6-base-dev` on Linux, `brew install qt pkg-config`
+on macOS. Without it everything except `fcai-gui` builds and tests normally.
+
 `scripts/install.sh` installs the whole program into `/opt/FidoCadAI`, symlinks
-`fcai` and `fcai-gui` into `/usr/local/bin`, adds `/opt/FidoCadAI/bin` to `PATH`
-system-wide (`/etc/profile.d/fidocadai.sh`, `/etc/environment.d/99-fidocadai.conf`),
-creates the user library directory `~/Documents/FidoLib` and delivers the agent
-skill through the Omarchy default-agents channel (one canonical copy plus
-symlinks into every agent's skills directory). It also installs a git hook that
-runs `scripts/install.sh update` after every commit, so the system copy follows
-the source tree.
+`fcai` and `fcai-gui` into `/usr/local/bin`, puts `/opt/FidoCadAI/bin` on `PATH`
+(`/etc/profile.d/fidocadai.sh` and `/etc/environment.d/99-fidocadai.conf` on
+Linux, `/etc/paths.d/fidocadai` on macOS), creates the user library directory
+`~/Documents/FidoLib` and registers the agent skill with every local harness
+(one canonical copy; the Omarchy default-agents channel is used when present).
+It also installs a git hook that runs `scripts/install.sh update` after every
+commit, so the system copy follows the source tree.
 
 ```bash
 scripts/install.sh install     # first install
@@ -47,7 +52,21 @@ scripts/install.sh status      # what is installed where
 scripts/install.sh uninstall
 ```
 
-Standard libraries ship in `share/lib/` (English FidoCadJ bundles). `fcai` finds them next to the binary, via `FIDO_STDLIB_DIR`, or under `$PREFIX/share/fidocad/lib`. Your own macro libraries live in `~/Documents/FidoLib/` (override with `FIDO_USER_LIB_DIR`) and are loaded automatically; see `fcai config` for the effective `user_lib` path.
+`make install` also installs the agent skill (`share/skills/fidocad/`): a copy
+goes to `$(PREFIX)/share/fidocad/skills/`, and — unless `DESTDIR` is set — a
+copy into each agent harness found in your home (Claude Code, Codex,
+Antigravity, Pi, Hermes, `~/.agents`) through `scripts/install-skill.sh`. Run
+under `sudo`, the copies are made as the invoking user. `make install-skill`
+refreshes just the skill; `FIDO_SKILL_DIRS=dir1:dir2` overrides the targets.
+
+Standard libraries ship in `share/lib/` (English FidoCadJ bundles) and fonts in
+`share/fonts/`. `fcai` finds them via `FIDO_STDLIB_DIR` / `FIDO_FONT_DIR`, next
+to the binary (it resolves its own path through `/proc/self/exe` on Linux,
+`_NSGetExecutablePath` on macOS, else `argv[0]` + `$PATH`), or under
+`/usr/local`, `/opt/homebrew` or `/usr` `share/fidocad/`. Your own macro
+libraries live in `~/Documents/FidoLib/` (override with `FIDO_USER_LIB_DIR`) and
+are loaded automatically; `fcai config` prints the resolved executable, the
+effective `user_lib` path and whether TTF fonts were found.
 
 ## CLI for agents
 
@@ -69,7 +88,8 @@ fcai skill                        # the shipped agent skill; `skill install`
 fcai gui drawing.fcd --session-dir /tmp/d.session -m "note" &
 ```
 
-Stdin is accepted (`fcai json -` or pipe). Exit status is 0 on success.
+Stdin is accepted (`fcai json -` or pipe), and bare `fcai` at a terminal prints
+the help and exits. Exit status is 0 on success.
 
 ### Settings (all overridable by an agent)
 
@@ -89,7 +109,9 @@ Flags, `key = value` config (`--config file`), and environment:
 | `json` | `--json` / `FIDO_JSON` | off |
 | `verbose` | `-v` | off |
 
-`--lib PATH` (repeatable) plus `--prefix NAME` loads extra `.fcl` files. Personal libraries: `FIDO_LIB_DIR=/home/dante/Drive/Resources/FidoLibs`.
+`--lib PATH` (repeatable) plus `--prefix NAME` loads extra `.fcl` files.
+`FIDO_FONT_DIR` points at a directory with the Liberation TTFs when they are not
+next to the binary.
 
 ## GUI: draw with the user watching
 
@@ -193,7 +215,9 @@ when the agent is present, `~/.claude/skills`, `~/.pi/agent/skills`,
 `~/.config/opencode/skills` and friends — symlinks to one canonical copy (the
 Omarchy default-agents channel when installed, else the installed skill
 directory). `make install` puts that canonical copy under
-`$PREFIX/share/fidocad/skills/fidocad/` for `fcai skill` to find.
+`$PREFIX/share/fidocad/skills/fidocad/` for `fcai skill` to find, and (on a
+plain `PREFIX` install) also copies it into the harnesses through
+`scripts/install-skill.sh`.
 
 ## Library (embed)
 
@@ -219,8 +243,9 @@ include/fidocad.h   public API
 src/                parser, emitter, edit/diff/hit-test, libs, rasterizer, CLI
 gui/                Qt6 editor (fcai-gui): canvas, session, settings, theme
 share/lib/          bundled .fcl
-share/skills/       fidocad agent skill (installed by `fcai skill install`)
-scripts/install.sh  /opt/FidoCadAI installer + updater + git update hook
+share/skills/       fidocad agent skill (installed by make install / fcai skill install)
+scripts/install.sh        system installer + updater + git update hook
+scripts/install-skill.sh  copy the skill into local agent harnesses
 tests/              fixtures + unit tests
 ```
 

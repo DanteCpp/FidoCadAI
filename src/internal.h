@@ -8,6 +8,7 @@
 
 #define FC_ALIGN 8
 #define FC_GROW(cap) ((cap) < 8 ? 8 : (cap) * 2)
+#define FC_PLACEHOLDER_SIZE 4.0 /* half-size of the box drawn for an unresolved macro */
 
 typedef struct {
     char *p;
@@ -87,6 +88,14 @@ typedef struct {
     int w, h, xoff, yoff, advance;
     const uint8_t *cover;
 } FcTtfGlyph;
+
+/* sys.c: executable location and data-directory search */
+void fc_dirname(const char *path, char *out, size_t cap);
+int fc_exe_path(char *out, size_t cap);
+/* Calls try_dir(ctx, dir) on each candidate for share/<sub> (next to the binary, then
+ * install prefixes, then ./share); stops and returns 1 when it returns non-zero. */
+int fc_find_data(const char *sub, int (*try_dir)(void *ctx, const char *dir), void *ctx);
+int fc_stdin_is_tty(void);
 
 int fc_ttf_init(void);
 int fc_ttf_ready(void);

@@ -10,9 +10,19 @@ typedef struct {
     size_t stride; /* bytes per row */
     double ox, oy; /* origin in pixels of logical (0,0) */
     double scale;
-    int dash_phase;
     int tex;
 } Raster;
+
+#define MAX_RASTER 8192
+#define MAX_TEXT_PX 2048.0 /* glyph height cap; TTF bitmaps are capped at 512 anyway */
+
+/* Pixel values far outside the raster are pinned here so int maths cannot overflow;
+ * every drawing loop below is clipped to the raster. */
+static int clampi(double v) {
+    if (!(v > -1e8)) return -100000000;
+    if (v > 1e8) return 100000000;
+    return (int)floor(v + 0.5);
+}
 
 static void put_px(Raster *r, int x, int y, uint32_t rgb, float alpha) {
     uint8_t *p;
@@ -29,8 +39,9 @@ static void put_px(Raster *r, int x, int y, uint32_t rgb, float alpha) {
     p[2] = (uint8_t)(p[2] * (1 - alpha) + B * alpha);
 }
 
-static int mapx(const Raster *r, double x) { return (int)floor(x * r->scale + r->ox + 0.5); }
-static int mapy(const Raster *r, double y) { return (int)floor(y * r->scale + r->oy + 0.5); }
+static int mapx(const Raster *r, double x) { return clampi(x * r->scale + r->ox); }
+static int mapy(const Raster *r, double y) { return clampi(y * r->scale + r->oy); }
+static int scale_len(const Raster *r, double v) { return clampi(v * r->scale); }
 
 static int dash_on(int style, int dist) {
     /* style 0 solid; 1 dashed; 2 fine dotted; 3 dotted; 4 dash-dot */
@@ -67,16 +78,79 @@ static void fill_disk(Raster *r, int cx, int cy, int rad, uint32_t rgb, float a)
             if (x * x + y * y <= rad * rad) put_px(r, cx + x, cy + y, rgb, a);
 }
 
+/* Liang-Barsky: clips the segment to [xmin,xmax]x[ymin,ymax]; t0 gets the start
+ * parameter of the kept part. Returns 0 when nothing is left. */
+static int clip_seg(double *x0, double *y0, double *x1, double *y1, double xmin, double ymin,
+                    double xmax, double ymax, double *t0_out) {
+    double dx = *x1 - *x0, dy = *y1 - *y0;
+    double p[4], q[4], t0 = 0, t1 = 1;
+    int i;
+    p[0] = -dx; q[0] = *x0 - xmin;
+    p[1] = dx;  q[1] = xmax - *x0;
+    p[2] = -dy; q[2] = *y0 - ymin;
+    p[3] = dy;  q[3] = ymax - *y0;
+    for (i = 0; i < 4; i++) {
+        if (p[i] == 0) {
+            if (q[i] < 0) return 0;
+        } else {
+            double t = q[i] / p[i];
+            if (p[i] < 0) {
+                if (t > t1) return 0;
+                if (t > t0) t0 = t;
+            } else {
+                if (t < t0) return 0;
+                if (t < t1) t1 = t;
+            }
+        }
+    }
+    *x1 = *x0 + t1 * dx;
+    *y1 = *y0 + t1 * dy;
+    *x0 += t0 * dx;
+    *y0 += t0 * dy;
+    *t0_out = t0;
+    return 1;
+}
+
 static void line_aa(Raster *r, int x0, int y0, int x1, int y1, uint32_t rgb, float a, int w,
                     int dash) {
-    int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
-    int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
-    int err = dx + dy, e2, dist = 0;
+    int dx, sx, dy, sy, err, e2, dist = 0;
+    int ax, ay, bx, by;
     int thick = w < 1 ? 1 : w;
-    int ax = x0, ay = y0, bx = x1, by = y1;
+    int lim = 2 * (r->w + r->h) + 2;
+    if (thick > lim) thick = lim;
+    {
+        /* only the part within half a pen width of the raster can leave pixels */
+        double pad = thick / 2 + 1, t0 = 0;
+        double fx0 = x0, fy0 = y0, fx1 = x1, fy1 = y1;
+        double steps = fabs(fx1 - fx0) > fabs(fy1 - fy0) ? fabs(fx1 - fx0) : fabs(fy1 - fy0);
+        if (!clip_seg(&fx0, &fy0, &fx1, &fy1, -pad, -pad, r->w - 1 + pad, r->h - 1 + pad, &t0))
+            return;
+        dist = (int)(t0 * steps + 0.5); /* keep the dash phase of the unclipped line */
+        x0 = (int)floor(fx0 + 0.5);
+        y0 = (int)floor(fy0 + 0.5);
+        x1 = (int)floor(fx1 + 0.5);
+        y1 = (int)floor(fy1 + 0.5);
+    }
+    ax = x0;
+    ay = y0;
+    bx = x1;
+    by = y1;
+    dx = abs(x1 - x0);
+    sx = x0 < x1 ? 1 : -1;
+    dy = -abs(y1 - y0);
+    sy = y0 < y1 ? 1 : -1;
+    err = dx + dy;
     for (;;) {
-        int t;
-        for (t = -(thick / 2); t <= thick / 2; t++) {
+        int t, tlo = -(thick / 2), thi = thick / 2;
+        /* pen offsets that stay on the raster */
+        if (dx > -dy) {
+            if (tlo < -y0) tlo = -y0;
+            if (thi > r->h - 1 - y0) thi = r->h - 1 - y0;
+        } else {
+            if (tlo < -x0) tlo = -x0;
+            if (thi > r->w - 1 - x0) thi = r->w - 1 - x0;
+        }
+        for (t = tlo; t <= thi; t++) {
             if (dx > -dy)
                 plot(r, x0, y0 + t, rgb, a, dash, dist);
             else
@@ -140,10 +214,14 @@ static void ellipse(Raster *r, int x0, int y0, int x1, int y1, uint32_t rgb, flo
     int minx, maxx, miny, maxy;
     if (rx < 0.5) rx = 0.5;
     if (ry < 0.5) ry = 0.5;
-    minx = (int)floor(cx - rx) - w;
-    maxx = (int)ceil(cx + rx) + w;
-    miny = (int)floor(cy - ry) - w;
-    maxy = (int)ceil(cy + ry) + w;
+    minx = clampi(floor(cx - rx) - w);
+    maxx = clampi(ceil(cx + rx) + w);
+    miny = clampi(floor(cy - ry) - w);
+    maxy = clampi(ceil(cy + ry) + w);
+    if (minx < 0) minx = 0;
+    if (miny < 0) miny = 0;
+    if (maxx > r->w - 1) maxx = r->w - 1;
+    if (maxy > r->h - 1) maxy = r->h - 1;
     for (yi = miny; yi <= maxy; yi++) {
         for (xi = minx; xi <= maxx; xi++) {
             double dx = (xi - cx) / rx, dy = (yi - cy) / ry;
@@ -163,11 +241,15 @@ static void ellipse(Raster *r, int x0, int y0, int x1, int y1, uint32_t rgb, flo
 }
 
 static void fill_circle(Raster *r, int cx, int cy, int rad, uint32_t rgb, float a) {
-    int x, y;
-    int r2 = rad * rad;
-    for (y = -rad; y <= rad; y++)
-        for (x = -rad; x <= rad; x++)
-            if (x * x + y * y <= r2) put_px(r, cx + x, cy + y, rgb, a);
+    long long x, y, r2 = (long long)rad * rad;
+    long long x0 = -(long long)rad, x1 = rad, y0 = -(long long)rad, y1 = rad;
+    if (x0 < -(long long)cx) x0 = -(long long)cx;
+    if (x1 > (long long)r->w - 1 - cx) x1 = (long long)r->w - 1 - cx;
+    if (y0 < -(long long)cy) y0 = -(long long)cy;
+    if (y1 > (long long)r->h - 1 - cy) y1 = (long long)r->h - 1 - cy;
+    for (y = y0; y <= y1; y++)
+        for (x = x0; x <= x1; x++)
+            if (x * x + y * y <= r2) put_px(r, (int)(cx + x), (int)(cy + y), rgb, a);
 }
 
 static void cubic(FcPoint *o, FcPoint a, FcPoint b, FcPoint c, FcPoint d, double t) {
@@ -209,7 +291,7 @@ static void fill_poly(Raster *r, const FcPoint *pts, int n, uint32_t rgb, float 
             int x0 = mapx(r, pts[j].x), x1 = mapx(r, pts[i].x);
             if ((y0 <= y && y1 > y) || (y1 <= y && y0 > y)) {
                 int den = y1 - y0;
-                int xx = x0 + (int)((long)(x1 - x0) * (y - y0) / (den ? den : 1));
+                int xx = x0 + (int)((long long)(x1 - x0) * (y - y0) / (den ? den : 1));
                 ys[ne++] = xx;
             }
         }
@@ -270,7 +352,8 @@ static void spline(Raster *r, const FcPoint *pts, int n, int closed, uint32_t rg
 }
 
 static void arrow_head(Raster *r, FcPoint from, FcPoint to, double len, double half, uint32_t rgb,
-                       float a, int empty) {
+                       float a, int style) {
+    int empty = (style & FC_ARROW_EMPTY) != 0;
     double dx = to.x - from.x, dy = to.y - from.y;
     double L = sqrt(dx * dx + dy * dy);
     double ux, uy, px, py;
@@ -292,6 +375,35 @@ static void arrow_head(Raster *r, FcPoint from, FcPoint to, double len, double h
         FcPoint tri[3] = {t, l, rr};
         fill_poly(r, tri, 3, rgb, a);
     }
+    if (style & FC_ARROW_LIMITER) {
+        /* bar across the tip */
+        line_aa(r, mapx(r, to.x + px * half), mapy(r, to.y + py * half), mapx(r, to.x - px * half),
+                mapy(r, to.y - py * half), rgb, a, 1, 0);
+    }
+}
+
+/* Picks the first point of pts[] (walking away from the tip) that differs from it,
+ * so a control point sitting on the endpoint still gives a direction. */
+static int arrow_from(const FcPoint *pts, int n, FcPoint *out) {
+    int i;
+    for (i = 1; i < n; i++) {
+        if (pts[i].x != pts[0].x || pts[i].y != pts[0].y) {
+            *out = pts[i];
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void draw_arrows(Raster *r, const FcPrim *p, const FcPoint *head, const FcPoint *tail, int n,
+                        uint32_t rgb, float a) {
+    FcPoint from;
+    if ((p->ext.arrows & FC_ARROW_START) && arrow_from(head, n, &from))
+        arrow_head(r, from, head[0], p->ext.arrow_len, p->ext.arrow_half_w, rgb, a,
+                   p->ext.arrow_style);
+    if ((p->ext.arrows & FC_ARROW_END) && arrow_from(tail, n, &from))
+        arrow_head(r, from, tail[0], p->ext.arrow_len, p->ext.arrow_half_w, rgb, a,
+                   p->ext.arrow_style);
 }
 
 static void stroke_seg(Raster *r, int x0, int y0, double ca, double sa, int mirror, float x1,
@@ -552,14 +664,19 @@ static void draw_text(Raster *r, const FcLabel *l, uint32_t rgb, float a) {
     int x0, y0, mirror, bold, italic, mono, slot, fake_it = 0;
     double ang, ca, sa;
     float pen = 0, sx, sy, em, ph, xratio;
+    double hpx, wpx;
     if (!*s) return;
-    sy = (float)(l->size_y * r->scale / 12.0);
-    sx = (float)(l->size_x * r->scale / 10.0);
+    hpx = l->size_y * r->scale;
+    wpx = l->size_x * r->scale;
+    if (hpx > MAX_TEXT_PX) hpx = MAX_TEXT_PX;
+    if (wpx > MAX_TEXT_PX) wpx = MAX_TEXT_PX;
+    sy = (float)(hpx / 12.0);
+    sx = (float)(wpx / 10.0);
     if (sy < 0.35f) sy = 0.35f;
     if (sx < 0.30f) sx = 0.30f;
-    em = (float)(l->size_y * r->scale);
+    em = (float)hpx;
     if (em < 6) em = 6;
-    ph = (float)(l->size_y * r->scale * 1.15);
+    ph = (float)(hpx * 1.15);
     if (ph < 8) ph = 8;
     xratio = 1.0f;
     if (l->size_y > 0.1)
@@ -584,9 +701,15 @@ static void draw_text(Raster *r, const FcLabel *l, uint32_t rgb, float a) {
         return;
     }
     {
-        FcTexSeg segs[32];
-        int ns = fc_tex_split(s, segs, 32);
-        int i;
+        /* each segment consumes at least one '$', plus at most one text run each */
+        const char *q;
+        int maxn = 2, ns, i;
+        FcTexSeg *segs;
+        for (q = s; *q; q++)
+            if (*q == '$') maxn += 2;
+        segs = (FcTexSeg *)malloc((size_t)maxn * sizeof *segs);
+        if (!segs) return;
+        ns = fc_tex_split(s, segs, maxn);
         for (i = 0; i < ns; i++) {
             if (segs[i].math)
                 draw_math_run(r, segs[i].p, segs[i].n, segs[i].math == 2, &pen, em, x0, y0, ca, sa,
@@ -595,6 +718,24 @@ static void draw_text(Raster *r, const FcLabel *l, uint32_t rgb, float a) {
                 draw_plain_run(r, segs[i].p, segs[i].n, &pen, sx, sy, mono, italic, bold, x0, y0,
                                ca, sa, mirror, rgb, a, slot, fake_it, ph, xratio);
         }
+        free(segs);
+    }
+}
+
+/* Unresolved macro: dashed box with a cross at the insertion point, plus the key, so
+ * the missing part is visible in the picture instead of silently absent. */
+static void draw_placeholder(Raster *r, const FcPrim *p, uint32_t rgb, float a) {
+    const double h = FC_PLACEHOLDER_SIZE;
+    FcPoint c = p->u.macro.p;
+    int x0 = mapx(r, c.x - h), y0 = mapy(r, c.y - h), x1 = mapx(r, c.x + h), y1 = mapy(r, c.y + h);
+    stroke_rect(r, x0, y0, x1, y1, rgb, a, 1, 1);
+    line_aa(r, x0, y0, x1, y1, rgb, a, 1, 0);
+    line_aa(r, x0, y1, x1, y0, rgb, a, 1, 0);
+    if (p->u.macro.key && p->u.macro.key[0]) {
+        FcLabel l;
+        fc_label_default(&l, c.x + h, c.y - h, p->layer);
+        l.text = p->u.macro.key;
+        draw_text(r, &l, rgb, a);
     }
 }
 
@@ -605,25 +746,30 @@ static void draw_prim(Raster *r, const FcDrawing *d, const FcPrim *p) {
     if (p->layer < 0 || p->layer >= FC_MAX_LAYERS) return;
     rgb = d->layers[p->layer].rgb;
     a = d->layers[p->layer].alpha;
-    lw = (int)floor(d->cfg.line_width * r->scale + 0.5);
+    lw = scale_len(r, d->cfg.line_width);
     if (lw < 1) lw = 1;
-    lwc = (int)floor(d->cfg.line_width_circles * r->scale + 0.5);
+    lwc = scale_len(r, d->cfg.line_width_circles);
     if (lwc < 1) lwc = 1;
     dash = p->ext.dash;
     switch (p->kind) {
     case FC_LINE:
         line_aa(r, mapx(r, p->u.line.a.x), mapy(r, p->u.line.a.y), mapx(r, p->u.line.b.x),
                 mapy(r, p->u.line.b.y), rgb, a, lw, dash);
-        if (p->ext.arrows & FC_ARROW_START)
-            arrow_head(r, p->u.line.b, p->u.line.a, p->ext.arrow_len, p->ext.arrow_half_w, rgb, a,
-                       p->ext.arrow_style & FC_ARROW_EMPTY);
-        if (p->ext.arrows & FC_ARROW_END)
-            arrow_head(r, p->u.line.a, p->u.line.b, p->ext.arrow_len, p->ext.arrow_half_w, rgb, a,
-                       p->ext.arrow_style & FC_ARROW_EMPTY);
+        if (p->ext.arrows) {
+            FcPoint head[2], tail[2];
+            head[0] = tail[1] = p->u.line.a;
+            head[1] = tail[0] = p->u.line.b;
+            draw_arrows(r, p, head, tail, 2, rgb, a);
+        }
         break;
     case FC_BEZIER:
         bezier(r, p->u.bezier.p[0], p->u.bezier.p[1], p->u.bezier.p[2], p->u.bezier.p[3], rgb, a, lw,
                dash);
+        if (p->ext.arrows) {
+            const FcPoint *b = p->u.bezier.p;
+            FcPoint tail[4] = {b[3], b[2], b[1], b[0]};
+            draw_arrows(r, p, b, tail, 4, rgb, a);
+        }
         break;
     case FC_RECT:
         if (p->filled)
@@ -644,30 +790,37 @@ static void draw_prim(Raster *r, const FcDrawing *d, const FcPrim *p) {
     case FC_CURVE:
         if (p->filled) fill_poly(r, p->u.curve.pts, p->u.curve.n, rgb, a);
         spline(r, p->u.curve.pts, p->u.curve.n, p->u.curve.closed, rgb, a, lw, dash);
+        if (p->ext.arrows && !p->u.curve.closed && p->u.curve.n >= 2) {
+            /* open Catmull-Rom leaves each end along its first/last chord */
+            int n = p->u.curve.n;
+            const FcPoint *c = p->u.curve.pts;
+            FcPoint head[2] = {c[0], c[1]}, tail[2] = {c[n - 1], c[n - 2]};
+            draw_arrows(r, p, head, tail, 2, rgb, a);
+        }
         break;
     case FC_CONN: {
-        int rad = (int)floor((d->cfg.diameter_conn * r->scale) / 2.0 + 0.5);
+        int rad = scale_len(r, d->cfg.diameter_conn / 2.0);
         if (rad < 1) rad = 1;
         fill_circle(r, mapx(r, p->u.conn.p.x), mapy(r, p->u.conn.p.y), rad, rgb, a);
         break;
     }
     case FC_PCB_LINE: {
-        int tw = (int)floor(p->u.pcb_line.width * r->scale + 0.5);
+        int tw = scale_len(r, p->u.pcb_line.width);
         if (tw < 1) tw = 1;
         line_aa(r, mapx(r, p->u.pcb_line.a.x), mapy(r, p->u.pcb_line.a.y), mapx(r, p->u.pcb_line.b.x),
                 mapy(r, p->u.pcb_line.b.y), rgb, a, tw, 0);
         break;
     }
     case FC_PCB_PAD: {
-        int rx = (int)floor(p->u.pad.rx * r->scale / 2.0 + 0.5);
-        int ry = (int)floor(p->u.pad.ry * r->scale / 2.0 + 0.5);
+        int rx = abs(scale_len(r, p->u.pad.rx / 2.0));
+        int ry = abs(scale_len(r, p->u.pad.ry / 2.0));
         int cx = mapx(r, p->u.pad.p.x), cy = mapy(r, p->u.pad.p.y);
         if (p->u.pad.style == FC_PAD_RECT)
             fill_rect(r, cx - rx, cy - ry, cx + rx, cy + ry, rgb, a);
         else
             ellipse(r, cx - rx, cy - ry, cx + rx, cy + ry, rgb, a, 1, 0, 1);
         if (p->u.pad.hole > 0) {
-            int hr = (int)floor(p->u.pad.hole * r->scale / 2.0 + 0.5);
+            int hr = scale_len(r, p->u.pad.hole / 2.0);
             fill_circle(r, cx, cy, hr, 0xFFFFFF, 1);
         }
         break;
@@ -676,6 +829,7 @@ static void draw_prim(Raster *r, const FcDrawing *d, const FcPrim *p) {
         draw_text(r, &p->u.text, rgb, a);
         break;
     case FC_MACRO:
+        draw_placeholder(r, p, rgb, a);
         break;
     }
     if (p->has_name) draw_text(r, &p->name, rgb, a);
@@ -683,12 +837,15 @@ static void draw_prim(Raster *r, const FcDrawing *d, const FcPrim *p) {
 }
 
 static void png_write_cb(void *ctx, void *data, int size) {
-    fwrite(data, 1, (size_t)size, (FILE *)ctx);
+    FILE *fp = (FILE *)ctx;
+    if (fwrite(data, 1, (size_t)size, fp) != (size_t)size) {
+        /* ferror() is checked by the caller */
+    }
 }
 
 static int write_png(FILE *fp, const Raster *r) {
     int ok = stbi_write_png_to_func(png_write_cb, fp, r->w, r->h, 3, r->px, r->w * 3);
-    return ok ? 0 : -1;
+    return ok && !ferror(fp) ? 0 : -1;
 }
 
 static int write_ppm(FILE *fp, const Raster *r) {
@@ -727,7 +884,6 @@ int fc_render_rgb(const FcDrawing *d, const FcLib *lib, const FcView *v, uint8_t
     r.ox = v->ox;
     r.oy = v->oy;
     r.scale = v->scale;
-    r.dash_phase = 0;
     r.tex = v->tex;
     fill_bg(&r, v->bg);
     if (v->grid > 0 && v->grid * v->scale >= 4) {
@@ -767,6 +923,17 @@ void fc_render_opts_init(FcRenderOpts *o) {
     o->tex = 1;
 }
 
+/* Pixels per unit when none is given: fit max_w x max_h, whole numbers when zooming
+ * in (crisp lines), fractional when the drawing is too big for even 1 px/unit. */
+static double auto_scale(const FcRenderOpts *o, double bw, double bh) {
+    int mw = o->max_w > 2 * o->margin ? o->max_w - 2 * o->margin : 400;
+    int mh = o->max_h > 2 * o->margin ? o->max_h - 2 * o->margin : 300;
+    double s = mw / bw < mh / bh ? mw / bw : mh / bh;
+    if (s >= 1) s = floor(s);
+    if (s > 16) s = 16;
+    return s;
+}
+
 int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opts,
                    const char *path) {
     FcRenderOpts o;
@@ -774,7 +941,7 @@ int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opt
     const FcDrawing *src = d;
     FcRect bb;
     Raster r;
-    double bw, bh;
+    double bw, bh, fit;
     int i;
     FILE *fp;
     int rc = FC_OK;
@@ -783,17 +950,15 @@ int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opt
     fc_render_opts_init(&o);
     fc_ttf_init();
     if (opts) {
-        if (opts->scale) o.scale = opts->scale;
-        if (opts->margin) o.margin = opts->margin;
-        if (opts->max_w) o.max_w = opts->max_w;
-        if (opts->max_h) o.max_h = opts->max_h;
-        o.grid = opts->grid;
-        if (opts->bg) o.bg = opts->bg;
-        o.ppm = opts->ppm;
-        o.tex = opts->tex;
+        o = *opts;
+        if (o.max_w <= 0) o.max_w = 1200;
+        if (o.max_h <= 0) o.max_h = 900;
     }
-    fc_drawing_init(&exp);
+    if (o.margin < 0) o.margin = 0;
+    if (o.margin > 1024) o.margin = 1024;
+    o.bg &= 0xFFFFFFu;
     if (lib) {
+        fc_drawing_init(&exp);
         fc_expand(d, &exp, lib);
         src = &exp;
         own = 1;
@@ -806,24 +971,18 @@ int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opt
     bh = bb.max_y - bb.min_y;
     if (bw < 1) bw = 1;
     if (bh < 1) bh = 1;
-    if (o.scale <= 0) {
-        int mw = o.max_w > 2 * o.margin ? o.max_w - 2 * o.margin : 400;
-        int mh = o.max_h > 2 * o.margin ? o.max_h - 2 * o.margin : 300;
-        double sx = mw / bw, sy = mh / bh;
-        o.scale = (int)floor((sx < sy ? sx : sy));
-        if (o.scale < 2) o.scale = 2;
-        if (o.scale > 16) o.scale = 16;
-    }
-    r.scale = (double)o.scale;
+    r.scale = o.scale > 0 ? (o.scale > 1000 ? 1000 : o.scale) : auto_scale(&o, bw, bh);
+    /* shrink rather than crop when the image would exceed the raster limit */
+    fit = (MAX_RASTER - 2.0 * o.margin) / (bw > bh ? bw : bh);
+    if (r.scale > fit) r.scale = fit;
     r.w = (int)ceil(bw * r.scale) + 2 * o.margin;
     r.h = (int)ceil(bh * r.scale) + 2 * o.margin;
     if (r.w < 16) r.w = 16;
     if (r.h < 16) r.h = 16;
-    if (r.w > 8192) r.w = 8192;
-    if (r.h > 8192) r.h = 8192;
+    if (r.w > MAX_RASTER) r.w = MAX_RASTER;
+    if (r.h > MAX_RASTER) r.h = MAX_RASTER;
     r.ox = o.margin - bb.min_x * r.scale;
     r.oy = o.margin - bb.min_y * r.scale;
-    r.dash_phase = 0;
     r.tex = o.tex;
     r.stride = (size_t)r.w * 3;
     r.px = (uint8_t *)malloc((size_t)r.w * (size_t)r.h * 3);
@@ -833,12 +992,13 @@ int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opt
     }
     fill_bg(&r, o.bg);
     if (o.grid) {
-        int gx, gy;
-        int step = o.scale >= 4 ? 5 : 10;
-        for (gx = (int)floor(bb.min_x / step) * step; gx <= (int)ceil(bb.max_x); gx += step)
+        double gx, gy;
+        double step = 5;
+        while (step * r.scale < 4) step *= 2; /* keep grid lines at least 4 px apart */
+        for (gx = floor(bb.min_x / step) * step; gx <= ceil(bb.max_x); gx += step)
             line_aa(&r, mapx(&r, gx), mapy(&r, bb.min_y), mapx(&r, gx), mapy(&r, bb.max_y), 0xEEEEEE,
                     1, 1, 0);
-        for (gy = (int)floor(bb.min_y / step) * step; gy <= (int)ceil(bb.max_y); gy += step)
+        for (gy = floor(bb.min_y / step) * step; gy <= ceil(bb.max_y); gy += step)
             line_aa(&r, mapx(&r, bb.min_x), mapy(&r, gy), mapx(&r, bb.max_x), mapy(&r, gy), 0xEEEEEE,
                     1, 1, 0);
     }
@@ -858,7 +1018,11 @@ int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opt
     } else {
         if (write_png(fp, &r) != 0) rc = FC_ERR_IO;
     }
-    if (fp != stdout) fclose(fp);
+    if (fp != stdout) {
+        if (fclose(fp) != 0) rc = FC_ERR_IO;
+    } else if (fflush(fp) != 0) {
+        rc = FC_ERR_IO;
+    }
     free(r.px);
     if (own) fc_drawing_free(&exp);
     return rc;

@@ -20,10 +20,14 @@ Spec: `~/Projects/FidoCadJS/FIDOSPECS.md`. Behaviour should match FidoCadJS
 
 ## Rules
 
-- C11, POSIX, `-Wall -Wextra`. The core and `fcai` link only `-lm`.
+- C11, POSIX, `-Wall -Wextra`. The core and `fcai` link only `-lm` and must
+  build and run on Linux and macOS; OS-specific code lives only in `src/sys.c`
+  (executable path, data-dir search). The install script is POSIX sh and works
+  on both platforms too.
 - Qt6 Widgets is allowed **only** in `gui/` and `tests/test_gui.cpp`, and the
   build must still work without it (`HAVE_QT` in the Makefile). No moc: no
-  `Q_OBJECT`; use lambdas and `std::function` callbacks.
+  `Q_OBJECT`; use lambdas and `std::function` callbacks. Qt6 is available on
+  Linux (`qt6-base-dev`) and macOS (`brew install qt pkg-config`).
 - GUI settings are changed by the calling agent through the session
   (`fcai session set DIR key value`) or by editing `gui.conf`. Add new knobs to
   `kKnobs` in `gui/settings.cpp`; do not add settings dialogs.
@@ -61,6 +65,8 @@ Spec: `~/Projects/FidoCadJS/FIDOSPECS.md`. Behaviour should match FidoCadJS
 - Parser never aborts the file on a bad line: skip + `fc_drawing_diag`.
 - Round-trip (`parse → emit → parse → emit`) must be idempotent. `make test` checks this.
 - Macro keys are lowercased. Stdlib has an **empty** prefix (`080` not `fcdstdlib.080`).
+- `fc_expand` parses/flattens each macro body once per call, refuses cycles and caps output at `FC_MAX_EXPANDED_PRIMS` (diagnostics go to the destination drawing). Keep library input untrusted.
+- Rasterizer loops must stay clipped to the image; map pixels through `clampi`/`mapx`/`scale_len`, never a raw `(int)` cast.
 - Macro bodies are drawn relative to logical origin **(100,100)**; expansion subtracts that then applies orientation/mirror (see `fc_xform_point`, copied from FidoCadJS `MapCoordinates.mapXr/mapYr`).
 - Do not add JSON/PNG/MathJax libraries. Emitters are in `src/emit.c` and `src/render.c`.
 - `$...$` / `$$...$$` in TY text is typeset by `src/tex.c` (scripts, `\frac`, `\sqrt`, Greek, common symbols). Unknown TeX falls back to the literal source. Toggle with `--tex` / `--no-tex`.
@@ -75,12 +81,15 @@ Spec: `~/Projects/FidoCadJS/FIDOSPECS.md`. Behaviour should match FidoCadJS
 - `src/edit.c` — in-place edits, `fc_hit_test`, `fc_prim_bounds`, `fc_diff`
 - `src/render.c` — software rasterizer, PNG/PPM
 - `src/cli.c` — `fcai` commands and config
+- `src/sys.c` — platform glue: executable path, share/ search
 - `share/lib/` — English standard libraries
 - `scripts/install.sh` — system install/update/uninstall (`make system-install`)
+- `scripts/install-skill.sh` — copy the agent skill into every local harness
 - `gui/` — `document` (FcDrawing + undo), `canvas` (mouse tools + K overlay),
   `session` (agent channel), `settings`, `theme` (Omarchy), `window`, `main`
 - `share/skills/fidocad/SKILL.md` — the agent skill shipped with the project;
-  `make install` copies it, `fcai skill install` registers it with local agents
+  `make install` copies it and registers it with the local agents, and
+  `fcai skill install` does the same on its own
 - `tests/test_core.c` — no framework, just `EXPECT`
 - `tests/test_gui.cpp` — offscreen QTest mouse/key events + session channel
 
@@ -95,17 +104,22 @@ If you touch the parser, add a fixture under `tests/fixtures/` and a round-trip 
 
 ## Install & update
 
-`scripts/install.sh install` builds the tree and installs it to
-`/opt/FidoCadAI`, symlinks `fcai`/`fcai-gui` into `/usr/local/bin` and adds the
-prefix to `PATH` system-wide (`/etc/profile.d/fidocadai.sh` for shells,
-`/etc/environment.d/99-fidocadai.conf` for systemd user sessions), creates the
-user library directory `~/Documents/FidoLib` and delivers `share/skills/fidocad`
-through the Omarchy default-agents channel: one canonical copy, a symlink at
-`/usr/share/omarchy/default/agents/skills/fidocad`, and a symlink from every
-agent's skills directory (`fcai skill install` uses the same symlink scheme).
-It also installs a `post-commit` git hook that runs
-`scripts/install.sh update --quiet` after every commit, so the system copy
-follows the tree. `scripts/install.sh status` shows what is installed where.
+`scripts/install.sh install` builds the tree and installs it under
+`/opt/FidoCadAI` (override with `--prefix DIR`), symlinks `fcai`/`fcai-gui`
+into `/usr/local/bin` and puts the prefix on `PATH`: `/etc/profile.d`,
+`/etc/environment.d` and `/etc/fish/conf.d` on Linux, `/etc/paths.d` on macOS.
+It creates the user library directory `~/Documents/FidoLib` and delivers
+`share/skills/fidocad` to every agent harness found (`fcai skill install`,
+with the Omarchy default-agents channel used when present). It also installs a
+`post-commit` git hook that runs `scripts/install.sh update --quiet` after
+every commit, so the system copy follows the tree. `scripts/install.sh status`
+shows what is installed where, and `--no-gui`, `--no-build`, `--no-path`,
+`--no-skill`, `--no-hook`, `--no-link` and `--force` are available on install.
+
+`make install` is the plain makefile install (default `PREFIX=/usr/local`):
+binaries, libraries, fonts and skill under `$DATADIR`, plus the agent-harness
+registration through `scripts/install-skill.sh` (real copies, so it works on
+Linux and macOS and never touches `$HOME` on a staged DESTDIR install).
 
 Macros the user (or an agent) creates for repeated patterns belong in
 `~/Documents/FidoLib/<prefix>.fcl`; `fcai` and `fcai-gui` load that directory
