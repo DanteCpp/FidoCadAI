@@ -8,6 +8,7 @@
 
 #define FC_ALIGN 8
 #define FC_GROW(cap) ((cap) < 8 ? 8 : (cap) * 2)
+#define FC_PLACEHOLDER_SIZE 4.0 /* half-size of the box drawn for an unresolved macro */
 
 typedef struct {
     char *p;

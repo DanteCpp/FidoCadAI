@@ -20,6 +20,8 @@ Spec: `~/Projects/FidoCadJS/FIDOSPECS.md`. Behaviour should match FidoCadJS
 - Parser never aborts the file on a bad line: skip + `fc_drawing_diag`.
 - Round-trip (`parse → emit → parse → emit`) must be idempotent. `make test` checks this.
 - Macro keys are lowercased. Stdlib has an **empty** prefix (`080` not `fcdstdlib.080`).
+- `fc_expand` parses/flattens each macro body once per call, refuses cycles and caps output at `FC_MAX_EXPANDED_PRIMS` (diagnostics go to the destination drawing). Keep library input untrusted.
+- Rasterizer loops must stay clipped to the image; map pixels through `clampi`/`mapx`/`scale_len`, never a raw `(int)` cast.
 - Macro bodies are drawn relative to logical origin **(100,100)**; expansion subtracts that then applies orientation/mirror (see `fc_xform_point`, copied from FidoCadJS `MapCoordinates.mapXr/mapYr`).
 - Do not add JSON/PNG/MathJax libraries. Emitters are in `src/emit.c` and `src/render.c`.
 - `$...$` / `$$...$$` in TY text is typeset by `src/tex.c` (scripts, `\frac`, `\sqrt`, Greek, common symbols). Unknown TeX falls back to the literal source. Toggle with `--tex` / `--no-tex`.

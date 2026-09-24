@@ -30,7 +30,7 @@ build/%.o: src/%.c include/fidocad.h src/internal.h | build
 build/cli.o: src/cli.c include/fidocad.h src/internal.h | build
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
-build/test_core.o: tests/test_core.c include/fidocad.h | build
+build/test_core.o: tests/test_core.c include/fidocad.h src/internal.h | build
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
 build/fcai: $(OBJ) $(CLI_OBJ)
@@ -44,6 +44,7 @@ test: build/test_core build/fcai
 	./build/fcai validate tests/fixtures/full-pattern.fcd
 	./build/fcai describe tests/fixtures/full-pattern.fcd >/dev/null
 	./build/fcai json tests/fixtures/full-pattern.fcd >/dev/null
+	./build/fcai --no-stdlib validate tests/fixtures/edge-cases.fcd
 
 sanitize:
 	$(MAKE) clean

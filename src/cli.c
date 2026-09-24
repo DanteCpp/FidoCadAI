@@ -44,15 +44,17 @@ static const char *k_help =
     "  --bg RRGGBB          Background colour (default FFFFFF)\n"
     "  --tex / --no-tex     Typeset $...$ LaTeX in TY text (default on)\n"
     "\n"
-    "Environment:\n"
+    "Environment (booleans: 0/false/no/off = off, anything else = on):\n"
     "  FIDO_STDLIB_DIR      Directory with FCDstdlib_en.fcl etc.\n"
     "  FIDO_LIB_DIR         Extra .fcl directory (loaded after stdlib)\n"
+    "  FIDO_FONT_DIR        Directory with the Liberation TTFs\n"
     "  FIDO_NO_STDLIB=1     Same as --no-stdlib\n"
     "  FIDO_NO_TEX=1        Same as --no-tex\n"
-    "  FIDO_SCALE, FIDO_MARGIN, FIDO_JSON\n"
+    "  FIDO_SCALE, FIDO_MARGIN, FIDO_JSON=1\n"
     "\n"
     "Config file (key = value, # comments):\n"
-    "  stdlib, lib_dir, extensions, scale, margin, width, height, grid, ppm, bg, verbose, tex\n";
+    "  stdlib, lib_dir, extensions, scale, margin, width, height, grid, ppm, bg, verbose, tex,\n"
+    "  json, out\n";
 
 typedef struct {
     const char *path;
@@ -79,6 +81,18 @@ typedef struct {
     int nlibdirs;
 } Opt;
 
+static int is_false(const char *v) {
+    return fc_streq(v, "0") || fc_streq(v, "false") || fc_streq(v, "no") || fc_streq(v, "off") ||
+           fc_streq(v, "");
+}
+
+/* -1 when unset, else 0/1 */
+static int env_bool(const char *name) {
+    const char *v = getenv(name);
+    if (!v) return -1;
+    return !is_false(v);
+}
+
 static void opt_init(Opt *o) {
     memset(o, 0, sizeof *o);
     o->stdlib = 1;
@@ -88,9 +102,9 @@ static void opt_init(Opt *o) {
     o->max_h = 900;
     o->bg = 0xFFFFFF;
     o->tex = 1;
-    if (getenv("FIDO_NO_STDLIB")) o->stdlib = 0;
-    if (getenv("FIDO_NO_TEX")) o->tex = 0;
-    if (getenv("FIDO_JSON")) o->json = 1;
+    if (env_bool("FIDO_NO_STDLIB") == 1) o->stdlib = 0;
+    if (env_bool("FIDO_NO_TEX") == 1) o->tex = 0;
+    if (env_bool("FIDO_JSON") == 1) o->json = 1;
     {
         const char *s = getenv("FIDO_SCALE");
         int v;
@@ -118,19 +132,19 @@ static int parse_bg(const char *s, uint32_t *out) {
 
 static void apply_kv(Opt *o, const char *k, const char *v) {
     int n;
-    if (fc_streq(k, "stdlib")) o->stdlib = !(fc_streq(v, "0") || fc_streq(v, "false"));
+    if (fc_streq(k, "stdlib")) o->stdlib = !is_false(v);
     else if (fc_streq(k, "extensions"))
-        o->extensions = !(fc_streq(v, "0") || fc_streq(v, "false"));
+        o->extensions = !is_false(v);
     else if (fc_streq(k, "verbose"))
-        o->verbose = !(fc_streq(v, "0") || fc_streq(v, "false"));
+        o->verbose = !is_false(v);
     else if (fc_streq(k, "json"))
-        o->json = !(fc_streq(v, "0") || fc_streq(v, "false"));
+        o->json = !is_false(v);
     else if (fc_streq(k, "grid"))
-        o->grid = !(fc_streq(v, "0") || fc_streq(v, "false"));
+        o->grid = !is_false(v);
     else if (fc_streq(k, "ppm"))
-        o->ppm = !(fc_streq(v, "0") || fc_streq(v, "false"));
+        o->ppm = !is_false(v);
     else if (fc_streq(k, "tex"))
-        o->tex = !(fc_streq(v, "0") || fc_streq(v, "false"));
+        o->tex = !is_false(v);
     else if (fc_streq(k, "scale") && fc_parse_int(v, &n))
         o->scale = n;
     else if (fc_streq(k, "margin") && fc_parse_int(v, &n))
@@ -204,15 +218,28 @@ static int load_all_libs(Opt *o, FcLib *lib) {
     return ok ? FC_OK : FC_ERR_IO;
 }
 
-static void mark_unresolved(FcDrawing *d, const FcLib *lib) {
-    int i;
+/* Flags macros missing from the libraries, and copies the expander's own warnings
+ * (recursive or too deeply nested macros, size cap) into the drawing's diagnostics. */
+static void check_macros(FcDrawing *d, const FcLib *lib) {
+    int i, nmacros = 0;
     for (i = 0; i < d->nprims; i++) {
         FcPrim *p = &d->prims[i];
-        if (p->kind == FC_MACRO && !fc_lib_find(lib, p->u.macro.key)) {
+        if (p->kind != FC_MACRO) continue;
+        nmacros++;
+        if (!fc_lib_find(lib, p->u.macro.key)) {
             p->unresolved = 1;
             fc_drawing_diag(d, p->src_line, FC_DIAG_WARN, "unresolved macro '%s'",
                             p->u.macro.key ? p->u.macro.key : "");
         }
+    }
+    if (nmacros) {
+        FcDrawing exp;
+        fc_drawing_init(&exp);
+        fc_expand(d, &exp, lib);
+        for (i = 0; i < exp.ndiags; i++)
+            fc_drawing_diag(d, exp.diags[i].line, exp.diags[i].level, "%s",
+                            exp.diags[i].msg ? exp.diags[i].msg : "");
+        fc_drawing_free(&exp);
     }
 }
 
@@ -255,8 +282,13 @@ static int cmd_lib(const Opt *o, FcLib *lib) {
     }
 }
 
-static int cmd_config(const Opt *o) {
+static const char *const k_env[] = {"FIDO_STDLIB_DIR", "FIDO_LIB_DIR", "FIDO_FONT_DIR",
+                                    "FIDO_NO_STDLIB",  "FIDO_NO_TEX",  "FIDO_SCALE",
+                                    "FIDO_MARGIN",     "FIDO_JSON",    NULL};
+
+static int cmd_config(const Opt *o, const FcLib *lib) {
     FcBuf b;
+    int i;
     fc_buf_init(&b);
     fc_buf_printf(&b, "version = %s\n", FC_VERSION);
     fc_buf_printf(&b, "stdlib = %d\n", o->stdlib);
@@ -273,6 +305,15 @@ static int cmd_config(const Opt *o) {
     fc_buf_printf(&b, "bg = %06X\n", (unsigned)o->bg);
     fc_buf_printf(&b, "out = %s\n", o->out ? o->out : "-");
     fc_buf_printf(&b, "file = %s\n", o->file ? o->file : "-");
+    for (i = 0; i < o->nlibdirs; i++) fc_buf_printf(&b, "lib_dir = %s\n", o->libdirs[i]);
+    for (i = 0; i < o->nlibs; i++)
+        fc_buf_printf(&b, "lib = %s%s%s\n", o->libs[i].path, o->libs[i].prefix ? " prefix=" : "",
+                      o->libs[i].prefix ? o->libs[i].prefix : "");
+    for (i = 0; k_env[i]; i++) {
+        const char *v = getenv(k_env[i]);
+        if (v) fc_buf_printf(&b, "# env %s = %s\n", k_env[i], v);
+    }
+    fc_buf_printf(&b, "macros_loaded = %d\n", fc_lib_count(lib));
     {
         int rc = write_out(o, b.p ? b.p : "", b.n);
         fc_buf_free(&b);
@@ -289,7 +330,7 @@ static int run_on_drawing(const Opt *o, FcDrawing *d, FcLib *lib) {
     dopts.verbose = o->verbose || fc_streq(cmd, "context");
     eopts.extensions = o->extensions;
     eopts.header = 1;
-    mark_unresolved(d, lib);
+    check_macros(d, lib);
 
     if (fc_streq(cmd, "context")) {
         s = o->json ? fc_to_json(d, lib) : fc_context(d, lib);
@@ -361,11 +402,12 @@ int main(int argc, char **argv) {
     /* parse argv: flags anywhere, first non-flag is command if it matches, else file */
     for (i = 1; i < argc; i++) {
         const char *a = argv[i];
-        if (fc_streq(a, "-h") || fc_streq(a, "--help") || fc_streq(a, "help")) {
+        /* the words help/version count only in the command slot, so a file may use them */
+        if (fc_streq(a, "-h") || fc_streq(a, "--help") || (!o.cmd[0] && fc_streq(a, "help"))) {
             fputs(k_help, stdout);
             return 0;
         }
-        if (fc_streq(a, "--version") || fc_streq(a, "version")) {
+        if (fc_streq(a, "--version") || (!o.cmd[0] && fc_streq(a, "version"))) {
             printf("%s\n", FC_VERSION);
             return 0;
         }
@@ -479,7 +521,10 @@ int main(int argc, char **argv) {
 
     lib = fc_lib_new();
     if (!lib) return 1;
-    load_all_libs(&o, lib);
+    if (load_all_libs(&o, lib) != FC_OK) {
+        fc_lib_free(lib);
+        return 1;
+    }
 
     if (fc_streq(o.cmd, "lib")) {
         rc = cmd_lib(&o, lib);
@@ -487,7 +532,7 @@ int main(int argc, char **argv) {
         return rc == FC_OK ? 0 : 1;
     }
     if (fc_streq(o.cmd, "config")) {
-        rc = cmd_config(&o);
+        rc = cmd_config(&o, lib);
         fc_lib_free(lib);
         return rc == FC_OK ? 0 : 1;
     }

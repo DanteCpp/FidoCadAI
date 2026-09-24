@@ -21,9 +21,13 @@ static int tok_int(const char *s, int def) {
     return v;
 }
 
+/* sizes, widths, radii: same magnitude bound as coordinates so every emitter and
+ * the rasterizer stay in range */
 static double tok_dbl(const char *s, double def) {
     double v;
     if (!fc_parse_double(s, &v)) return def;
+    if (v > FC_MAX_COORD) return FC_MAX_COORD;
+    if (v < -FC_MAX_COORD) return -FC_MAX_COORD;
     return v;
 }
 
@@ -97,37 +101,32 @@ static int parse_te(FcDrawing *d, FcLabel *l, const char **tok, int ntok) {
     return 1;
 }
 
-static FcPoint *copy_pts(FcDrawing *d, FcPoint *pts, int n) {
-    FcPoint *p = (FcPoint *)fc_arena_alloc(&d->arena, (size_t)n * sizeof(FcPoint));
-    if (!p) return NULL;
-    memcpy(p, pts, (size_t)n * sizeof(FcPoint));
-    return p;
-}
-
-static int parse_xy_list(const char **tok, int ntok, int start, int last_is_layer, FcPoint *pts,
-                         int maxn, int *n_out, int *layer_out, int *ok) {
-    int end = last_is_layer ? ntok - 1 : ntok;
-    int i = start;
-    int n = 0;
-    *ok = 1;
-    while (i + 1 < end && n < maxn) {
+/* Parses x/y pairs from tok[start..] into the drawing arena. The last token is the
+ * layer. Returns the point count (0 on a bad number or no memory). */
+static int parse_xy_list(FcDrawing *d, const char **tok, int ntok, int start, int line,
+                         FcPoint **pts_out, int *layer_out) {
+    int end = ntok - 1;
+    int n = (end - start) / 2;
+    int i;
+    FcPoint *pts;
+    if (n <= 0) return 0;
+    if (n > FC_MAX_VERTICES) {
+        fc_drawing_diag(d, line, FC_DIAG_WARN, "%s truncated to %d vertices", tok[0],
+                        FC_MAX_VERTICES);
+        n = FC_MAX_VERTICES;
+    }
+    pts = (FcPoint *)fc_arena_alloc(&d->arena, (size_t)n * sizeof(FcPoint));
+    if (!pts) return 0;
+    for (i = 0; i < n; i++) {
         double x, y;
-        if (!fc_parse_double(tok[i], &x) || !fc_parse_double(tok[i + 1], &y)) {
-            *ok = 0;
+        if (!fc_parse_double(tok[start + 2 * i], &x) || !fc_parse_double(tok[start + 2 * i + 1], &y))
             return 0;
-        }
-        pts[n].x = fc_clamp_coord(x);
-        pts[n].y = fc_clamp_coord(y);
-        n++;
-        i += 2;
+        pts[i].x = fc_clamp_coord(x);
+        pts[i].y = fc_clamp_coord(y);
     }
-    if (n >= maxn && i + 1 < end) {
-        /* truncated */
-    }
-    *n_out = n;
-    if (last_is_layer && ntok > start) *layer_out = tok_layer(tok[ntok - 1]);
-    else *layer_out = 0;
-    return 1;
+    *pts_out = pts;
+    *layer_out = tok_layer(tok[ntok - 1]);
+    return n;
 }
 
 static int parse_primitive(FcDrawing *d, FcPrim *p, const char **tok, int ntok, int line) {
@@ -175,30 +174,30 @@ static int parse_primitive(FcDrawing *d, FcPrim *p, const char **tok, int ntok, 
         fc_label_default(&p->value, p->u.box.a.x + 5, p->u.box.a.y + 10, p->layer);
         return 1;
     case FC_POLY: {
-        FcPoint tmp[FC_MAX_VERTICES];
-        int n = 0, layer = 0, ok = 1;
+        FcPoint *pts = NULL;
+        int n, layer = 0;
         if (ntok < 6) return 0;
-        parse_xy_list(tok, ntok, 1, 1, tmp, FC_MAX_VERTICES, &n, &layer, &ok);
-        if (!ok || n < 2) return 0;
-        p->u.poly.pts = copy_pts(d, tmp, n);
+        n = parse_xy_list(d, tok, ntok, 1, line, &pts, &layer);
+        if (n < 2) return 0;
+        p->u.poly.pts = pts;
         p->u.poly.n = n;
         p->layer = layer;
-        fc_label_default(&p->name, tmp[0].x + 5, tmp[0].y + 5, layer);
-        fc_label_default(&p->value, tmp[0].x + 5, tmp[0].y + 10, layer);
+        fc_label_default(&p->name, pts[0].x + 5, pts[0].y + 5, layer);
+        fc_label_default(&p->value, pts[0].x + 5, pts[0].y + 10, layer);
         return 1;
     }
     case FC_CURVE: {
-        FcPoint tmp[FC_MAX_VERTICES];
-        int n = 0, layer = 0, ok = 1;
+        FcPoint *pts = NULL;
+        int n, layer = 0;
         if (ntok < 6) return 0;
         p->u.curve.closed = tok_int(tok[1], 0) ? 1 : 0;
-        parse_xy_list(tok, ntok, 2, 1, tmp, FC_MAX_VERTICES, &n, &layer, &ok);
-        if (!ok || n < 1) return 0;
-        p->u.curve.pts = copy_pts(d, tmp, n);
+        n = parse_xy_list(d, tok, ntok, 2, line, &pts, &layer);
+        if (n < 1) return 0;
+        p->u.curve.pts = pts;
         p->u.curve.n = n;
         p->layer = layer;
-        fc_label_default(&p->name, tmp[0].x + 5, tmp[0].y + 5, layer);
-        fc_label_default(&p->value, tmp[0].x + 5, tmp[0].y + 10, layer);
+        fc_label_default(&p->name, pts[0].x + 5, pts[0].y + 5, layer);
+        fc_label_default(&p->value, pts[0].x + 5, pts[0].y + 10, layer);
         return 1;
     }
     case FC_CONN:
@@ -240,6 +239,7 @@ static int parse_primitive(FcDrawing *d, FcPrim *p, const char **tok, int ntok, 
         p->u.macro.mirror = tok_int(tok[4], 0) ? 1 : 0;
         {
             char *key = join_rest(&d->arena, tok, ntok, 5);
+            if (!key) return 0;
             fc_tolower_buf(key);
             p->u.macro.key = key;
         }
@@ -465,10 +465,13 @@ int fc_parse(FcDrawing *d, const char *text, size_t len) {
     const char *p, *end;
     char *line = NULL;
     size_t line_cap = 0;
+    const char **tok;
 
     memset(&cx, 0, sizeof cx);
     cx.d = d;
     if (!text) return FC_OK;
+    tok = (const char **)malloc(FC_MAX_TOKENS * sizeof *tok);
+    if (!tok) return FC_ERR_NOMEM;
     if (len == 0) len = fc_strlen(text);
     p = text;
     end = text + len;
@@ -481,7 +484,6 @@ int fc_parse(FcDrawing *d, const char *text, size_t len) {
         const char *start = p;
         size_t n;
         int truncated = 0;
-        const char *tok[FC_MAX_TOKENS];
         int ntok;
         while (p < end && *p != '\n' && *p != '\r') p++;
         n = (size_t)(p - start);
@@ -491,6 +493,7 @@ int fc_parse(FcDrawing *d, const char *text, size_t len) {
             char *nl = (char *)realloc(line, ncap);
             if (!nl) {
                 free(line);
+                free(tok);
                 return FC_ERR_NOMEM;
             }
             line = nl;
@@ -508,6 +511,7 @@ int fc_parse(FcDrawing *d, const char *text, size_t len) {
     }
     commit(&cx);
     free(line);
+    free(tok);
     return FC_OK;
 }
 
