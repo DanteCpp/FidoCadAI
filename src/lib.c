@@ -268,6 +268,92 @@ int fc_lib_load_dir(FcLib *lib, const char *dir) {
     return n > 0 ? FC_OK : FC_ERR_IO;
 }
 
+/* ---- user library directory ------------------------------------------- */
+
+static char *trim_ws(char *s) {
+    char *e;
+    while (*s == ' ' || *s == '\t') s++;
+    e = s + fc_strlen(s);
+    while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' || e[-1] == '\n')) *--e = 0;
+    return s;
+}
+
+/* $XDG_DOCUMENTS_DIR from ~/.config/user-dirs.dirs, if that file exists. */
+static int xdg_documents_dir(char *out, size_t cap) {
+    const char *home = getenv("HOME");
+    const char *cfg = getenv("XDG_CONFIG_HOME");
+    char path[1024];
+    char *text = NULL;
+    size_t len = 0;
+    char *p;
+    int found = 0;
+    if (!home || !*home) return 0;
+    if (cfg && *cfg) snprintf(path, sizeof path, "%s/user-dirs.dirs", cfg);
+    else snprintf(path, sizeof path, "%s/.config/user-dirs.dirs", home);
+    if (fc_read_file(path, &text, &len) != FC_OK) return 0;
+    for (p = text; p && *p;) {
+        char *nl = strchr(p, '\n');
+        char *eq;
+        if (nl) *nl = 0;
+        eq = strchr(p, '=');
+        if (eq) {
+            *eq = 0;
+            if (fc_streq(trim_ws(p), "XDG_DOCUMENTS_DIR")) {
+                const char *v = trim_ws(eq + 1);
+                char quote = (v[0] == '"' || v[0] == '\'') ? v[0] : 0;
+                size_t o = 0;
+                if (quote) v++;
+                while (*v && o + 1 < cap) {
+                    if (quote && *v == quote && v[1] == 0) break;
+                    if (strncmp(v, "$HOME", 5) == 0 && (v[5] == '/' || v[5] == 0)) {
+                        int m = snprintf(out + o, cap - o, "%s", home);
+                        if (m < 0 || (size_t)m >= cap - o) { o = cap - 1; break; }
+                        o += (size_t)m;
+                        v += 5;
+                        continue;
+                    }
+                    out[o++] = *v++;
+                }
+                out[o] = 0;
+                found = o > 0;
+                break;
+            }
+        }
+        p = nl ? nl + 1 : NULL;
+    }
+    free(text);
+    return found;
+}
+
+int fc_user_lib_dir(char *out, size_t cap) {
+    const char *home = getenv("HOME");
+    const char *env;
+    char doc[1024];
+    size_t n;
+    if (!out || cap == 0) return 0;
+    env = getenv("FIDO_USER_LIB_DIR");
+    if (env && *env) {
+        snprintf(out, cap, "%s", env);
+        return 1;
+    }
+    env = getenv("XDG_DOCUMENTS_DIR");
+    if (env && *env) snprintf(doc, sizeof doc, "%s", env);
+    else if (!xdg_documents_dir(doc, sizeof doc)) {
+        if (!home || !*home) return 0;
+        snprintf(doc, sizeof doc, "%s/Documents", home);
+    }
+    n = fc_strlen(doc);
+    while (n > 1 && doc[n - 1] == '/') doc[--n] = 0;
+    snprintf(out, cap, "%s/FidoLib", doc);
+    return 1;
+}
+
+int fc_lib_load_user_dir(FcLib *lib) {
+    char dir[1024];
+    if (!lib || !fc_user_lib_dir(dir, sizeof dir)) return FC_ERR_ARG;
+    return fc_lib_load_dir(lib, dir);
+}
+
 static int try_stdlib_dir(FcLib *lib, const char *dir) {
     struct stat st;
     char path[1024];

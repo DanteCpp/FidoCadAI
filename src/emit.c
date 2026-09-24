@@ -55,15 +55,15 @@ static void emit_fcj(FcBuf *b, const FcPrim *p) {
 }
 
 static void emit_labels(FcBuf *b, const FcPrim *p) {
-    if (p->has_name) emit_label(b, &p->name);
-    if (p->has_value) {
-        if (!p->has_name) {
-            FcLabel empty = p->value;
-            empty.text = "";
-            emit_label(b, &empty);
-        }
-        emit_label(b, &p->value);
-    }
+    /* FidoCadJS saveText always writes the two TY lines as a pair; an absent
+     * one is emitted empty. Its parser only registers the primitive when the
+     * second TY line arrives, so never write just one. */
+    FcLabel empty;
+    if (!p->has_name && !p->has_value) return;
+    empty = p->has_name ? p->name : p->value;
+    empty.text = "";
+    emit_label(b, p->has_name ? &p->name : &empty);
+    emit_label(b, p->has_value ? &p->value : &empty);
 }
 
 static int drop_degenerate(const FcPrim *p) {
@@ -152,6 +152,8 @@ void fc_emit_prim(FcBuf *b, const FcPrim *p, int extensions) {
         emit_label(b, &p->u.text);
         return; /* text has no FCJ/labels */
     }
+    if (extensions && fc_kind_direct_labels(p->kind) && (p->has_name || p->has_value))
+        fc_buf_puts(b, "FCJ\n"); /* FidoCadJS saveText: labels need this marker */
     if (extensions && need_fcj(p)) emit_fcj(b, p);
     emit_labels(b, p);
 }

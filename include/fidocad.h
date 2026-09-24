@@ -5,6 +5,10 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define FC_VERSION "0.1.0"
 
 #define FC_MAX_LAYERS 16
@@ -211,6 +215,17 @@ typedef struct {
     int verbose; /* list every primitive */
 } FcDescribeOpts;
 
+/* Viewport for interactive rendering: pixel = logical * scale + origin. */
+typedef struct {
+    double ox, oy;     /* pixel position of logical (0,0) */
+    double scale;      /* pixels per logical unit */
+    uint32_t bg;       /* 0xRRGGBB */
+    int grid;          /* grid step in logical units, 0 = none */
+    int grid_major;    /* emphasise every Nth grid dot, 0 = none */
+    uint32_t grid_rgb;
+    int tex;
+} FcView;
+
 /* --- arena / IO --- */
 void fc_arena_init(FcArena *a, size_t cap);
 void fc_arena_free(FcArena *a);
@@ -242,10 +257,40 @@ int fc_lib_load_text(FcLib *lib, const char *text, size_t len, const char *prefi
 int fc_lib_load_file(FcLib *lib, const char *path, const char *prefix);
 int fc_lib_load_dir(FcLib *lib, const char *dir);
 int fc_lib_load_stdlib(FcLib *lib, const char *argv0);
+/* Directory for the user's own macros: $FIDO_USER_LIB_DIR, else
+   $XDG_DOCUMENTS_DIR/FidoLib, else ~/Documents/FidoLib. */
+int fc_user_lib_dir(char *out, size_t cap);
+int fc_lib_load_user_dir(FcLib *lib); /* silent no-op when the directory is absent */
 const FcMacro *fc_lib_find(const FcLib *lib, const char *key);
 int fc_lib_count(const FcLib *lib);
 const FcMacro *fc_lib_at(const FcLib *lib, int i);
 const char *fc_lib_prefix_for_file(const char *filename);
+
+/* --- editing (GUI and agents) --- */
+int fc_append_fcd(FcDrawing *d, const char *text, size_t len); /* returns prims added */
+void fc_drawing_remove(FcDrawing *d, int index);
+int fc_drawing_move(FcDrawing *d, int from, int to);
+void fc_prim_translate(FcPrim *p, double dx, double dy);
+void fc_prim_rotate(FcPrim *p, double cx, double cy); /* 90 deg clockwise about (cx,cy) */
+void fc_prim_mirror(FcPrim *p, double cx);            /* horizontal flip about x = cx */
+int fc_prim_bounds(const FcDrawing *d, const FcLib *lib, int index, FcRect *out);
+int fc_hit_test(const FcDrawing *d, const FcLib *lib, double x, double y, double tol);
+char *fc_prim_fcd(const FcPrim *p); /* one primitive as FCD text (malloc) */
+/* which: 0 = TY text, 1 = name label, 2 = value label. Missing labels are
+ * created next to the primitive; an empty string removes a name/value. */
+int fc_prim_set_text(FcDrawing *d, int index, int which, const char *text);
+
+/* Control points ("handles") of a primitive, like FidoCadJS virtualPoint[]:
+ * endpoints for lines and PCB tracks, corners for rectangles/ellipses, the
+ * vertices of polygons and curves, Bezier control points, and the position of
+ * dots, pads, macros and text. fc_prim_handle returns 0 if i is out of range. */
+int fc_prim_handles(const FcPrim *p);
+int fc_prim_handle(const FcPrim *p, int i, FcPoint *out);
+void fc_prim_set_handle(FcPrim *p, int i, double x, double y);
+
+/* Diff two drawings primitive by primitive. json=0 gives a unified-style text
+ * report ("- [i] ..." / "+ [j] ..."), json=1 an object with an ops array. */
+char *fc_diff(const FcDrawing *before, const FcDrawing *after, int json);
 
 /* --- expand / query --- */
 int fc_expand(const FcDrawing *src, FcDrawing *dst, const FcLib *lib);
@@ -263,6 +308,8 @@ int fc_validate(const FcDrawing *d, char **report);
 void fc_render_opts_init(FcRenderOpts *o);
 int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opts,
                    const char *path);
+int fc_render_rgb(const FcDrawing *d, const FcLib *lib, const FcView *v, uint8_t *rgb, int w,
+                  int h, int stride);
 
 /* --- numbers --- */
 int fc_parse_int(const char *s, int *out);
@@ -275,5 +322,9 @@ void fc_fmt_num(char *buf, size_t cap, double v);
 int fc_tex_has_math(const char *s);
 int fc_tex_measure(const char *latex, int display, float *width_em, float *height_em,
                    float *depth_em);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

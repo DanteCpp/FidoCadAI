@@ -6,6 +6,7 @@ typedef struct {
     int has_pend;
     int expect_fcj;
     int labels_left;
+    int labels_seen; /* slot of the next label: 0 = name, 1 = value */
     int line;
 } ParseCtx;
 
@@ -104,14 +105,20 @@ static FcPoint *copy_pts(FcDrawing *d, FcPoint *pts, int n) {
     return p;
 }
 
-static int parse_xy_list(const char **tok, int ntok, int start, int last_is_layer, FcPoint *pts,
+/* Coordinate pairs from tok[start]; an odd token left over is the layer.
+ * Same as FidoCadJS PrimitivePolygon/ComplexCurve.parseTokens, so library
+ * lines like "PV 105 95 105 115 120 105" keep their last vertex. */
+static int parse_xy_list(const char **tok, int ntok, int start, int has_layer, FcPoint *pts,
                          int maxn, int *n_out, int *layer_out, int *ok) {
-    int end = last_is_layer ? ntok - 1 : ntok;
     int i = start;
     int n = 0;
     *ok = 1;
-    while (i + 1 < end && n < maxn) {
+    while (i + 1 < ntok) {
         double x, y;
+        if (n >= maxn) { /* truncated: drop the rest of the vertices */
+            i = ntok - ((ntok - start) % 2 ? 1 : 0);
+            break;
+        }
         if (!fc_parse_double(tok[i], &x) || !fc_parse_double(tok[i + 1], &y)) {
             *ok = 0;
             return 0;
@@ -121,12 +128,8 @@ static int parse_xy_list(const char **tok, int ntok, int start, int last_is_laye
         n++;
         i += 2;
     }
-    if (n >= maxn && i + 1 < end) {
-        /* truncated */
-    }
     *n_out = n;
-    if (last_is_layer && ntok > start) *layer_out = tok_layer(tok[ntok - 1]);
-    else *layer_out = 0;
+    *layer_out = has_layer && i < ntok ? tok_layer(tok[i]) : 0;
     return 1;
 }
 
@@ -272,6 +275,7 @@ static void apply_fcj(ParseCtx *cx, const char **tok, int ntok) {
     cx->expect_fcj = 0;
     if (fc_kind_direct_labels(p->kind)) {
         cx->labels_left = 2;
+        cx->labels_seen = 0;
         return;
     }
     if (fc_kind_arrowed(p->kind)) {
@@ -295,16 +299,24 @@ static void apply_fcj(ParseCtx *cx, const char **tok, int ntok) {
             p->has_ext = 1;
         }
     }
-    if (text_flag) cx->labels_left = 2;
+    if (text_flag) {
+        cx->labels_left = 2;
+        cx->labels_seen = 0;
+    }
 }
 
 static void attach_label(ParseCtx *cx, const FcLabel *l) {
-    if (!cx->pend.has_name) {
-        cx->pend.name = *l;
-        cx->pend.has_name = 1;
-    } else {
-        cx->pend.value = *l;
-        cx->pend.has_value = 1;
+    /* The first TY line is the name slot, the second the value slot. An empty
+     * text is an absent label, like FidoCadJS (name/value '' is no label). */
+    int slot = cx->labels_seen++;
+    if (l->text && l->text[0]) {
+        if (slot == 0) {
+            cx->pend.name = *l;
+            cx->pend.has_name = 1;
+        } else {
+            cx->pend.value = *l;
+            cx->pend.has_value = 1;
+        }
     }
     if (cx->labels_left > 0) cx->labels_left--;
     if (cx->labels_left == 0) commit(cx);
@@ -385,8 +397,10 @@ static void handle_line(ParseCtx *cx, const char **tok, int ntok) {
             apply_fcj(cx, tok, ntok);
             return;
         }
+        /* Like FidoCadJS ParserActions: labels on SA/PL/PA/MC are introduced by
+         * an explicit bare `FCJ` line. A `TY` directly after the primitive is
+         * standalone text, not its name/value. */
         cx->expect_fcj = 0;
-        if (fc_kind_direct_labels(cx->pend.kind) && is_ty) cx->labels_left = 2;
     }
 
     if (cx->has_pend && cx->labels_left > 0) {

@@ -622,9 +622,44 @@ static Node *parse_item(P *p) {
     }
 }
 
+/* TeX-ish atom classes for automatic math spacing: 0 = ordinary, 1 = binary, 2 = relation. */
+static int math_class(const Node *n) {
+    if (!n) return 0;
+    while (n->kind == N_SCRIPTS) n = n->a;
+    if (n->kind != N_SYM) return 0;
+    switch (n->ch) {
+    case '=':
+    case '<':
+    case '>':
+    case MG(MG_LEQ):
+    case MG(MG_GEQ):
+    case MG(MG_NEQ):
+    case MG(MG_APPROX):
+    case MG(MG_EQUIV):
+        return 2;
+    case '+':
+    case '-':
+    case '*':
+    case MG(MG_PM):
+    case MG(MG_CDOT):
+    case MG(MG_TIMES):
+    case MG(MG_DIV):
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static int math_is_ch(const Node *n, const char *set) {
+    while (n && n->kind == N_SCRIPTS) n = n->a;
+    return n && n->kind == N_SYM && n->ch < 128 && strchr(set, n->ch) != NULL;
+}
+
 static Node *parse_list(P *p, int stop) {
     Node *list = node_new(p, N_LIST);
     Node **tail;
+    Node *prev = NULL;
+    int prev_class = 0;
     if (!list) return NULL;
     tail = &list->a;
     for (;;) {
@@ -639,8 +674,26 @@ static Node *parse_list(P *p, int stop) {
         }
         it = parse_item(p);
         if (!it) break;
+        {
+            int ci = math_class(it);
+            /* a leading sign is unary after an operator or an open bracket */
+            if (ci == 1 && math_is_ch(it, "-") &&
+                (prev == NULL || prev_class > 0 || math_is_ch(prev, "([")))
+                ci = 0;
+            /* medium space around binary operators, thick around relations */
+            if (prev && (prev_class > 0) != (ci > 0) && !math_is_ch(it, ")].,;:")) {
+                Node *sp = node_new(p, N_SPACE);
+                if (sp) {
+                    sp->space_em = (prev_class == 2 || ci == 2) ? 0.28f : 0.22f;
+                    *tail = sp;
+                    tail = &sp->next;
+                }
+            }
+            prev_class = ci;
+        }
         *tail = it;
         tail = &it->next;
+        prev = it;
     }
     return list;
 }

@@ -7,6 +7,7 @@
 typedef struct {
     uint8_t *px; /* RGB */
     int w, h;
+    size_t stride; /* bytes per row */
     double ox, oy; /* origin in pixels of logical (0,0) */
     double scale;
     int dash_phase;
@@ -19,7 +20,7 @@ static void put_px(Raster *r, int x, int y, uint32_t rgb, float alpha) {
     if ((unsigned)x >= (unsigned)r->w || (unsigned)y >= (unsigned)r->h) return;
     if (alpha <= 0) return;
     if (alpha > 1) alpha = 1;
-    p = r->px + ((size_t)y * (size_t)r->w + (size_t)x) * 3;
+    p = r->px + (size_t)y * r->stride + (size_t)x * 3;
     R = (int)((rgb >> 16) & 255);
     G = (int)((rgb >> 8) & 255);
     B = (int)(rgb & 255);
@@ -58,12 +59,21 @@ static void plot(Raster *r, int x, int y, uint32_t rgb, float a, int dash, int d
     if (dash_on(dash, dist)) put_px(r, x, y, rgb, a);
 }
 
+static void fill_disk(Raster *r, int cx, int cy, int rad, uint32_t rgb, float a) {
+    int x, y;
+    if (rad < 1) return;
+    for (y = -rad; y <= rad; y++)
+        for (x = -rad; x <= rad; x++)
+            if (x * x + y * y <= rad * rad) put_px(r, cx + x, cy + y, rgb, a);
+}
+
 static void line_aa(Raster *r, int x0, int y0, int x1, int y1, uint32_t rgb, float a, int w,
                     int dash) {
     int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
     int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
     int err = dx + dy, e2, dist = 0;
     int thick = w < 1 ? 1 : w;
+    int ax = x0, ay = y0, bx = x1, by = y1;
     for (;;) {
         int t;
         for (t = -(thick / 2); t <= thick / 2; t++) {
@@ -83,6 +93,14 @@ static void line_aa(Raster *r, int x0, int y0, int x1, int y1, uint32_t rgb, flo
             y0 += sy;
         }
         dist++;
+    }
+    /* FidoCadJS strokes with lineCap/lineJoin = round (GraphicsCanvas): a
+     * solid, thick line gets a disk at both ends, which also rounds the
+     * corners of polylines, polygons and rectangles drawn edge by edge. */
+    if (!dash && thick > 2) {
+        int rad = thick / 2;
+        fill_disk(r, ax, ay, rad, rgb, a);
+        fill_disk(r, bx, by, rad, rgb, a);
     }
 }
 
@@ -681,6 +699,65 @@ static int write_ppm(FILE *fp, const Raster *r) {
     return 0;
 }
 
+static void fill_bg(Raster *r, uint32_t bg) {
+    uint8_t R = (uint8_t)((bg >> 16) & 255), G = (uint8_t)((bg >> 8) & 255), B = (uint8_t)(bg & 255);
+    int x, y;
+    for (y = 0; y < r->h; y++) {
+        uint8_t *p = r->px + (size_t)y * r->stride;
+        for (x = 0; x < r->w; x++, p += 3) {
+            p[0] = R;
+            p[1] = G;
+            p[2] = B;
+        }
+    }
+}
+
+int fc_render_rgb(const FcDrawing *d, const FcLib *lib, const FcView *v, uint8_t *rgb, int w,
+                  int h, int stride) {
+    FcDrawing exp;
+    const FcDrawing *src = d;
+    Raster r;
+    int i;
+    if (!d || !v || !rgb || w <= 0 || h <= 0 || stride < w * 3 || v->scale <= 0) return FC_ERR_ARG;
+    fc_ttf_init();
+    r.px = rgb;
+    r.w = w;
+    r.h = h;
+    r.stride = (size_t)stride;
+    r.ox = v->ox;
+    r.oy = v->oy;
+    r.scale = v->scale;
+    r.dash_phase = 0;
+    r.tex = v->tex;
+    fill_bg(&r, v->bg);
+    if (v->grid > 0 && v->grid * v->scale >= 4) {
+        double step = v->grid * v->scale;
+        int big = v->grid_major > 0 ? v->grid_major : 0;
+        long gx0 = (long)floor(-r.ox / step), gy0 = (long)floor(-r.oy / step);
+        long gx, gy;
+        for (gy = gy0; gy * step + r.oy < h; gy++)
+            for (gx = gx0; gx * step + r.ox < w; gx++) {
+                int px = (int)floor(gx * step + r.ox + 0.5), py = (int)floor(gy * step + r.oy + 0.5);
+                int major = big && gx % big == 0 && gy % big == 0;
+                put_px(&r, px, py, v->grid_rgb, 1);
+                if (major) {
+                    put_px(&r, px + 1, py, v->grid_rgb, 1);
+                    put_px(&r, px, py + 1, v->grid_rgb, 1);
+                    put_px(&r, px - 1, py, v->grid_rgb, 1);
+                    put_px(&r, px, py - 1, v->grid_rgb, 1);
+                }
+            }
+    }
+    fc_drawing_init(&exp);
+    if (lib) {
+        fc_expand(d, &exp, lib);
+        src = &exp;
+    }
+    for (i = 0; i < src->nprims; i++) draw_prim(&r, src, &src->prims[i]);
+    fc_drawing_free(&exp);
+    return FC_OK;
+}
+
 void fc_render_opts_init(FcRenderOpts *o) {
     memset(o, 0, sizeof *o);
     o->margin = 12;
@@ -698,7 +775,7 @@ int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opt
     FcRect bb;
     Raster r;
     double bw, bh;
-    int i, x, y;
+    int i;
     FILE *fp;
     int rc = FC_OK;
     int own = 0;
@@ -748,22 +825,13 @@ int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opt
     r.oy = o.margin - bb.min_y * r.scale;
     r.dash_phase = 0;
     r.tex = o.tex;
+    r.stride = (size_t)r.w * 3;
     r.px = (uint8_t *)malloc((size_t)r.w * (size_t)r.h * 3);
     if (!r.px) {
         if (own) fc_drawing_free(&exp);
         return FC_ERR_NOMEM;
     }
-    {
-        uint8_t R = (uint8_t)((o.bg >> 16) & 255), G = (uint8_t)((o.bg >> 8) & 255),
-                  B = (uint8_t)(o.bg & 255);
-        for (y = 0; y < r.h; y++)
-            for (x = 0; x < r.w; x++) {
-                uint8_t *p = r.px + ((size_t)y * r.w + x) * 3;
-                p[0] = R;
-                p[1] = G;
-                p[2] = B;
-            }
-    }
+    fill_bg(&r, o.bg);
     if (o.grid) {
         int gx, gy;
         int step = o.scale >= 4 ? 5 : 10;

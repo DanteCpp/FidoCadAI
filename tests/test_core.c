@@ -78,6 +78,7 @@ static void test_mc_labels(void) {
     fc_drawing_init(&d);
     fc_parse(&d,
              "MC 100 100 0 0 080\n"
+             "FCJ\n"
              "TY 110 105 4 3 0 0 0 * R1\n"
              "TY 110 110 4 3 0 0 0 * 10k\n"
              "LI 0 0 10 10 0\n",
@@ -89,6 +90,47 @@ static void test_mc_labels(void) {
     EXPECT(strcmp(d.prims[0].name.text, "R1") == 0);
     EXPECT(strcmp(d.prims[0].value.text, "10k") == 0);
     EXPECT(d.prims[1].kind == FC_LINE);
+    fc_drawing_free(&d);
+}
+
+/* A TY right after SA/PL/PA/MC without an `FCJ` marker is independent text:
+ * FidoCadJS ParserActions only starts label attachment on the FCJ line. */
+static void test_ty_after_conn_is_text(void) {
+    FcDrawing d;
+    char *s;
+    fc_drawing_init(&d);
+    fc_parse(&d, "SA 30 210 7\nTY 60 210 5 3 0 0 0 * title\n", 0);
+    EXPECT(d.nprims == 2);
+    EXPECT(d.prims[0].kind == FC_CONN && !d.prims[0].has_name && !d.prims[0].has_value);
+    EXPECT(d.prims[1].kind == FC_TEXT);
+    EXPECT(strcmp(d.prims[1].u.text.text, "title") == 0);
+    /* and a labeled connection still round-trips through the FCJ form */
+    {
+        FcDrawing e;
+        fc_drawing_init(&e);
+        fc_parse(&e, "SA 70 60 0\nFCJ\nTY 75 65 4 3 0 0 0 * N1\nTY 75 70 4 3 0 0 0 * net1\n", 0);
+        EXPECT(e.nprims == 1);
+        EXPECT(e.prims[0].has_name && e.prims[0].has_value);
+        s = fc_prim_fcd(&e.prims[0]);
+        EXPECT(s && strstr(s, "SA 70 60 0") && strstr(s, "FCJ\n") && strstr(s, "N1"));
+        free(s);
+        fc_drawing_free(&e);
+    }
+    /* a name-only label still emits both TY lines (FidoCadJS needs the pair) */
+    {
+        FcDrawing e;
+        int tys = 0;
+        char *q;
+        fc_drawing_init(&e);
+        fc_parse(&e, "SA 70 60 0\nFCJ\nTY 75 65 4 3 0 0 0 * N1\nTY 75 65 4 3 0 0 0 * \n", 0);
+        EXPECT(e.nprims == 1 && e.prims[0].has_name && !e.prims[0].has_value);
+        s = fc_prim_fcd(&e.prims[0]);
+        if (s)
+            for (q = s; (q = strstr(q, "TY ")); q += 3) tys++;
+        EXPECT(tys == 2);
+        free(s);
+        fc_drawing_free(&e);
+    }
     fc_drawing_free(&d);
 }
 
@@ -152,6 +194,30 @@ static void test_poly(void) {
     EXPECT(d.prims[0].u.poly.n == 3);
     EXPECT(d.prims[1].filled == 1);
     EXPECT(d.prims[1].layer == 1);
+    fc_drawing_free(&d);
+}
+
+/* PV/PP/CV without a trailing layer (as in the stdlib op-amp): every pair is
+ * a vertex; only an odd leftover token is the layer. */
+static void test_poly_no_layer(void) {
+    FcDrawing d;
+    char *a = NULL, *b = NULL;
+    fc_drawing_init(&d);
+    EXPECT(fc_parse_file(&d, "tests/fixtures/poly-no-layer.fcd") == FC_OK);
+    EXPECT(d.nprims == 3);
+    EXPECT(d.prims[0].u.poly.n == 3 && d.prims[0].layer == 0);
+    EXPECT(d.prims[0].u.poly.pts[2].x == 120 && d.prims[0].u.poly.pts[2].y == 105);
+    EXPECT(d.prims[1].u.poly.n == 4 && d.prims[1].layer == 3);
+    EXPECT(d.prims[2].u.curve.n == 3 && d.prims[2].u.curve.closed);
+    EXPECT(fc_emit(&d, &a, NULL) > 0);
+    fc_drawing_free(&d);
+    fc_drawing_init(&d);
+    fc_parse(&d, a, 0);
+    EXPECT(fc_emit(&d, &b, NULL) > 0);
+    EXPECT(a && b && strcmp(a, b) == 0);
+    EXPECT(d.prims[0].u.poly.n == 3);
+    free(a);
+    free(b);
     fc_drawing_free(&d);
 }
 
@@ -270,6 +336,12 @@ static void test_tex(void) {
     w = 0;
     EXPECT(fc_tex_measure("\\Omega", 0, &w, &h, &d) == 1);
     EXPECT(w > 0.4f);
+    w = h = d = 0;
+    EXPECT(fc_tex_measure("a+b", 0, &w, &h, &d) == 1);
+    EXPECT(w > 2.0f); /* binary operators get TeX-style medium spaces */
+    w = h = d = 0;
+    EXPECT(fc_tex_measure("-x", 0, &w, &h, &d) == 1);
+    EXPECT(w < 1.5f); /* a leading sign stays unary, no space */
     fc_drawing_init(&dr);
     fc_parse(&dr,
              "[FIDOCAD]\n"
@@ -308,10 +380,12 @@ int main(void) {
     test_fcj_arrow();
     test_rect_dash_and_labels();
     test_mc_labels();
+    test_ty_after_conn_is_text();
     test_standalone_ty_after_line();
     test_clamp_and_skip();
     test_roundtrip();
     test_poly();
+    test_poly_no_layer();
     test_fjc_layer();
     test_fmt_num();
     test_stdlib_and_expand();
