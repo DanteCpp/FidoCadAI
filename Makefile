@@ -23,7 +23,10 @@ TEST_OBJ := build/test_core.o
 # the GUI is built only when Qt6 Widgets + Network are available. Works with
 # Linux (qt6-base-dev) and macOS (brew install qt pkg-config).
 CXX      ?= c++
-CXXFLAGS ?= -std=c++17 -Wall -Wextra -Wno-sfinae-incomplete -O2 -g
+# -Wno-sfinae-incomplete is a GCC flag (GCC 13 false positive with Qt); clang
+# (macOS) does not know it, so only pass it when the compiler is not clang.
+CXX_IS_CLANG := $(findstring clang,$(shell $(CXX) --version 2>/dev/null))
+CXXFLAGS ?= -std=c++17 -Wall -Wextra $(if $(CXX_IS_CLANG),,-Wno-sfinae-incomplete) -O2 -g
 QT_PKGS  := Qt6Widgets
 HAVE_QT  := $(shell pkg-config --exists $(QT_PKGS) 2>/dev/null && echo 1)
 HAVE_QT_TEST := $(shell pkg-config --exists Qt6Test 2>/dev/null && echo 1)
