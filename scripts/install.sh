@@ -345,11 +345,10 @@ write_etc_file() {
     dir=$(dirname "$1")
     [ -d "$dir" ] || run_root mkdir -p "$dir"
     if [ -w "$dir" ] && { [ ! -e "$1" ] || [ -w "$1" ]; }; then
-        cp -f "$2" "$1"
+        install -m 644 "$2" "$1"
     else
-        run_root cp -f "$2" "$1"
+        run_root install -m 644 "$2" "$1"
     fi
-    chmod 644 "$1" 2>/dev/null || true
 }
 
 # Make `fcai` (and `fcai-gui`) callable everywhere. Linux: POSIX login shells
