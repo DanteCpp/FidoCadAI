@@ -13,6 +13,8 @@
 #define FC_MAX_MACRO_DEPTH 16
 #define FC_MIN_COORD 0.0
 #define FC_MAX_COORD 1000000.0
+#define FC_MAX_NUM 1e15 /* fc_fmt_num saturates here */
+#define FC_MAX_EXPANDED_PRIMS 200000 /* per fc_expand, cached macro bodies included */
 
 #define FC_STYLE_BOLD 1
 #define FC_STYLE_ITALIC 2
@@ -198,11 +200,11 @@ typedef struct {
 } FcEmitOpts;
 
 typedef struct {
-    int scale;      /* pixels per grid unit; 0 = auto */
-    int margin;     /* padding in pixels */
-    int max_w, max_h;
+    int scale;      /* pixels per grid unit; 0 = auto (fits max_w x max_h) */
+    int margin;     /* padding in pixels (0 allowed) */
+    int max_w, max_h; /* <= 0 = default */
     int grid;
-    uint32_t bg;    /* 0xRRGGBB */
+    uint32_t bg;    /* 0xRRGGBB, taken as-is (0 = black) */
     int ppm;        /* 1 = PPM, 0 = PNG */
     int tex;        /* 1 = typeset $...$ (default on) */
 } FcRenderOpts;
@@ -229,6 +231,7 @@ void fc_drawing_diag(FcDrawing *d, int line, FcDiagLevel level, const char *fmt,
 void fc_layers_init(FcLayer layers[FC_MAX_LAYERS]);
 void fc_config_init(FcConfig *c);
 
+/* len == 0 means text is NUL-terminated (strlen is used). */
 int fc_parse(FcDrawing *d, const char *text, size_t len);
 int fc_parse_file(FcDrawing *d, const char *path);
 
@@ -238,6 +241,7 @@ int fc_emit_file(const FcDrawing *d, const char *path, const FcEmitOpts *opts);
 /* --- libraries --- */
 FcLib *fc_lib_new(void);
 void fc_lib_free(FcLib *lib);
+/* len == 0 means text is NUL-terminated (strlen is used). */
 int fc_lib_load_text(FcLib *lib, const char *text, size_t len, const char *prefix);
 int fc_lib_load_file(FcLib *lib, const char *path, const char *prefix);
 int fc_lib_load_dir(FcLib *lib, const char *dir);

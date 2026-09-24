@@ -3,6 +3,10 @@
 
 static int nearly(double a, double b) { return fabs(a - b) < 1e-5; }
 
+static const char *diag_level_name(FcDiagLevel lv) {
+    return lv == FC_DIAG_ERR ? "error" : (lv == FC_DIAG_WARN ? "warn" : "note");
+}
+
 static const char *font_out(const char *font, char *tmp, size_t cap) {
     if (!font || font[0] == 0 || (font[0] == '*' && font[1] == 0) ||
         fc_streq(font, "Courier New"))
@@ -54,15 +58,25 @@ static void emit_fcj(FcBuf *b, const FcPrim *p) {
     }
 }
 
+/* Name and value always go out as a pair (like FidoCadJS): the parser takes the two
+ * TY lines after a labelled primitive, so writing only one would make it swallow a
+ * following standalone TY on the next read. */
 static void emit_labels(FcBuf *b, const FcPrim *p) {
-    if (p->has_name) emit_label(b, &p->name);
+    FcLabel empty;
+    if (!p->has_name && !p->has_value) return;
+    if (p->has_name) {
+        emit_label(b, &p->name);
+    } else {
+        empty = p->value;
+        empty.text = "";
+        emit_label(b, &empty);
+    }
     if (p->has_value) {
-        if (!p->has_name) {
-            FcLabel empty = p->value;
-            empty.text = "";
-            emit_label(b, &empty);
-        }
         emit_label(b, &p->value);
+    } else {
+        empty = p->name;
+        empty.text = "";
+        emit_label(b, &empty);
     }
 }
 
@@ -395,9 +409,25 @@ static void include_prim_bounds(FcRect *r, const FcPrim *p, int *any) {
     case FC_PCB_PAD:
         include_pt(r, p->u.pad.p, any);
         break;
-    case FC_MACRO:
-        include_pt(r, p->u.macro.p, any);
+    case FC_MACRO: {
+        /* only unexpanded macros reach here; leave room for the render placeholder */
+        FcPoint q = p->u.macro.p;
+        include_pt(r, q, any);
+        q.x += FC_PLACEHOLDER_SIZE;
+        q.y += FC_PLACEHOLDER_SIZE;
+        include_pt(r, q, any);
+        q.x = fc_clamp_coord(p->u.macro.p.x - FC_PLACEHOLDER_SIZE);
+        q.y = fc_clamp_coord(p->u.macro.p.y - FC_PLACEHOLDER_SIZE);
+        include_pt(r, q, any);
+        if (p->u.macro.key) {
+            FcLabel l;
+            fc_label_default(&l, p->u.macro.p.x + FC_PLACEHOLDER_SIZE,
+                             p->u.macro.p.y - FC_PLACEHOLDER_SIZE, 0);
+            l.text = p->u.macro.key;
+            include_label(r, &l, any);
+        }
         break;
+    }
     case FC_TEXT:
         include_label(r, &p->u.text, any);
         break;
@@ -411,21 +441,18 @@ int fc_bounds(const FcDrawing *d, const FcLib *lib, FcRect *out) {
     const FcDrawing *src = d;
     int any = 0;
     int i;
-    int rc = 0;
     FcRect r = {0, 0, 0, 0};
     if (lib) {
         fc_drawing_init(&exp);
         if (fc_expand(d, &exp, lib) == FC_OK) src = &exp;
-        else rc = -1;
     }
     for (i = 0; i < src->nprims; i++) include_prim_bounds(&r, &src->prims[i], &any);
-    if (src == &exp) fc_drawing_free(&exp);
+    if (lib) fc_drawing_free(&exp);
     if (!any) {
         out->min_x = out->min_y = out->max_x = out->max_y = 0;
         return 0;
     }
     *out = r;
-    (void)rc;
     return 1;
 }
 
@@ -561,10 +588,8 @@ char *fc_describe(const FcDrawing *d, const FcLib *lib, const FcDescribeOpts *op
     if (d->ndiags) {
         fc_buf_printf(&b, "diagnostics: %d\n", d->ndiags);
         for (i = 0; i < d->ndiags; i++) {
-            const char *lv = d->diags[i].level == FC_DIAG_ERR
-                                 ? "error"
-                                 : (d->diags[i].level == FC_DIAG_WARN ? "warn" : "note");
-            fc_buf_printf(&b, "  %s:%d: %s\n", lv, d->diags[i].line, d->diags[i].msg);
+            fc_buf_printf(&b, "  %s:%d: %s\n", diag_level_name(d->diags[i].level),
+                          d->diags[i].line, d->diags[i].msg ? d->diags[i].msg : "");
         }
     } else {
         fc_buf_puts(&b, "diagnostics: none\n");
@@ -610,18 +635,16 @@ char *fc_to_json(const FcDrawing *d, const FcLib *lib) {
         if (i) fc_buf_putc(&b, ',');
         fc_buf_printf(&b, "{\"id\":%d,\"name\":", i);
         fc_json_escape(&b, d->layers[i].name);
-        fc_buf_printf(&b, ",\"rgb\":%u,\"alpha\":%.3f,\"modified\":%s}", (unsigned)d->layers[i].rgb,
-                      (double)d->layers[i].alpha, d->layers[i].modified ? "true" : "false");
+        fc_fmt_num(n, 32, d->layers[i].alpha);
+        fc_buf_printf(&b, ",\"rgb\":%u,\"alpha\":%s,\"modified\":%s}", (unsigned)d->layers[i].rgb,
+                      n, d->layers[i].modified ? "true" : "false");
     }
     fc_buf_puts(&b, "],\n");
     fc_buf_puts(&b, "  \"diagnostics\": [");
     for (i = 0; i < d->ndiags; i++) {
-        const char *lv = d->diags[i].level == FC_DIAG_ERR
-                             ? "error"
-                             : (d->diags[i].level == FC_DIAG_WARN ? "warn" : "note");
         if (i) fc_buf_putc(&b, ',');
         fc_buf_printf(&b, "{\"level\":");
-        fc_json_escape(&b, lv);
+        fc_json_escape(&b, diag_level_name(d->diags[i].level));
         fc_buf_printf(&b, ",\"line\":%d,\"msg\":", d->diags[i].line);
         fc_json_escape(&b, d->diags[i].msg);
         fc_buf_putc(&b, '}');
@@ -659,7 +682,7 @@ int fc_validate(const FcDrawing *d, char **report) {
     char *e1 = NULL, *e2 = NULL;
     FcBuf b;
     int ok = 1;
-    int i;
+    int i, ndropped = 0;
     opts.extensions = 1;
     opts.header = 1;
     fc_buf_init(&b);
@@ -675,9 +698,15 @@ int fc_validate(const FcDrawing *d, char **report) {
     } else {
         fc_buf_printf(&b, "round-trip ok (%zu bytes, %d primitives)\n", fc_strlen(e1), d2.nprims);
     }
-    if (d->nprims != d2.nprims) {
+    /* zero-length lines and one-point curves are dropped on purpose by the emitter */
+    for (i = 0; i < d->nprims; i++)
+        if (drop_degenerate(&d->prims[i])) ndropped++;
+    if (ndropped)
+        fc_buf_printf(&b, "note: %d degenerate primitive%s dropped on emit\n", ndropped,
+                      ndropped == 1 ? "" : "s");
+    if (d->nprims - ndropped != d2.nprims) {
         ok = 0;
-        fc_buf_printf(&b, "primitive count %d -> %d\n", d->nprims, d2.nprims);
+        fc_buf_printf(&b, "primitive count %d -> %d\n", d->nprims - ndropped, d2.nprims);
     }
     fc_drawing_init(&d3);
     fc_parse(&d3, e2, fc_strlen(e2));
@@ -688,9 +717,8 @@ int fc_validate(const FcDrawing *d, char **report) {
     if (d->ndiags) {
         fc_buf_printf(&b, "parse diagnostics: %d\n", d->ndiags);
         for (i = 0; i < d->ndiags; i++)
-            fc_buf_printf(&b, "  %s:%d: %s\n",
-                          d->diags[i].level == FC_DIAG_ERR ? "error" : "warn", d->diags[i].line,
-                          d->diags[i].msg);
+            fc_buf_printf(&b, "  %s:%d: %s\n", diag_level_name(d->diags[i].level),
+                          d->diags[i].line, d->diags[i].msg ? d->diags[i].msg : "");
     }
     fc_drawing_free(&d2);
     fc_drawing_free(&d3);

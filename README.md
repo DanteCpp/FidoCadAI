@@ -44,7 +44,7 @@ fcai lib                          # list loaded macros
 fcai config                       # dump effective settings
 ```
 
-Stdin is accepted (`fcai json -` or pipe). Exit status is 0 on success.
+Stdin is accepted (`fcai json -` or pipe). Exit status is 0 on success; non-zero on I/O errors, a `--lib` that cannot be loaded, or a failed `validate`.
 
 ### Settings (all overridable by an agent)
 
@@ -62,9 +62,11 @@ Flags, `key = value` config (`--config file`), and environment:
 | `ppm` | `--ppm` | off (PNG) |
 | `bg` | `--bg RRGGBB` | `FFFFFF` |
 | `json` | `--json` / `FIDO_JSON` | off |
+| `tex` | `--tex` / `--no-tex` / `FIDO_NO_TEX` | on |
+| fonts | `FIDO_FONT_DIR` | next to binary |
 | `verbose` | `-v` | off |
 
-`--lib PATH` (repeatable) plus `--prefix NAME` loads extra `.fcl` files. Personal libraries: `FIDO_LIB_DIR=/home/dante/Drive/Resources/FidoLibs`.
+`--lib PATH` (repeatable) plus `--prefix NAME` loads extra `.fcl` files. Personal libraries: point `FIDO_LIB_DIR` (or `--lib-dir`) at your own `.fcl` folder.
 
 ## Library (embed)
 
