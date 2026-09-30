@@ -93,14 +93,31 @@ Spec: `~/Projects/FidoCadJS/FIDOSPECS.md`. Behaviour should match FidoCadJS
 - `tests/test_core.c` — no framework, just `EXPECT`
 - `tests/test_gui.cpp` — offscreen QTest mouse/key events + session channel
 
-## Checks after a change
+## Working style: iterate fast, harden at push
+
+During normal work, implement first and verify with the smallest thing that can
+fail, then report back. Good smoke checks:
+
+- incremental build of what changed (`make -s fcai`, `make -s gui`)
+- the touched drawing through `fcai context|describe|render|diff`
+- `./build/test_core` (~50 ms) for core edits;
+  `QT_QPA_PLATFORM=offscreen ./build/test_gui` (~2 s) for GUI edits
+
+Do **not** run the full suite or sanitizers on every change — that is the push
+gate, not the loop. Write the tests alongside the change, but they only have to
+be green before a push. If you touch the parser, add a fixture under
+`tests/fixtures/` with a round-trip assertion.
+
+Before pushing to a remote (a deploy):
 
 ```
-make test
-make sanitize   # after parser/emitter/rasterizer edits
+make test       # core + GUI
+make sanitize   # ASan + UBSan
 ```
 
-If you touch the parser, add a fixture under `tests/fixtures/` and a round-trip assertion.
+CI (`.github/workflows/ci.yml`) reruns both on Linux and macOS; fix what it
+flags. The post-commit hook refreshes `/opt/FidoCadAI` via
+`scripts/install.sh update`.
 
 ## Install & update
 
