@@ -15,7 +15,7 @@ class QTimer;
  *   DIR/commands.jsonl  agent -> GUI, via `fcai session push DIR ...`,
  *                       `... push`, `... set`, `... get`, `... quit`.
  *
- * The GUI truncates both files when it starts, then polls commands.jsonl and
+ * The GUI archives the previous logs at start, then polls commands.jsonl and
  * calls onCommand for every complete line. Nothing here needs Q_OBJECT. */
 class Session {
 public:
@@ -35,4 +35,6 @@ private:
     QFileSystemWatcher *watch_ = nullptr;
     QTimer *timer_ = nullptr;
     qint64 pos_ = 0;
+    qint64 seq_ = 0;
+    QString run_;
 };

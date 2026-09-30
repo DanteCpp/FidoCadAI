@@ -8,6 +8,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QScrollBar>
+#include <QSignalBlocker>
 #include <QWheelEvent>
 #include <cmath>
 #include <cstring>
@@ -50,6 +52,14 @@ Canvas::Canvas(Document *doc, Settings *settings, const Theme *theme, QWidget *p
     setFocusPolicy(Qt::StrongFocus);
     setAttribute(Qt::WA_OpaquePaintEvent);
     setMinimumSize(320, 240);
+    cheats_bar_ = new QScrollBar(Qt::Vertical, this);
+    cheats_bar_->setObjectName("cheatsheetScrollBar");
+    cheats_bar_->setFocusPolicy(Qt::NoFocus);
+    cheats_bar_->hide();
+    connect(cheats_bar_, &QScrollBar::valueChanged, this, [this](int value) {
+        cheats_scroll_ = value;
+        update();
+    });
 }
 
 QString Canvas::toolName(Tool t) {
@@ -102,6 +112,7 @@ void Canvas::setTool(Tool t) {
     tool_ = t;
     if (t != Select) {
         sel_.clear();
+        selected_handles_.clear();
         if (onSelectionChanged) onSelectionChanged();
     }
     setCursor(t == Select ? Qt::ArrowCursor : Qt::CrossCursor);
@@ -118,6 +129,7 @@ void Canvas::setMacro(const QString &key) {
 }
 
 void Canvas::setSelection(const QList<int> &sel) {
+    selected_handles_.clear();
     sel_.clear();
     for (int i : sel)
         if (i >= 0 && i < doc_->count() && !sel_.contains(i)) sel_ << i;
@@ -138,16 +150,18 @@ void Canvas::fit() {
     if (doc_->count() == 0) b = QRectF(0, 0, 200, 150);
     b.adjust(-10, -10, 10, 10);
     double sx = width() / std::max(b.width(), 1.0), sy = height() / std::max(b.height(), 1.0);
-    scale_ = std::clamp(std::min(sx, sy), 0.25, 60.0);
+    /* Fit must also contain drawings larger than the manual zoom range. */
+    scale_ = std::min({sx, sy, 60.0});
     ox_ = width() / 2.0 - b.center().x() * scale_;
     oy_ = height() / 2.0 - b.center().y() * scale_;
-    fitted_ = true;
+    auto_fit_ = true;
     dirty_ = true;
     status();
     update();
 }
 
 void Canvas::zoomBy(double f, QPointF at) {
+    auto_fit_ = false;
     double ns = std::clamp(scale_ * f, 0.25, 60.0);
     QPointF lg = toLogical(at);
     scale_ = ns;
@@ -158,6 +172,13 @@ void Canvas::zoomBy(double f, QPointF at) {
     update();
 }
 
+void Canvas::fitIfOutside() {
+    if (doc_->count() == 0) return;
+    QRectF b = doc_->boundsAll();
+    QPointF lo = toPixel(b.topLeft()), hi = toPixel(b.bottomRight());
+    if (lo.x() < 0 || lo.y() < 0 || hi.x() > width() || hi.y() > height()) fit();
+}
+
 void Canvas::refresh() {
     dirty_ = true;
     status();
@@ -165,6 +186,8 @@ void Canvas::refresh() {
 }
 
 void Canvas::docChanged() {
+    /* Undo, replacement and property edits can change compact handle indices. */
+    if (op_ != Resizing && !editing_handles_) selected_handles_.clear();
     QList<int> keep;
     for (int i : sel_)
         if (i < doc_->count()) keep << i;
@@ -396,13 +419,15 @@ void Canvas::paintEvent(QPaintEvent *) {
     /* control-point handles for the selection (FidoCadJS-style resize grips) */
     if (!sel_.isEmpty() && !form_) {
         p.setPen(QPen(theme_->fg, 1));
-        p.setBrush(acc);
         for (int i : sel_) {
             int n = doc_->handles(i);
             for (int h = 0; h < n; h++) {
                 QPointF g = toPixel(doc_->handle(i, h));
                 if (g.x() < -8 || g.y() < -8 || g.x() > width() + 8 || g.y() > height() + 8) continue;
-                p.drawRect(QRectF(g.x() - 3.5, g.y() - 3.5, 7, 7));
+                bool active = selected_handles_.contains(qMakePair(i, h));
+                p.setBrush(selected_handles_.isEmpty() || active ? acc : paper());
+                double radius = active ? 5 : 3.5;
+                p.drawRect(QRectF(g.x() - radius, g.y() - radius, radius * 2, radius * 2));
             }
         }
         p.setBrush(Qt::NoBrush);
@@ -462,6 +487,9 @@ void Canvas::paintEvent(QPaintEvent *) {
             {"right-click", "finish a line, or cancel the active tool"},
             {"middle-drag", "pan the view"},
             {"edit", ""},
+            {"drag handle", "reshape selection or move its name/value independently"},
+            {"Ctrl+click handle", "toggle handles, then drag one to move them together"},
+            {"box-select handles", "enclose name/value handles without enclosing a whole element"},
             {"P", "properties of the selected element"},
             {"F2", "properties of the selected element"},
             {"double-click", "properties of the element under the cursor"},
@@ -526,10 +554,11 @@ void Canvas::paintEvent(QPaintEvent *) {
         }
         paintCard(p, shown, &cheats_query_, &cheats_scroll_);
     }
+    if (!cheats_) cheats_bar_->hide();
 }
 
 void Canvas::resizeEvent(QResizeEvent *) {
-    if (!fitted_) fit();
+    if (auto_fit_) fit();
     dirty_ = true;
 }
 
@@ -553,6 +582,30 @@ int Canvas::handleAt(QPointF px, int *handle_out) const {
     }
     if (handle_out) *handle_out = best_h;
     return best_prim;
+}
+
+void Canvas::snapshotHandles() {
+    handle_starts_.clear();
+    for (const auto &h : selected_handles_) handle_starts_ << doc_->handle(h.first, h.second);
+}
+
+void Canvas::moveHandles(QPointF delta) {
+    /* Clamp the whole group together so labels keep their spacing at edges. */
+    double minX = -FC_MAX_COORD, minY = -FC_MAX_COORD;
+    double maxX = FC_MAX_COORD, maxY = FC_MAX_COORD;
+    for (QPointF p : handle_starts_) {
+        minX = std::max(minX, -p.x());
+        minY = std::max(minY, -p.y());
+        maxX = std::min(maxX, FC_MAX_COORD - p.x());
+        maxY = std::min(maxY, FC_MAX_COORD - p.y());
+    }
+    delta.setX(std::clamp(delta.x(), minX, maxX));
+    delta.setY(std::clamp(delta.y(), minY, maxY));
+    for (int j = 0; j < selected_handles_.size(); j++) {
+        const auto h = selected_handles_[j];
+        QPointF p = handle_starts_[j] + delta;
+        doc_->setHandle(h.first, h.second, p.x(), p.y());
+    }
 }
 
 QColor Canvas::layerColor(int l) const {
@@ -581,6 +634,7 @@ void Canvas::status() {
     s += QString(" · <span style=\"color:%1\">layer %2</span>")
              .arg(layerColor(layer()).name(), QString::number(layer()));
     if (!sel_.isEmpty()) s += QString(" · selected %1").arg(sel_.size());
+    if (!selected_handles_.isEmpty()) s += QString(" · handles %1").arg(selected_handles_.size());
     onStatus(s);
 }
 
@@ -633,7 +687,8 @@ void Canvas::place(QPointF a) {
 void Canvas::mousePressEvent(QMouseEvent *e) {
     if (form_) form_->apply(); /* clicking away keeps what was typed */
     if (cheats_) {
-        cheats_ = false;
+        if (!cheats_box_.contains(e->position().toPoint())) toggleCheatsheet();
+        setFocus();
         update();
         return;
     }
@@ -674,6 +729,16 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
         int hh = -1;
         int hp = handleAt(press_px_, &hh);
         if (hp >= 0) {
+            auto handle = qMakePair(hp, hh);
+            if (e->modifiers() & Qt::ControlModifier) {
+                if (selected_handles_.contains(handle)) selected_handles_.removeAll(handle);
+                else selected_handles_ << handle;
+                status();
+                update();
+                return;
+            }
+            if (!selected_handles_.contains(handle)) selected_handles_ = {handle};
+            snapshotHandles();
             drag_prim_ = hp;
             drag_handle_ = hh;
             doc_->beginChange();
@@ -684,6 +749,7 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
         int h = doc_->hit(press_lg_.x(), press_lg_.y(), 5.0 / scale_);
         bool add = e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier);
         if (h >= 0) {
+            selected_handles_.clear();
             if (add) {
                 QList<int> s2 = sel_;
                 if (s2.contains(h)) s2.removeAll(h);
@@ -747,6 +813,7 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
 }
 
 void Canvas::mouseMoveEvent(QMouseEvent *e) {
+    if (cheats_) return;
     QPointF lg = toLogical(e->position());
     has_cursor_ = true;
     QPointF s = snap(lg);
@@ -771,11 +838,13 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
         bool over = handleAt(e->position(), &hh) >= 0;
         setCursor(tool_ == Select ? (over ? Qt::SizeAllCursor : Qt::ArrowCursor) : Qt::CrossCursor);
     } else if (op_ == Resizing) {
-        doc_->setHandle(drag_prim_, drag_handle_, s.x(), s.y());
+        int anchor = selected_handles_.indexOf(qMakePair(drag_prim_, drag_handle_));
+        if (anchor >= 0) moveHandles(s - handle_starts_[anchor]);
         cursor_lg_ = s;
         update();
     } else if (op_ == Panning) {
         QPointF d = e->position() - press_px_;
+        if (!d.isNull()) auto_fit_ = false;
         ox_ += d.x();
         oy_ += d.y();
         press_px_ = e->position();
@@ -793,6 +862,7 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
 }
 
 void Canvas::mouseReleaseEvent(QMouseEvent *e) {
+    if (cheats_) return;
     QPointF lg = toLogical(e->position());
     if (op_ == RulerArmed) {
         op_ = None;
@@ -858,19 +928,38 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
         return;
     }
     if (op_ == Resizing) {
-        op_ = None;
         doc_->endChange();
+        op_ = None;
         setCursor(Qt::ArrowCursor);
         return;
     }
     if (op_ == Banding) {
         op_ = None;
         if ((e->position() - press_px_).manhattanLength() > 4) {
-            QList<int> hit = doc_->inRect(QRectF(press_lg_, lg));
+            QRectF band = QRectF(press_lg_, lg).normalized();
+            QList<int> hit = doc_->inRect(band);
             QList<int> s2 = (e->modifiers() & Qt::ControlModifier) ? sel_ : QList<int>();
-            for (int i : hit)
-                if (!s2.contains(i)) s2 << i;
-            setSelection(s2);
+            if (hit.isEmpty()) {
+                /* A box around just labels/control points selects those
+                 * handles rather than their complete parent components. */
+                auto handles = (e->modifiers() & Qt::ControlModifier)
+                                   ? selected_handles_ : QList<QPair<int, int>>();
+                for (int i = 0; i < doc_->count(); i++) {
+                    for (int h = 0; h < doc_->handles(i); h++) {
+                        auto handle = qMakePair(i, h);
+                        if (!band.contains(doc_->handle(i, h))) continue;
+                        if (!handles.contains(handle)) handles << handle;
+                        if (!s2.contains(i)) s2 << i;
+                    }
+                }
+                setSelection(s2);
+                selected_handles_ = handles;
+                status();
+            } else {
+                for (int i : hit)
+                    if (!s2.contains(i)) s2 << i;
+                setSelection(s2);
+            }
         }
         update();
         return;
@@ -892,6 +981,7 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
 }
 
 void Canvas::mouseDoubleClickEvent(QMouseEvent *e) {
+    if (cheats_) return;
     if (tool_ == Line) {
         finishLine();
         return;
@@ -906,9 +996,8 @@ void Canvas::mouseDoubleClickEvent(QMouseEvent *e) {
 
 void Canvas::wheelEvent(QWheelEvent *e) {
     if (cheats_) {
-        int d = e->angleDelta().y();
-        if (!d) d = e->pixelDelta().y() * 4;
-        cheats_scroll_ -= d / 2;
+        int d = e->pixelDelta().isNull() ? e->angleDelta().y() / 2 : e->pixelDelta().y();
+        cheats_scroll_ = qBound(0, cheats_scroll_ - d, cheats_bar_->maximum());
         update();
         return;
     }
@@ -1082,6 +1171,15 @@ void Canvas::paste() {
 
 void Canvas::nudge(int dx, int dy) {
     if (sel_.isEmpty()) return;
+    if (!selected_handles_.isEmpty()) {
+        snapshotHandles();
+        editing_handles_ = true;
+        doc_->beginChange();
+        moveHandles(QPointF(dx, dy));
+        doc_->endChange();
+        editing_handles_ = false;
+        return;
+    }
     doc_->translate(sel_, dx, dy);
 }
 
@@ -1117,78 +1215,111 @@ void Canvas::toggleCheatsheet() {
         cheats_query_.clear();
         cheats_scroll_ = 0;
     }
+    if (!cheats_) cheats_bar_->hide();
     update();
 }
 
 void Canvas::paintCard(QPainter &p, const QList<QPair<QString, QString>> &rows,
                        const QString *search, int *scroll) {
-    QFontMetrics fm(font());
-    int lh = fm.lineSpacing() + 3, pad = 16, gap = 24;
-    int kw = 0, vw = 0;
+    p.save();
+    QFont sheetFont = font();
+    sheetFont.setPointSizeF(qMax(14.0, sheetFont.pointSizeF() + 3.0));
+    p.setFont(sheetFont);
+    QFontMetrics fm(sheetFont);
+    const int pad = 20, gap = 24, rowPad = 12;
+    const int w = qMin(width() - 24, 1000);
+    const int h = qMin(height() - 24, 640);
+    const QRect box((width() - w) / 2, (height() - h) / 2, w, h);
+    cheats_box_ = box;
+    p.setPen(QPen(theme_->accent, 2));
+    p.setBrush(theme_->bg);
+    p.drawRect(box);
+
+    /* Fixed search header and footer, like Omarchy's keybinding launcher. */
+    const int headerH = fm.height() + 2 * rowPad;
+    const QRect header = box.adjusted(pad, 0, -pad, 0);
+    p.setPen(theme_->accent);
+    p.drawText(QRect(header.left(), header.top(), fm.horizontalAdvance(">"), headerH),
+               Qt::AlignVCenter, ">");
+    p.setPen(search && !search->isEmpty() ? theme_->fg : theme_->fg_dim);
+    const QString query = search && !search->isEmpty() ? *search + "|" : "Search keybindings…";
+    p.drawText(QRect(header.left() + gap, header.top(), header.width() - gap, headerH),
+               Qt::AlignVCenter | Qt::AlignLeft,
+               fm.elidedText(query, Qt::ElideLeft, header.width() - gap));
+    p.setPen(theme_->muted);
+    p.drawLine(box.left(), box.top() + headerH, box.right(), box.top() + headerH);
+
+    const int footerH = fm.height() + rowPad;
+    const int viewTop = box.top() + headerH + 8;
+    const int viewH = qMax(1, h - headerH - footerH - 16);
+    const int contentW = w - 2 * pad - 12;
+    int keyW = 0;
+    for (const auto &r : rows)
+        if (!r.second.isEmpty()) keyW = qMax(keyW, fm.horizontalAdvance(r.first));
+    const bool stacked = contentW < keyW + gap + fm.horizontalAdvance("properties of element");
+    const int valueW = stacked ? contentW : contentW - keyW - gap;
+    QList<int> heights;
+    int contentH = 0;
     for (const auto &r : rows) {
-        if (r.second.isEmpty()) continue; /* headings span both columns */
-        kw = qMax(kw, fm.horizontalAdvance(r.first));
-        vw = qMax(vw, fm.horizontalAdvance(r.second));
+        int rowH;
+        if (r.second.isEmpty()) {
+            rowH = fm.height() + rowPad;
+        } else {
+            const int textH = fm.boundingRect(QRect(0, 0, valueW, 10000),
+                                               Qt::TextWordWrap, r.second).height();
+            rowH = qMax(fm.height(), textH) + rowPad + (stacked ? fm.height() + 4 : 0);
+        }
+        heights << rowH;
+        contentH += rowH;
     }
-    int search_h = search ? fm.height() + 8 : 0;
-    int content_h = lh * (int)rows.size();
-    int w = qMin(width() - 24, qMax(kw + gap + vw, fm.horizontalAdvance("search keys…")) + pad * 2);
-    int h = qMin(height() - 24, content_h + search_h + (search ? 6 : 0) + pad * 2 + 8);
-    QRect box((width() - w) / 2, (height() - h) / 2, w, h);
-    QColor bg = theme_->bg_dark.isValid() ? theme_->bg_dark : theme_->bg;
-    bg.setAlpha(242);
-    p.setPen(QPen(theme_->accent, 1));
-    p.setBrush(bg);
-    p.drawRoundedRect(box, 6, 6);
-
-    /* Omarchy-style search field on top; typing filters and scrolls the rows. */
-    int cy = box.top() + pad;
-    if (search) {
-        QRect sr(box.left() + pad, cy, box.width() - 2 * pad, search_h);
-        QColor sf = theme_->bg_light.isValid() ? theme_->bg_light : theme_->bg;
-        sf.setAlpha(150);
-        p.setPen(QPen(theme_->fg_dim, 1));
-        p.setBrush(sf);
-        p.drawRoundedRect(sr, 4, 4);
-        p.setPen(search->isEmpty() ? theme_->fg_dim : theme_->fg);
-        QString shown = search->isEmpty() ? QStringLiteral("search keys…")
-                                          : *search + QStringLiteral("|");
-        p.drawText(sr.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft, shown);
-        cy += search_h + 6;
-    }
-
-    int view_top = cy, view_bot = box.bottom() - pad + 2;
-    int view_h = qMax(0, view_bot - view_top);
-    int maxscroll = qMax(0, content_h - view_h);
-    int sc = scroll ? qBound(0, *scroll, maxscroll) : 0;
+    const int maxScroll = qMax(0, contentH - viewH);
+    const int sc = scroll ? qBound(0, *scroll, maxScroll) : 0;
     if (scroll) *scroll = sc;
+    {
+        const QSignalBlocker blocked(cheats_bar_);
+        cheats_bar_->setRange(0, maxScroll);
+        cheats_bar_->setPageStep(viewH);
+        cheats_bar_->setSingleStep(fm.height() + rowPad);
+        cheats_bar_->setValue(sc);
+        cheats_bar_->setGeometry(box.right() - 13, viewTop, 8, viewH);
+        cheats_bar_->setVisible(maxScroll > 0);
+    }
 
     p.save();
-    p.setClipRect(box.left(), view_top, box.width(), view_h);
-    cy = view_top - sc;
-    for (const auto &r : rows) {
+    p.setClipRect(QRect(box.left() + pad, viewTop, contentW, viewH));
+    int cy = viewTop - sc;
+    for (int i = 0; i < rows.size(); ++i) {
+        const auto &r = rows[i];
         if (r.second.isEmpty()) {
             p.setPen(theme_->fg_dim);
-            p.drawText(QRect(box.left() + pad, cy, box.width() - 2 * pad - 10, lh),
-                       Qt::AlignVCenter | Qt::AlignLeft, r.first);
+            p.drawText(QRect(box.left() + pad, cy, contentW, heights[i]),
+                       Qt::AlignVCenter | Qt::AlignLeft, r.first.toUpper());
         } else {
             p.setPen(theme_->accent);
-            p.drawText(QRect(box.left() + pad, cy, kw, lh), Qt::AlignVCenter | Qt::AlignLeft, r.first);
+            p.drawText(QRect(box.left() + pad, cy + rowPad / 2, stacked ? contentW : keyW, fm.height()),
+                       Qt::AlignLeft | Qt::AlignTop, r.first);
             p.setPen(theme_->fg);
-            p.drawText(QRect(box.left() + pad + kw + gap, cy,
-                             qMax(0, box.right() - pad - 10 - (box.left() + pad + kw + gap)), lh),
-                       Qt::AlignVCenter | Qt::AlignLeft, r.second);
+            const int vx = box.left() + pad + (stacked ? 0 : keyW + gap);
+            const int vy = cy + rowPad / 2 + (stacked ? fm.height() + 4 : 0);
+            p.drawText(QRect(vx, vy, valueW, heights[i] - (vy - cy)),
+                       Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, r.second);
         }
-        cy += lh;
+        cy += heights[i];
+    }
+    if (rows.isEmpty()) {
+        p.setPen(theme_->fg_dim);
+        p.drawText(QRect(box.left() + pad, viewTop, contentW, viewH),
+                   Qt::AlignCenter, "No matching keybindings");
     }
     p.restore();
 
-    if (maxscroll > 0) {
-        int track_x = box.right() - 7;
-        int thumb_h = qMax(24, view_h * view_h / qMax(1, content_h));
-        int thumb_y = view_top + (view_h - thumb_h) * sc / maxscroll;
-        p.setPen(Qt::NoPen);
-        p.setBrush(theme_->muted);
-        p.drawRoundedRect(QRectF(track_x, thumb_y, 3, thumb_h), 1.5, 1.5);
-    }
+    const int footerY = box.bottom() - footerH;
+    p.setPen(theme_->muted);
+    p.drawLine(box.left(), footerY, box.right(), footerY);
+    p.setPen(theme_->fg_dim);
+    const QString hint = w < 620 ? "↑ ↓  Scroll   ·   Esc  Close"
+                                 : "↑ ↓ / PgUp PgDn  Scroll   ·   Esc  Close";
+    p.drawText(QRect(box.left() + pad, footerY, w - 2 * pad, footerH),
+               Qt::AlignVCenter | Qt::AlignLeft, fm.elidedText(hint, Qt::ElideRight, w - 2 * pad));
+    p.restore();
 }

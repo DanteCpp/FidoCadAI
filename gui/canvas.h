@@ -29,6 +29,7 @@ public:
     void selectAll();
 
     void fit();
+    void fitIfOutside(); /* keep agent updates visible without moving an already-fitting view */
     void zoomBy(double factor, QPointF at);
     void refresh(); /* settings/theme changed */
     void docChanged();
@@ -88,6 +89,8 @@ private:
     void status();
     void place(QPointF at);
     int handleAt(QPointF px, int *handle_out) const; /* selection control points */
+    void snapshotHandles();
+    void moveHandles(QPointF delta); /* one shared, bounded translation */
     void sketch(class QPainter &p, const FcDrawing &flat) const;
     void sketchIndex(class QPainter &p, int i) const;
     void sketchMacro(class QPainter &p, QPointF at) const;
@@ -102,15 +105,18 @@ private:
     QString macro_;
     int macro_orient_ = 0, macro_mirror_ = 0;
     QList<int> sel_;
+    QList<QPair<int, int>> selected_handles_; /* primitive index, handle index */
+    QList<QPointF> handle_starts_;
 
     double ox_ = 40, oy_ = 40, scale_ = 4; /* widget px = logical * scale + origin */
-    bool fitted_ = false;
+    bool auto_fit_ = true; /* follow canvas resizes until the user pans or zooms */
     QImage cache_;
     bool dirty_ = true;
 
     enum Op { None, Panning, Moving, Resizing, Banding, Drawing, RulerArmed } op_ = None;
     QPointF press_px_, press_lg_, cursor_lg_, moved_;
     bool has_cursor_ = false;
+    bool editing_handles_ = false;
     int drag_prim_ = -1, drag_handle_ = -1; /* handle being dragged */
     bool have_start_ = false; /* line/rect/oval anchor set */
     QPointF start_;
@@ -118,6 +124,8 @@ private:
     bool cheats_ = false;
     QString cheats_query_;
     int cheats_scroll_ = 0;
+    QRect cheats_box_;
+    class QScrollBar *cheats_bar_ = nullptr;
     bool ruler_active_ = false, ruler_dragged_ = false;
     QPointF ruler_a_, ruler_b_; /* logical units */
     void paintCard(class QPainter &p, const QList<QPair<QString, QString>> &rows,

@@ -1,19 +1,123 @@
 ---
 name: fidocad
-description: Draw, edit, validate and render FidoCad (.fcd) schematics and PCB layouts, and create/use FidoCad macro libraries (.fcl), with the `fcai` CLI and the live `fcai-gui` editor. Use whenever a user asks to create, modify, explain or inspect a FidoCad drawing or a FidoCad library, or when any file contains [FIDOCAD]/LI/RV/MC/TY lines.
+description: Draw, edit, validate and render FidoCad (.fcd) schematics, PCB layouts and other drawings, and create/use FidoCad macro libraries (.fcl), with the `fcai` CLI and the live `fcai-gui` editor. Use whenever a user asks to create, modify, explain or inspect a FidoCad drawing or a FidoCad library, or when any file contains [FIDOCAD]/LI/RV/MC/TY lines.
 ---
 
 # FidoCad with fcai
 
-`fcai` (FidoCadAI) is a dependency-free C interpreter for the FidoCad
-language. It parses, emits, validates, queries, renders and edits `.fcd`
-drawings and `.fcl` macro libraries, and it has an editor GUI that the agent
-drives while the user watches.
+Use `fcai` to inspect, edit and render `.fcd` drawings and `.fcl` libraries;
+use its live GUI to work with the user.
 
-Everything is a CLI command with JSON output, so prefer it over guessing:
+## First step: open the GUI before drawing
+
+**When asked to create or edit a drawing, open the GUI first**, before adding
+any symbols, wires or labels, so the user can watch the drawing take shape.
+Unless the user explicitly asks for a headless workflow:
+
+1. For a new drawing, create only an empty file containing `[FIDOCAD]` and a
+   newline. For an existing drawing, open it as-is.
+2. Start the GUI in the background with a separate session directory (or reuse
+   the active session for that drawing):
+
+   ```bash
+   fcai gui sketch.fcd --session-dir /tmp/sketch.session &
+   ```
+
+3. Once the window is open, build or edit the drawing in meaningful increments.
+   Use the feedback workflow below to push each update and check the GUI state.
+   Keep the GUI open so the user sees progress from the first drawing edit.
+
+Disk edits reload live **only when the GUI has no unsaved edits**. Otherwise
+the GUI keeps the user's version; the warning appears in the optional bottom
+bar and may be hidden. `session push` replaces the in-memory drawing, including
+unsaved edits, so read and preserve the current GUI state before pushing.
+Accepted updates automatically fit if they extend outside the canvas; updates
+that already fit keep the current view. Fitting follows window resizing and
+tiling until a manual pan or zoom; Space restores it. Return sends the user's
+drawing and edits while keeping the window open; Ctrl+Return saves and closes.
 
 ```bash
-fcai context   d.fcd            # stats, macros, diags — read this first
+fcai session status /tmp/sketch.session              # pending events/sends; no consumption
+fcai session wait /tmp/sketch.session --timeout 1    # consume one event
+fcai session get /tmp/sketch.session --wait          # current GUI state as JSON
+fcai session push /tmp/sketch.session /tmp/new.fcd --wait
+fcai session save /tmp/sketch.session --wait         # persist GUI document
+fcai session reload-libs /tmp/sketch.session --wait  # updated .fcl files, same window
+fcai session set /tmp/sketch.session grid 10         # settings live
+fcai session ack /tmp/sketch.session "got your edit"
+fcai session quit /tmp/sketch.session                # Done
+```
+
+### Apply feedback and confirm the live update
+
+**Chat feedback is an instruction to act now.** The user does not need to
+press Return as well. For either chat feedback or a GUI `send`:
+
+1. Check `session status`, consume pending events with short `wait` calls,
+   and acknowledge each `send`: describe the user's changes in chat and put
+   a one-liner in the bottom bar with `session ack`. Read `diff_prev` for the
+   change since the previous event; `diff` retains the existing baseline diff.
+2. Run `session get DIR --wait`. Its JSON contains the actual `file`, `fcd`,
+   `selection`, `modified` and `disk_changed`. Save `fcd` as a base snapshot
+   and make the requested edits in a separate draft, preserving GUI changes.
+3. Validate and inspect the draft, then push it with a precondition:
+
+   ```bash
+   fcai session push /tmp/sketch.session /tmp/new.fcd --base /tmp/base.fcd --wait
+   fcai session save /tmp/sketch.session --wait
+   ```
+
+   `--base` rejects the push if the user changed the GUI since the snapshot.
+   On rejection, read fresh state and merge the new edits before retrying.
+   Check `ok` and the returned `fcd`; only report an update after confirmation.
+   Push replaces GUI memory; `save` persists it to the drawing's path. Avoid
+   writing the draft over that path before the guarded push, since a disk
+   reload could change the GUI and invalidate the base.
+
+`--wait` on get/push/save/reload/reload-libs returns the matching reply,
+without consuming queued user events. This requires the updated CLI and GUI
+(protocol 2). Reopen a pre-update window after preserving its edits if needed;
+guarded pushes probe support before sending any drawing replacement. Do not
+work around an unsupported/stale-base error by removing `--base`.
+Without `--wait`, commands only queue
+work; `get` alone prints nothing. The reply is also in the event log with an
+`id`, so do not apply a previously handled reply twice. Exit 3 is a timeout,
+not a closed window; the command may still apply. Query state before retrying.
+
+| Event | Meaning |
+|-------|---------|
+| `send` | Return: user drawing, selection, note and diffs; acknowledge before editing |
+| `state` | Reply to `get` |
+| `applied` | Reply to push/save/reload/reload-libs; check `ok` and any `error` |
+| `conflict` | Disk reload blocked by GUI edits; `fcd` is the GUI version, `disk_fcd` the disk version; reconcile both |
+| `closed` | Window closed; stop editing and report |
+
+Events include `seq` (increasing within `session_id`) and `diff_prev` (since
+the preceding drawing event, including state replies). `session reload DIR`
+refuses unsaved GUI edits unless explicitly given `--force`; use it only
+when discarding that version is intended. Restarting archives old logs under
+`DIR/history/` and starts a fresh queue. Reload libraries instead of restarting
+when a macro changes; it preserves selection, undo history and unsaved edits.
+
+Use one `session wait` reader per session. Use the built-in `--timeout`, not
+an external `timeout` command or a detached/background wait. Check events
+between drawing increments and on every user turn. While actively awaiting
+GUI feedback, use bounded foreground waits. Once the agent turn ends, Return
+only queues an event; it cannot wake an idle agent by itself.
+
+The window shows the drawing plus the user's optional bottom bar: report
+progress in your own chat, not inside the drawing.
+
+Without a session directory the GUI still works for a human (`Return` sends
+nothing, `Ctrl+Return`/close ends it), and `fcai gui` prints a report on exit:
+status, note, the primitive diff since opening and the final FCD.
+
+## Inspecting and checking drawings
+
+Query rather than guess. For drawing work, open the GUI first as above:
+
+```bash
+fcai context   d.fcd            # stats, macros, diags — inspect this first
 fcai json      d.fcd            # every primitive as JSON
 fcai describe  d.fcd            # human summary
 fcai render    d.fcd -o out.png # PNG for visual checking
@@ -21,73 +125,45 @@ fcai validate  d.fcd            # parse → emit → parse, reports problems
 fcai emit      d.fcd            # canonical text
 fcai expand    d.fcd            # macros expanded to primitives
 fcai lib                        # every macro key currently loadable
+fcai macro 080 --orient 1        # JSON geometry at anchor (100,100)
+fcai hit d.fcd --at 40 20        # primitive index near a point
+fcai find d.fcd --bbox 20 10 80 60 # indices whose bounds intersect a region
+fcai lint d.fcd --json           # advisory wire/junction geometry
+fcai render d.fcd --crop 20 10 80 60 --scale 8 -o /tmp/detail.png
 fcai diff a.fcd b.fcd           # primitive-level changes
 fcai config                     # effective CLI configuration
 ```
 
-## Golden rule: draw with the user watching
+### Structured edits
 
-**When asked to create or edit a drawing, start the GUI before the first
-edit** so the user sees it happen. Run it in the background with a session:
-
-```bash
-fcai gui sketch.fcd --session-dir /tmp/sketch.session &
-```
-
-Then work normally. The GUI live-reloads the file whenever it changes on disk,
-so editing `sketch.fcd` (or `fcai session push`) is visible immediately.
-
-The user sends you the drawing (and their edits) from the GUI with Return; the
-window stays open and you get the event.
+Prefer `fcai edit` for targeted changes; indices come from `fcai json`, `hit`,
+`find` or GUI selection. Output goes to stdout or `-o`; the input is unchanged
+unless deliberately chosen as the output. Re-query indices after add/remove.
 
 ```bash
-fcai session wait /tmp/sketch.session --timeout 120   # blocks for one event
-fcai session push /tmp/sketch.session /tmp/new.fcd    # replace live (or stdin)
-fcai session set  /tmp/sketch.session grid 10         # settings live
-fcai session get  /tmp/sketch.session                 # ask for full state
-fcai session ack  /tmp/sketch.session "got it"        # acknowledge the user's send
-fcai session quit /tmp/sketch.session                 # same as Ctrl+Return
-fcai session path sketch.fcd                          # default session dir
+fcai edit move draft.fcd --index 3 --by 10 0 -o next.fcd
+fcai edit set draft.fcd --index 3 --name R1 --value 10k -o next.fcd
+fcai edit set draft.fcd --index 5 --dash 1 --layer 0 -o next.fcd
+fcai edit rm draft.fcd --index 5 -o next.fcd
+fcai edit add draft.fcd --from additions.fcd -o next.fcd
 ```
 
-`fcai session wait` prints one JSON line and exits (exit 3 on timeout). Events:
-
-| `event` | meaning |
-|---------|---------|
-| `send`  | user pressed Return: `note` (their message), `fcd`, `selection`, `diff`, `saved` — apply their edits before doing anything else |
-| `state` | answer to `session get`: same fields plus the current drawing |
-| `closed`| user closed the window; stop editing and report |
-
-**Acknowledge every `send`.** The user pressed Return and is waiting: before
-anything else, say what you saw in the `diff` (what they moved, added or
-deleted) and what you are going to do. Also put a one-line acknowledgement in
-the window's bottom bar so the user sees the agent got it — if the bar is
-hidden, ask them to press `I` once:
-
-```bash
-fcai session ack /tmp/sketch.session "got your edit: R1 moved; updating the netlist"
-```
-
-Loop: `wait` → read the event → acknowledge → edit the file (or `push`) →
-`wait` again. The window shows nothing but the drawing (plus the user's own
-bottom bar): report progress to the user in your own chat, not inside their
-drawing.
-
-Without a session directory the GUI still works for a human (`Return` sends
-nothing, `Ctrl+Return`/close ends it), and `fcai gui` prints a report on exit:
-status, note, the primitive diff since opening and the final FCD.
+Moving a primitive carries its attached name/value labels. Separate wires or
+stubs are independent primitives: move or reroute them deliberately. `--text`
+edits a standalone TY; `--name`/`--value` edit attached labels. `find --near X Y R`
+uses a bounding square, not electrical connectivity.
 
 ## Drawing in the GUI
 
-The user can also edit directly: mouse tools and single keys, `K` for the
-keyboard map (type to search), `I` for the bottom bar (cursor, zoom, layer,
-selection, tinted with the layer colour). Right-drag (or Shift+drag) measures
-with the ruler — length in units and mm plus the angle. Selected elements show
-control-point handles they can drag to resize/reshape. `Ctrl+B` opens the
-symbol library as library → category → symbol, with a live preview of the
-selected macro. Every change they make is reported back
-in the next `send` event, including a primitive-level diff — read it before
-applying your own edits so you do not undo their work.
+`K`: searchable keyboard map; `I`: status bar (cursor, zoom, layer, selection).
+Right-drag or Shift+drag measures length, mm and angle. Drag selected handles
+to reshape; nonempty attached names and values have their own handles to move
+each label without moving its component. Box-select just the label handles
+(without enclosing a whole component), or Ctrl+click handles to toggle them,
+then drag any selected handle or use arrow keys to move the group together.
+Ctrl+drag a box adds handles; groups can span multiple components.
+`Ctrl+B`: library → category → symbol, with live preview.
+Read each `send` diff before editing to preserve the user's changes.
 
 ## Language quick reference
 
@@ -111,8 +187,10 @@ TY 20 40 4 3 0 0 0 * Vout      (a standalone label)
 TE x y text                   legacy text — always emit TY
 ```
 
-* `FCJ` on the line after a primitive carries arrows/dash and, with
-  `textFlag=1`, the next one or two `TY` lines are the name and value labels.
+* Component and terminal names/values are **attached properties**: `MC`, bare
+  `FCJ`, then two `TY` lines (name, value; empty text for an unused slot).
+  Loose `TY` is for sheet annotations. Parameterized `FCJ` carries arrows/dash
+  and a `textFlag` for labels.
 * `$...$` / `$$...$$` in TY text is typeset (scripts, `\frac`, `\sqrt`, Greek,
   `\sum`, ...); plain text is fine too.
 * Coordinates are non-negative integers on a grid; origin is top-left, x right,
@@ -122,16 +200,56 @@ TE x y text                   legacy text — always emit TY
   Other libraries are `prefix.key` (`pcb.r01`, `imram.ma09`). `fcai lib` lists
   keys, `fcai expand` shows what a macro becomes.
 
-Minimal drawing:
+Attached-label example:
 
 ```
 [FIDOCAD]
-LI 10 20 40 20 0
+LI 20 20 40 20 0
 MC 40 20 0 0 080
-TY 42 22 4 3 0 0 0 * R1
-TY 42 26 4 3 0 0 0 * 10k
-SA 40 20 0
+FCJ
+TY 42 8 4 3 0 0 0 * R1
+TY 42 13 4 3 0 0 0 * 10k
+LI 50 20 70 20 0
 ```
+
+### Schematic layout
+
+Before placing parts, inspect unfamiliar macros with `fcai macro KEY` or
+`fcai expand`. `macro` returns expanded geometry at (100,100), with optional
+`--orient 0..3`, `--mirror`, and `--at X Y`. These are drawing primitives,
+not declared electrical pins: identify leads from the geometry. The `MC`
+anchor is not necessarily the symbol centre. Keep placements far enough from
+the coordinate boundary to avoid clipping rotated/mirrored geometry.
+
+* Choose compact lead lengths relative to symbol size (about twice the body
+  length is a starting point). Center series parts between adjacent junctions
+  using their pins, with equal leads; reuse that length across comparable parts
+  and input/output terminals. Derive junction spacing from pin span + two leads.
+* Keep branch spacing regular and wires orthogonal. Attach control flags
+  directly at pins when clear; avoid unnecessary extension wires.
+* End rails deliberately: align return terminals beneath their matching power
+  terminals, or trim the return rail to the outermost branches. No unexplained
+  overhangs. A wire that ends at a corner needs neither an extension nor a dot.
+  Use `SA` for actual connected branches (T-junctions or connected crossings),
+  not ordinary bends or unconnected crossings. Do not extend a finished wire
+  merely to justify a dot.
+* Align name/value pairs with consistent offsets and clearance. Mirror input/
+  output label placement outward, with matching heights. Allow room for text
+  before fixing spacing; preserve an existing drawing's style. Centre labels
+  consistently where appropriate without crowding neighbouring wires or symbols.
+* Orient terminals with their exposed marker outside and their lead toward the
+  circuit. For left inputs, the lead goes right; for right outputs it goes left;
+  rotate the same rule for top/bottom ports. Choose terminals by the port's role
+  and the drawing's conventions, not just whether a signal is analog or digital.
+* Use layers, colours and dash patterns consistently with the document's purpose.
+  PCB copper/silkscreen layers have physical meanings; a blue logic net is not a
+  universal convention. Explain unusual functions with brief annotations only
+  when useful; no circuit-specific label is mandatory.
+* Existing `examples/*.fcd` in the project checkout can illustrate syntax and
+  layouts. Inspect the relevant example, but current user instructions take
+  precedence over incidental choices or mistakes in an example. For mechanical
+  drawings, PCB layouts or other graphics, use their conventions rather than
+  applying schematic terminal and junction rules.
 
 ### Libraries (.fcl)
 
@@ -139,6 +257,9 @@ A library is a sequence of macro definitions; `[KEY Long name]` starts one
 (the key is the first token, the rest is the human name) and `{Category}`
 lines group them. A macro body is drawn **relative to the logical origin
 (100,100)**; placement subtracts that and then applies orientation/mirror.
+For an offset `(dx,dy)`, orientation 0/1/2/3 maps to `(dx,dy)`, `(-dy,dx)`,
+`(-dx,-dy)`, `(dy,-dx)` respectively (clockwise on the downward-y canvas).
+Mirror negates the resulting x offset, then the instance anchor is added.
 
 ```
 {My parts}
@@ -162,11 +283,12 @@ Loading rules:
 
 #### Reuse: extract repeated patterns into the library
 
-When the same pattern or element repeats in a drawing — a connector, mounting
-hole, decoupling capacitor, power flag, logo, repeated sub-circuit — do **not**
-copy the primitives by hand. Write it once as a macro in
-`~/Documents/FidoLib/<name>.fcl` and place `MC` instances. A reusable macro
-means a single edit updates every occurrence and the drawing stays small.
+Reuse existing macros for repeated symbols. For repeated groups of primitives
+such as connectors, footprints, logos or subcircuits, define a reusable macro
+in `~/Documents/FidoLib/<name>.fcl` and place `MC` instances. Preserve unrelated
+macros already in that file; inspect before editing. A library change affects
+every drawing using the key, so use a new key when the change is not meant to
+apply to existing instances.
 
 Create a library:
 
@@ -174,11 +296,12 @@ Create a library:
    (keep keys unique); draw bodies around the (100,100) origin.
 2. Test it: `fcai lib | grep my_parts` and `fcai render test.fcd`, where
    `test.fcd` places each macro with `MC 100 100 0 0 my_parts.key`.
-3. It is loaded from then on — `fcai` and `fcai-gui` read the directory at
-   startup, no flag needed. `--lib FILE` loads a single file instead.
+3. CLI invocations load current files automatically. For an already open GUI,
+   run `fcai session reload-libs DIR --wait` after creating or changing a library.
+   It reloads the startup library sources and refreshes the canvas and palette.
+   Check `ok`; no window restart or session-history reset is needed.
 4. Place instances with `MC x y orient mirror my_parts.key`; orientation 0-3
-   rotates 90° per step, mirror flips. Labels use `TY` after the `MC` line (or
-   an `FCJ 1` name/value pair — see the full spec).
+   rotates 90° per step, mirror flips. Attach labels as above.
 
 ## Settings
 
@@ -189,15 +312,24 @@ The GUI reads `$XDG_CONFIG_HOME/fidocad/gui.conf`; change values live with
 
 ## Verifying your work
 
-Always, before telling the user a drawing is done:
+Before presenting the first draft and after layout changes:
 
 ```bash
-fcai validate d.fcd                  # round-trip must be ok
+fcai validate d.fcd                  # syntax/round-trip, not electrical correctness
+fcai lint d.fcd --json               # advisory geometry; inspect findings in context
 fcai render d.fcd -o /tmp/d.png && <look at the PNG with a vision model>
 ```
 
-If the user is watching in the GUI, a `fcai session push` is usually better
-than rendering a private PNG: the window updates live and they keep working.
+Inspect pin connections/polarity, lead symmetry, rail ends and label clearance
+at readable scale. Check `fcai json` for attached `name`/`value` fields.
+Use `render --crop X0 Y0 X1 Y1` for close-ups in logical drawing coordinates.
+Dashes use drawing units and scale with zoom. A live push does not replace
+visual inspection. `lint` checks top-level solid wires and dots, including
+neighbouring macro lines on the same layer: corner/unnecessary dots, missing
+branch dots, and overlapping wire segments. It does not establish electrical
+connectivity, identify semantic pins, or check text clearance. Its findings
+are advisory; `limited: true` means the geometry/finding limit was reached.
+Do not auto-remove dots at symbol pins based only on a lint warning.
 
 ## If something is missing
 

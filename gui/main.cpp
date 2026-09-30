@@ -33,7 +33,7 @@ const char *kDescription =
     "FidoCad drawing editor for a human working with a coding agent.\n"
     "\n"
     "The agent runs it (usually in the background with --session-dir DIR) and\n"
-    "talks to the window through `fcai session wait|push|set|get|quit DIR`.\n"
+    "talks to the window through `fcai session` (see `fcai session --help`).\n"
     "Return sends the drawing to the agent and keeps the window open; Ctrl+Return\n"
     "ends the session and prints the report.\n"
     "Exit status: 0 = done, 2 = window closed, 1 = error.\n"

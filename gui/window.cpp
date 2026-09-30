@@ -100,10 +100,14 @@ MainWindow::MainWindow(Document *doc, Settings *settings, Theme *theme, QApplica
     palette_->setVisible(settings_->getBool("palette"));
     buildBar();
 
+    previous_event_ = doc_->fcd();
     session_ = sessionDir.isEmpty() ? nullptr : new Session(sessionDir, this);
     if (session_) {
-        if (!session_->start()) fprintf(stderr, "fcai-gui: session: %s\n", qPrintable(session_->error()));
-        session_->onCommand = [this](const QJsonObject &cmd) { applyCommand(cmd); };
+        if (!session_->start()) {
+            fprintf(stderr, "fcai-gui: session: %s\n", qPrintable(session_->error()));
+            delete session_;
+            session_ = nullptr;
+        } else session_->onCommand = [this](const QJsonObject &cmd) { applyCommand(cmd); };
     }
 
     buildShortcuts();
@@ -116,7 +120,7 @@ MainWindow::MainWindow(Document *doc, Settings *settings, Theme *theme, QApplica
     canvas_->onSettingChanged = [this](const QString &k) { settingChanged(k); };
 
     watch_ = new QFileSystemWatcher(this);
-    connect(watch_, &QFileSystemWatcher::fileChanged, this, [this](const QString &p) {
+    auto diskChanged = [this](const QString &p) {
         if (p == Theme::omarchyColorsPath()) {
             /* theme switch replaces the file; re-add it after the swap settles */
             QTimer::singleShot(200, this, [this] {
@@ -125,7 +129,7 @@ MainWindow::MainWindow(Document *doc, Settings *settings, Theme *theme, QApplica
             });
             return;
         }
-        if (writing_ || p != doc_->path()) return;
+        if (p != doc_->path()) return;
         QTimer::singleShot(100, this, [this] {
             QFile f(doc_->path());
             if (!f.open(QIODevice::ReadOnly)) return;
@@ -139,23 +143,47 @@ MainWindow::MainWindow(Document *doc, Settings *settings, Theme *theme, QApplica
             QByteArray canon(out ? out : "");
             free(out);
             fc_drawing_free(&tmp);
-            if (canon == doc_->fcd()) return;
+            /* Atomic file replacements drop the watch even if text is unchanged. */
+            watchFile();
+            if (canon == doc_->fcd() || canon == doc_->savedFcd()) {
+                disk_changed_ = false;
+                conflict_disk_.clear();
+                return;
+            }
             if (!doc_->modified()) {
                 QString err;
-                doc_->reloadFromDisk(&err);
-                canvas_->docChanged();
-                report("reloaded from disk");
+                if (doc_->reloadFromDisk(&err)) {
+                    disk_changed_ = false;
+                    canvas_->fitIfOutside();
+                    report("reloaded from disk");
+                } else {
+                    report(err);
+                }
             } else {
+                disk_changed_ = true;
                 report("file changed on disk, but you have unsaved edits — kept yours");
+                if (session_ && canon != conflict_disk_) {
+                    conflict_disk_ = canon;
+                    QJsonObject event = stateEvent("conflict", "disk changed with unsaved GUI edits");
+                    event["disk_fcd"] = QString::fromUtf8(canon);
+                    session_->send(event);
+                }
             }
             watchFile();
         });
-    });
+    };
+    connect(watch_, &QFileSystemWatcher::fileChanged, this, diskChanged);
+    /* Replacements/deletion can drop the file watch; the parent directory
+     * lets us recover when the drawing is recreated. */
+    connect(watch_, &QFileSystemWatcher::directoryChanged, this,
+            [this, diskChanged](const QString &) { diskChanged(doc_->path()); });
     watchFile();
     applyTheme();
     updateTitle();
     resize(1400, 860);
 }
+
+MainWindow::~MainWindow() { delete session_; }
 
 void MainWindow::placeWindow() {
     bool hypr = qEnvironmentVariableIsSet("HYPRLAND_INSTANCE_SIGNATURE");
@@ -235,6 +263,10 @@ void MainWindow::bringToFront() {
 
 void MainWindow::watchFile() {
     QStringList want;
+    if (!doc_->path().isEmpty()) {
+        QString dir = QFileInfo(doc_->path()).absolutePath();
+        if (!watch_->directories().contains(dir)) watch_->addPath(dir);
+    }
     if (!doc_->path().isEmpty() && QFile::exists(doc_->path())) want << doc_->path();
     if (settings_->get("theme") == "omarchy" && !Theme::omarchyColorsPath().isEmpty())
         want << Theme::omarchyColorsPath();
@@ -297,6 +329,10 @@ void MainWindow::buildBar() {
     info_->setTextFormat(Qt::RichText); /* the layer name is tinted with its colour */
     info_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     bar->addWidget(info_, 1);
+    auto *hint = new QLabel("K  ·  Keybindings cheatsheet", bar);
+    hint->setObjectName("keybindingsHint");
+    hint->setContentsMargins(12, 0, 8, 0);
+    bar->addPermanentWidget(hint);
     bar->setVisible(settings_->getBool("statusbar"));
 }
 
@@ -446,9 +482,7 @@ bool MainWindow::save(const QString &what) {
         watchFile();
     } else {
         QString err;
-        writing_ = true;
         bool ok = doc_->save(&err);
-        QTimer::singleShot(300, this, [this] { writing_ = false; });
         if (!ok) {
             report(label + "save failed: " + err);
             return false;
@@ -456,22 +490,33 @@ bool MainWindow::save(const QString &what) {
     }
     watchFile();
     updateTitle();
+    disk_changed_ = false;
     return true;
 }
 
-QJsonObject MainWindow::stateEvent(const QString &event, const QString &note) const {
+QJsonObject MainWindow::stateEvent(const QString &event, const QString &note) {
     QJsonObject e;
     e["event"] = event;
+    e["protocol"] = 2;
     e["note"] = note;
     e["file"] = doc_->path();
     e["saved"] = !doc_->path().isEmpty();
     e["modified"] = doc_->modified();
+    e["disk_changed"] = disk_changed_;
     QJsonArray sel;
     for (int i : canvas_->selection()) sel << i;
     e["selection"] = sel;
     QJsonDocument diff = QJsonDocument::fromJson(doc_->diff(true).toUtf8());
     e["diff"] = diff.isObject() ? diff.object() : QJsonObject();
     e["fcd"] = QString::fromUtf8(doc_->fcd());
+    FcDrawing previous;
+    fc_drawing_init(&previous);
+    fc_parse(&previous, previous_event_.constData(), (size_t)previous_event_.size());
+    char *delta = fc_diff(&previous, &doc_->drawing(), 1);
+    e["diff_prev"] = QJsonDocument::fromJson(delta ? QByteArray(delta) : QByteArray("{}")).object();
+    free(delta);
+    fc_drawing_free(&previous);
+    previous_event_ = doc_->fcd();
     return e;
 }
 
@@ -484,9 +529,8 @@ void MainWindow::sendToAgent(const QString &note) {
     bool ok = true;
     QString err;
     if (!doc_->path().isEmpty()) {
-        writing_ = true;
         ok = doc_->save(&err);
-        QTimer::singleShot(300, this, [this] { writing_ = false; });
+        if (ok) disk_changed_ = false;
         updateTitle();
     }
     session_->send(stateEvent("send", text));
@@ -506,9 +550,43 @@ void MainWindow::toggleBar() {
 
 void MainWindow::applyCommand(const QJsonObject &c) {
     const QString cmd = c["cmd"].toString();
+    QString error;
+    bool reply = false;
     if (cmd == "push") {
-        doc_->setFcd(c["fcd"].toString().toUtf8());
-        canvas_->docChanged();
+        reply = true;
+        if (!c["fcd"].isString()) error = "push requires fcd text";
+        if (error.isEmpty() && c.contains("base")) {
+            Document base;
+            base.openText(c["base"].toString().toUtf8());
+            if (!c["base"].isString() || base.fcd() != doc_->fcd())
+                error = "drawing changed since base; read current state and merge";
+        }
+        if (error.isEmpty()) {
+            doc_->setFcd(c["fcd"].toString().toUtf8());
+            disk_changed_ = false;
+            canvas_->fitIfOutside();
+        }
+    } else if (cmd == "save") {
+        reply = true;
+        if (doc_->path().isEmpty()) error = "no file name";
+        else if (!save()) error = "could not save drawing";
+    } else if (cmd == "reload") {
+        reply = true;
+        if (doc_->modified() && !c["force"].toBool())
+            error = "unsaved GUI edits; merge first or explicitly use --force";
+        else if (doc_->reloadFromDisk(&error)) {
+            disk_changed_ = false;
+            watchFile();
+            canvas_->fitIfOutside();
+        }
+    } else if (cmd == "reload-libs") {
+        reply = true;
+        if (doc_->reloadLibraries(&error)) {
+            fillPalette(filter_->text());
+            updatePreview();
+            canvas_->refresh();
+            canvas_->fitIfOutside();
+        }
     } else if (cmd == "set") {
         QString k = c["key"].toString(), v = c["value"].toString();
         QString e = settings_->set(k, v);
@@ -521,9 +599,17 @@ void MainWindow::applyCommand(const QJsonObject &c) {
         QString t = c["text"].toString().trimmed();
         report(t.isEmpty() ? QStringLiteral("agent acknowledged") : QStringLiteral("agent: ") + t);
     } else if (cmd == "get") {
-        session_->send(stateEvent("state", QString()));
+        reply = true;
     } else if (cmd == "quit") {
         done(QString());
+    }
+    if (reply) {
+        QJsonObject event = stateEvent(cmd == "get" ? "state" : "applied", QString());
+        event["command"] = cmd;
+        event["ok"] = error.isEmpty();
+        if (!error.isEmpty()) event["error"] = error;
+        if (c.contains("id")) event["id"] = c["id"];
+        session_->send(event);
     }
 }
 
@@ -543,7 +629,6 @@ void MainWindow::done(const QString &note) {
     status_ = "done";
     note_ = note.trimmed();
     if (!doc_->path().isEmpty()) {
-        writing_ = true;
         saved_ok_ = doc_->save(&save_err_);
     }
     finishing_ = true;
@@ -560,7 +645,6 @@ void MainWindow::closeEvent(QCloseEvent *e) {
             return;
         }
         if (r == QMessageBox::Save) {
-            writing_ = true;
             saved_ok_ = doc_->save(&save_err_);
         }
     }

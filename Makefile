@@ -14,7 +14,7 @@ PREFIX  ?= /usr/local
 BINDIR  ?= $(PREFIX)/bin
 DATADIR ?= $(PREFIX)/share/fidocad
 
-SRC := src/util.c src/sys.c src/parse.c src/emit.c src/edit.c src/lib.c src/tex.c src/font.c src/ttf.c src/vendor_impl.c src/render.c
+SRC := src/util.c src/sys.c src/parse.c src/emit.c src/edit.c src/lint.c src/lib.c src/tex.c src/font.c src/ttf.c src/vendor_impl.c src/render.c
 OBJ := $(patsubst src/%.c,build/%.o,$(SRC))
 CLI_OBJ := build/cli.o
 TEST_OBJ := build/test_core.o
@@ -58,7 +58,7 @@ build/test_gui: $(OBJ) $(filter-out build/gui/main.o,$(GUI_OBJ)) build/gui/test_
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(QT_LIBS) $(shell pkg-config --libs Qt6Test) $(LDLIBS)
 
 # LeakSanitizer flags fontconfig/pango caches owned by Qt, not by us.
-test-gui: build/test_gui build/fcai-gui
+test-gui: build/test_gui build/fcai-gui build/fcai
 	QT_QPA_PLATFORM=offscreen ASAN_OPTIONS=detect_leaks=0 ./build/test_gui
 
 build:
@@ -85,6 +85,7 @@ build/test_core: $(OBJ) $(TEST_OBJ)
 
 test: build/test_core build/fcai
 	./build/test_core
+	sh tests/test_cli.sh ./build/fcai
 	./build/fcai validate tests/fixtures/full-pattern.fcd
 	./build/fcai describe tests/fixtures/full-pattern.fcd >/dev/null
 	./build/fcai json tests/fixtures/full-pattern.fcd >/dev/null

@@ -211,6 +211,8 @@ typedef struct {
     uint32_t bg;    /* 0xRRGGBB, taken as-is (0 = black) */
     int ppm;        /* 1 = PPM, 0 = PNG */
     int tex;        /* 1 = typeset $...$ (default on) */
+    int has_crop;   /* use crop bounds in logical units instead of drawing bounds */
+    FcRect crop;
 } FcRenderOpts;
 
 typedef struct {
@@ -289,7 +291,9 @@ int fc_prim_set_text(FcDrawing *d, int index, int which, const char *text);
 /* Control points ("handles") of a primitive, like FidoCadJS virtualPoint[]:
  * endpoints for lines and PCB tracks, corners for rectangles/ellipses, the
  * vertices of polygons and curves, Bezier control points, and the position of
- * dots, pads, macros and text. fc_prim_handle returns 0 if i is out of range. */
+ * dots, pads, macros and text. Nonempty attached name/value labels follow the
+ * geometry handles, in that order (absent/empty labels take no slot). Dragging
+ * a label changes only its position. fc_prim_handle returns 0 out of range. */
 int fc_prim_handles(const FcPrim *p);
 int fc_prim_handle(const FcPrim *p, int i, FcPoint *out);
 void fc_prim_set_handle(FcPrim *p, int i, double x, double y);
@@ -309,6 +313,8 @@ char *fc_context(const FcDrawing *d, const FcLib *lib);
 const char *fc_kind_name(FcKind k);
 const char *fc_kind_code(const FcPrim *p);
 int fc_validate(const FcDrawing *d, char **report);
+/* Advisory wire/dot geometry (macro geometry included), not electrical validation. */
+char *fc_lint(const FcDrawing *d, const FcLib *lib, int json);
 
 /* --- render --- */
 void fc_render_opts_init(FcRenderOpts *o);

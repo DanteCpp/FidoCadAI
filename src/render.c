@@ -10,6 +10,7 @@ typedef struct {
     size_t stride; /* bytes per row */
     double ox, oy; /* origin in pixels of logical (0,0) */
     double scale;
+    double dash_phase; /* pixel arc length within the current primitive */
     int tex;
 } Raster;
 
@@ -43,31 +44,31 @@ static int mapx(const Raster *r, double x) { return clampi(x * r->scale + r->ox)
 static int mapy(const Raster *r, double y) { return clampi(y * r->scale + r->oy); }
 static int scale_len(const Raster *r, double v) { return clampi(v * r->scale); }
 
-static int dash_on(int style, int dist) {
+static int dash_on(int style, double dist) {
     /* style 0 solid; 1 dashed; 2 fine dotted; 3 dotted; 4 dash-dot */
-    int p;
+    double p;
     if (style <= 0) return 1;
     if (dist < 0) dist = -dist;
     switch (style) {
     case 1:
-        p = dist % 10;
+        p = fmod(dist, 10);
         return p < 5;
     case 2:
-        p = dist % 4;
+        p = fmod(dist, 4);
         return p < 2;
     case 3:
-        p = dist % 7;
+        p = fmod(dist, 7);
         return p < 2;
     case 4:
-        p = dist % 14;
+        p = fmod(dist, 17);
         return p < 2 || (p >= 7 && p < 12);
     default:
         return 1;
     }
 }
 
-static void plot(Raster *r, int x, int y, uint32_t rgb, float a, int dash, int dist) {
-    if (dash_on(dash, dist)) put_px(r, x, y, rgb, a);
+static void plot(Raster *r, int x, int y, uint32_t rgb, float a, int dash, double dist) {
+    if (dash_on(dash, dist / r->scale)) put_px(r, x, y, rgb, a);
 }
 
 static void fill_disk(Raster *r, int cx, int cy, int rad, uint32_t rgb, float a) {
@@ -113,7 +114,8 @@ static int clip_seg(double *x0, double *y0, double *x1, double *y1, double xmin,
 
 static void line_aa(Raster *r, int x0, int y0, int x1, int y1, uint32_t rgb, float a, int w,
                     int dash) {
-    int dx, sx, dy, sy, err, e2, dist = 0;
+    int dx, sx, dy, sy, err, e2;
+    double dist = r->dash_phase, step = 0;
     int ax, ay, bx, by;
     int thick = w < 1 ? 1 : w;
     int lim = 2 * (r->w + r->h) + 2;
@@ -122,10 +124,11 @@ static void line_aa(Raster *r, int x0, int y0, int x1, int y1, uint32_t rgb, flo
         /* only the part within half a pen width of the raster can leave pixels */
         double pad = thick / 2 + 1, t0 = 0;
         double fx0 = x0, fy0 = y0, fx1 = x1, fy1 = y1;
-        double steps = fabs(fx1 - fx0) > fabs(fy1 - fy0) ? fabs(fx1 - fx0) : fabs(fy1 - fy0);
+        double length = hypot(fx1 - fx0, fy1 - fy0);
+        if (dash) r->dash_phase += length;
         if (!clip_seg(&fx0, &fy0, &fx1, &fy1, -pad, -pad, r->w - 1 + pad, r->h - 1 + pad, &t0))
             return;
-        dist = (int)(t0 * steps + 0.5); /* keep the dash phase of the unclipped line */
+        dist += t0 * length; /* preserve phase when clipped */
         x0 = (int)floor(fx0 + 0.5);
         y0 = (int)floor(fy0 + 0.5);
         x1 = (int)floor(fx1 + 0.5);
@@ -140,6 +143,7 @@ static void line_aa(Raster *r, int x0, int y0, int x1, int y1, uint32_t rgb, flo
     dy = -abs(y1 - y0);
     sy = y0 < y1 ? 1 : -1;
     err = dx + dy;
+    if (dx || dy) step = hypot(dx, dy) / (dx > -dy ? dx : -dy);
     for (;;) {
         int t, tlo = -(thick / 2), thi = thick / 2;
         /* pen offsets that stay on the raster */
@@ -166,7 +170,7 @@ static void line_aa(Raster *r, int x0, int y0, int x1, int y1, uint32_t rgb, flo
             err += dx;
             y0 += sy;
         }
-        dist++;
+        dist += step;
     }
     /* FidoCadJS strokes with lineCap/lineJoin = round (GraphicsCanvas): a
      * solid, thick line gets a disk at both ends, which also rounds the
@@ -232,7 +236,9 @@ static void ellipse(Raster *r, int x0, int y0, int x1, int y1, uint32_t rgb, flo
                 double inner = 1.0 - (w + 0.6) / (rx < ry ? rx : ry);
                 if (inner < 0.2) inner = 0.2;
                 if (e <= 1.05 && e >= inner * inner) {
-                    int dist = (int)(atan2(dy, dx) * (rx + ry));
+                    double angle = atan2(dy, dx);
+                    if (angle < 0) angle += 6.283185307179586;
+                    double dist = angle * (rx + ry) / 2;
                     plot(r, xi, yi, rgb, a, dash, dist);
                 }
             }
@@ -740,6 +746,7 @@ static void draw_placeholder(Raster *r, const FcPrim *p, uint32_t rgb, float a) 
 }
 
 static void draw_prim(Raster *r, const FcDrawing *d, const FcPrim *p) {
+    r->dash_phase = 0;
     uint32_t rgb;
     float a;
     int lw, lwc, dash;
@@ -885,6 +892,7 @@ int fc_render_rgb(const FcDrawing *d, const FcLib *lib, const FcView *v, uint8_t
     r.oy = v->oy;
     r.scale = v->scale;
     r.tex = v->tex;
+    r.dash_phase = 0;
     fill_bg(&r, v->bg);
     if (v->grid > 0 && v->grid * v->scale >= 4) {
         double step = v->grid * v->scale;
@@ -954,6 +962,12 @@ int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opt
         if (o.max_w <= 0) o.max_w = 1200;
         if (o.max_h <= 0) o.max_h = 900;
     }
+    if (o.has_crop && (!isfinite(o.crop.min_x) || !isfinite(o.crop.min_y) ||
+                       !isfinite(o.crop.max_x) || !isfinite(o.crop.max_y) ||
+                       o.crop.min_x >= o.crop.max_x || o.crop.min_y >= o.crop.max_y ||
+                       fabs(o.crop.min_x) > FC_MAX_COORD || fabs(o.crop.min_y) > FC_MAX_COORD ||
+                       fabs(o.crop.max_x) > FC_MAX_COORD || fabs(o.crop.max_y) > FC_MAX_COORD))
+        return FC_ERR_ARG;
     if (o.margin < 0) o.margin = 0;
     if (o.margin > 1024) o.margin = 1024;
     o.bg &= 0xFFFFFFu;
@@ -967,6 +981,7 @@ int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opt
         bb.min_x = bb.min_y = 0;
         bb.max_x = bb.max_y = 20;
     }
+    if (o.has_crop) bb = o.crop;
     bw = bb.max_x - bb.min_x;
     bh = bb.max_y - bb.min_y;
     if (bw < 1) bw = 1;
@@ -984,6 +999,7 @@ int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opt
     r.ox = o.margin - bb.min_x * r.scale;
     r.oy = o.margin - bb.min_y * r.scale;
     r.tex = o.tex;
+    r.dash_phase = 0;
     r.stride = (size_t)r.w * 3;
     r.px = (uint8_t *)malloc((size_t)r.w * (size_t)r.h * 3);
     if (!r.px) {

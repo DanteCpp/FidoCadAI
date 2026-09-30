@@ -113,6 +113,42 @@ Flags, `key = value` config (`--config file`), and environment:
 `FIDO_FONT_DIR` points at a directory with the Liberation TTFs when they are not
 next to the binary.
 
+## Agent editing and inspection
+
+```bash
+fcai macro 080 --orient 1                   # expanded JSON at (100,100)
+fcai macro 080 --mirror --at 200 200         # inspect an actual placement
+fcai hit sketch.fcd --at 40 20 --tol 2       # nearest hit, -1 if none
+fcai find sketch.fcd --bbox 20 10 80 60      # intersecting primitive bounds
+fcai find sketch.fcd --near 40 20 10        # same query in a square
+fcai edit move sketch.fcd --index 3 --by 10 0 -o draft.fcd
+fcai edit set sketch.fcd --index 3 --name R1 --value 10k -o draft.fcd
+fcai edit set sketch.fcd --index 5 --dash 1 --layer 0 -o draft.fcd
+fcai edit rm sketch.fcd --index 5 -o draft.fcd
+fcai edit add sketch.fcd --from additions.fcd -o draft.fcd
+fcai lint sketch.fcd --json
+fcai render sketch.fcd --crop 20 10 80 60 --scale 8 -o detail.png
+```
+
+Indices refer to the current drawing (`json`, GUI selection, `hit`, or `find`).
+Moves carry attached labels; separate wires remain independent. Edits emit
+FCD to stdout or `-o`; they never implicitly modify the input. `set --text`
+changes standalone text, while `--name` and `--value` change attached labels.
+`macro` exposes actual drawing geometry, not inferred electrical pin metadata.
+Keep placements away from coordinate limits to avoid clipping.
+
+`lint` is advisory: it checks top-level solid `LI`/`SA` geometry on each layer,
+including neighbouring macro lines, for corner/unnecessary dots, missing
+branch dots and overlapping wires. It does not infer electrical nets, semantic
+pins, or label clearance; check findings against the drawing. Work is limited
+to 4096 primitives (also after expansion) and 128 findings, reported with
+`limited: true`. Existing examples illustrate syntax and layouts, not mandatory
+style: in particular, do not copy incidental rail overhangs or add dots at bends.
+
+Crops use logical coordinates and the normal rasterizer. Dash patterns now use
+logical units, including their phase along connected segments, so their size
+tracks render scale and GUI zoom.
+
 ## GUI: draw with the user watching
 
 `fcai-gui` (also `fcai gui`) is a small Qt6 editor with **no chat panel**: the
@@ -122,30 +158,67 @@ and the user can send what they did back.
 
 ```bash
 fcai gui sketch.fcd --session-dir /tmp/sketch.session &
-fcai session wait   /tmp/sketch.session --timeout 300   # blocks for one event
-fcai session push   /tmp/sketch.session /tmp/new.fcd    # live replace (or stdin)
-fcai session set    /tmp/sketch.session grid 10
-fcai session get    /tmp/sketch.session                 # full state as an event
-fcai session ack    /tmp/sketch.session "got your edit" # show an acknowledgement in the GUI
-fcai session quit   /tmp/sketch.session                 # Done
-fcai session path   sketch.fcd                          # default session dir
+fcai session status /tmp/sketch.session              # pending events and user sends
+fcai session wait /tmp/sketch.session --timeout 1     # consume one event
+fcai session get /tmp/sketch.session --wait           # correlated state JSON
+fcai session push /tmp/sketch.session /tmp/new.fcd --base /tmp/base.fcd --wait
+fcai session save /tmp/sketch.session --wait          # save GUI memory to disk
+fcai session reload-libs /tmp/sketch.session --wait   # refresh libraries in place
+fcai session set /tmp/sketch.session grid 10
+fcai session ack /tmp/sketch.session "got your edit"
+fcai session quit /tmp/sketch.session                 # Done
 ```
 
-`wait` prints one JSON event and exits (`--timeout SECS`, exit 3 on timeout):
+`wait` consumes one event (`--timeout SECS`, exit 3 on timeout). `status`
+reports unread counts without consuming anything. Check it between drawing
+updates and on each user turn: Return queues feedback but cannot wake an
+agent whose turn has ended.
 
-| `event` | fields |
-|---------|--------|
-| `send`  | user pressed Return: `note`, `fcd`, `selection`, `diff`, `saved` |
-| `state` | answer to `get`: same fields plus the current drawing |
-| `closed`| window closed (`saved`, `note`) |
+| Event | Purpose |
+|-------|---------|
+| `send` | Return: user `note`, `fcd`, `selection`, `diff`, `saved`, `modified` |
+| `state` | Reply to `get` |
+| `applied` | Reply to push/save/reload/reload-libs, including `ok` and optional `error` |
+| `conflict` | Disk update blocked by unsaved GUI edits; includes both `fcd` and `disk_fcd` |
+| `closed` | Window closed |
 
-After a `send`, acknowledge it before editing: reply to the user with what the
-`diff` shows, and optionally put a one-liner in the window's status bar with
-`fcai session ack DIR TEXT`.
+Events have a `session_id`, increasing `seq` within that run, UTC `time`, and
+`diff_prev` since the preceding drawing event. Existing `diff` and other
+fields retain their meanings. A restart archives the previous command/event
+logs and read offset under `DIR/history/`, then starts a fresh queue without
+replaying commands.
 
-Editing the `.fcd` on disk reloads the window live as well, so an agent can
-just keep editing the file. Closing without Done (exit status 2) means the
-edits are unconfirmed.
+`get`, `push`, `save`, `reload`, and `reload-libs` accept `--wait` with a
+5-second default timeout (`--timeout SECS` overrides it). State events advertise
+`protocol: 2`; guarded pushes verify protocol support with a read-only probe
+before sending the replacement, so an older GUI cannot silently ignore the
+base check. Reopen pre-update windows after preserving their edits.
+The CLI attaches an
+`id` and reads the matching atomic reply from `DIR/replies/ID.json`, removing
+that reply file after reading. The same event remains in `events.jsonl`;
+queued user sends and `.events.pos` are untouched. Without `--wait`, commands
+retain their asynchronous behavior (`get` prints nothing). A timeout does
+not cancel a command; inspect state before retrying. Exit 1 indicates a
+rejected/failed command, with `ok: false` and `error` in a received reply.
+
+After every `send`, acknowledge what changed in chat and with `session ack`.
+For chat feedback, act directly; no extra Return in the GUI is required.
+Read current state with `get --wait`, save its `fcd` as a base snapshot, edit a
+separate draft, then `push --base SNAPSHOT --wait`. The GUI rejects a stale
+base so newer user edits can be merged. Verify the returned drawing, then
+`save --wait`. A push changes GUI memory; it does not save unless autosave is on.
+
+Disk edits reload only when the GUI has no unsaved edits. A blocked reload
+preserves the user's version and emits `conflict`; `disk_changed` is also
+included in state. `reload --wait` refuses unsaved edits; `--force` explicitly
+discards them. `reload-libs --wait` refreshes the configured libraries, canvas
+and palette without changing the drawing, selection or undo history.
+
+Disk reloads and session pushes automatically fit
+the drawing when it extends outside the canvas, preserving the current view
+when it already fits. Fit-to-view also follows window resizing and tiling until
+you manually pan or zoom; Space restores it. Closing without Done (exit status 2)
+means the edits are unconfirmed.
 
 **The window is the drawing** plus an optional bottom bar (hidden by default):
 no toolbar, buttons or menus. **K** opens the keymap — an Omarchy-style,
@@ -165,7 +238,17 @@ millimetres plus the angle; the measurement stays until the next click.
 Selecting an element shows its **control-point handles** (line endpoints,
 rectangle/ellipse corners, polygon/curve vertices, Bezier control points, the
 position of dots, pads, macros and text): drag a handle to resize or reshape,
-like FidoCadJS. Strokes are drawn with round caps and joins. **Ctrl+B** opens
+like FidoCadJS. Nonempty attached **names and values have separate handles** at
+their text origins: drag either label independently, without moving the symbol
+or its other label. Label dragging uses the grid snap and supports undo/redo.
+Dragging the component body moves it together with its labels.
+To move several labels together, **drag a selection box around their handles**
+without enclosing a whole component, or **Ctrl+click handles** to toggle them.
+Then drag any selected handle or use the arrow keys; their relative spacing
+stays fixed, including at drawing boundaries. Ctrl+drag a box adds handles to
+the group. This also works across components and with other control points.
+Selected handles are larger and filled; the other handles are hollow.
+Strokes are drawn with round caps and joins. **Ctrl+B** opens
 the symbol library as *library → category → symbol* (the FidoCadJS hierarchy),
 with a live preview of the selected macro under the tree.
 

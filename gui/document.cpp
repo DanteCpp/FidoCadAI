@@ -40,15 +40,37 @@ Document::~Document() {
 
 void Document::loadLibraries(bool stdlib, const QStringList &libs, const QStringList &libdirs,
                              const char *argv0) {
-    if (stdlib) fc_lib_load_stdlib(lib_, argv0);
-    fc_lib_load_user_dir(lib_);
+    stdlib_ = stdlib;
+    libs_ = libs;
+    libdirs_ = libdirs;
+    argv0_ = argv0;
+    reloadLibraries();
+}
+
+bool Document::reloadLibraries(QString *err) {
+    FcLib *next = fc_lib_new();
+    QString failure;
+    if (!next) { if (err) *err = "out of memory loading libraries"; return false; }
+    if (stdlib_) fc_lib_load_stdlib(next, argv0_.constData());
+    fc_lib_load_user_dir(next);
     QByteArray extra = qgetenv("FIDO_LIB_DIR");
-    if (!extra.isEmpty()) fc_lib_load_dir(lib_, extra.constData());
-    for (const QString &dir : libdirs) fc_lib_load_dir(lib_, dir.toUtf8().constData());
-    for (const QString &l : libs) {
+    if (!extra.isEmpty()) fc_lib_load_dir(next, extra.constData());
+    for (const QString &dir : libdirs_)
+        if (fc_lib_load_dir(next, dir.toUtf8().constData()) != FC_OK)
+            failure = "cannot load library directory " + dir;
+    for (const QString &l : libs_) {
         QByteArray path = l.toUtf8();
-        fc_lib_load_file(lib_, path.constData(), fc_lib_prefix_for_file(path.constData()));
+        if (fc_lib_load_file(next, path.constData(), fc_lib_prefix_for_file(path.constData())) != FC_OK)
+            failure = "cannot load library " + l;
     }
+    if (!failure.isEmpty()) {
+        fc_lib_free(next);
+        if (err) *err = failure;
+        return false;
+    }
+    fc_lib_free(lib_);
+    lib_ = next;
+    return true;
 }
 
 bool Document::open(const QString &path, QString *err) {

@@ -2,6 +2,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <math.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -23,11 +24,16 @@ static const char *k_help =
     "  render     Rasterize to PNG (or PPM with --ppm)\n"
     "  expand     Expand macros to primitives and emit FCD\n"
     "  lib        List macros in loaded libraries\n"
+    "  macro KEY  Expanded JSON geometry at anchor (100,100), or --at X Y\n"
+    "  lint       Advisory wire/dot geometry checks (--json supported)\n"
+    "  hit FILE --at X Y [--tol N]   Pick a primitive index\n"
+    "  find FILE --bbox X0 Y0 X1 Y1  Indices intersecting bounds\n"
+    "  edit move|rm|add|set FILE      Structured edit; emit result to stdout/-o\n"
     "  config     Show effective settings\n"
     "  diff A B   Primitive-level changes from A to B (--json for ops)\n"
     "  gui        Open the drawing editor (fcai-gui) for the user; Return sends\n"
     "             edits to the agent, Ctrl+Return ends the session\n"
-    "  session    Talk to a running fcai-gui: wait|push|set|get|ack|quit DIR\n"
+    "  session    Talk to a running GUI (`session --help` lists commands)\n"
     "  skill      Print the fidocad agent skill; `skill install [DIR...]` installs it\n"
     "  help       This help\n"
     "  version    Print version\n"
@@ -47,6 +53,7 @@ static const char *k_help =
     "  -v, --verbose        List every primitive in describe/context\n"
     "\n"
     "Render options:\n"
+    "  --crop X0 Y0 X1 Y1   Render a region in logical drawing coordinates\n"
     "  --scale N            Pixels per grid unit (default: auto)\n"
     "  --margin N           Padding in pixels (default 12)\n"
     "  --width N --height N Max image size for auto scale\n"
@@ -54,6 +61,14 @@ static const char *k_help =
     "  --ppm                Write PPM instead of PNG\n"
     "  --bg RRGGBB          Background colour (default FFFFFF)\n"
     "  --tex / --no-tex     Typeset $...$ LaTeX in TY text (default on)\n"
+    "\n"
+    "Query/edit options:\n"
+    "  macro: --orient 0..3 --mirror (optional)\n"
+    "  find: --near X Y R (bounding square) or --bbox X0 Y0 X1 Y1\n"
+    "  edit move: --index N --by DX DY (carries attached labels)\n"
+    "  edit rm: --index N; edit add: --from FILE\n"
+    "  edit set: --index N --layer 0..15 --dash 0..4 --name TEXT --value TEXT\n"
+    "            --text TEXT (standalone TY); supply only fields to change\n"
     "\n"
     "Environment (booleans: 0/false/no/off = off, anything else = on):\n"
     "  FIDO_STDLIB_DIR      Directory with FCDstdlib_en.fcl etc.\n"
@@ -92,6 +107,10 @@ typedef struct {
     int nlibs;
     const char *libdirs[16];
     int nlibdirs;
+    int has_crop, has_at, has_box, index, layer, dash, orient, mirror;
+    FcRect crop, box;
+    double x, y, tolerance, dx, dy;
+    const char *action, *from, *name, *value, *text;
 } Opt;
 
 static int is_false(const char *v) {
@@ -108,6 +127,8 @@ static int env_bool(const char *name) {
 
 static void opt_init(Opt *o) {
     memset(o, 0, sizeof *o);
+    o->index = o->layer = o->dash = -1;
+    o->tolerance = 2;
     o->stdlib = 1;
     o->extensions = 1;
     o->margin = 12;
@@ -345,6 +366,87 @@ static int cmd_config(const Opt *o, const FcLib *lib) {
     }
 }
 
+static int edit_drawing(const Opt *o, FcDrawing *d) {
+    FcPrim *p;
+    if (!o->action) return FC_ERR_ARG;
+    if (fc_streq(o->action, "add")) {
+        FcDrawing extra;
+        char *text = NULL;
+        FcEmitOpts emit = {1, 1};
+        int i, rc;
+        if (!o->from) return FC_ERR_ARG;
+        fc_drawing_init(&extra);
+        rc = fc_parse_file(&extra, o->from);
+        for (i = 0; i < extra.ndiags; i++)
+            if (extra.diags[i].level == FC_DIAG_ERR) rc = FC_ERR_ARG;
+        if (rc == FC_OK) {
+            size_t n = fc_emit(&extra, &text, &emit);
+            if (!text) rc = FC_ERR_NOMEM;
+            else fc_append_fcd(d, text, n);
+        }
+        free(text); fc_drawing_free(&extra); return rc;
+    }
+    if (o->index < 0 || o->index >= d->nprims) return FC_ERR_ARG;
+    p = &d->prims[o->index];
+    if (fc_streq(o->action, "move")) fc_prim_translate(p, o->dx, o->dy);
+    else if (fc_streq(o->action, "rm")) fc_drawing_remove(d, o->index);
+    else if (fc_streq(o->action, "set")) {
+        if (o->layer >= 0) p->layer = o->layer;
+        if (o->dash >= 0) {
+            if (!(p->kind == FC_LINE || p->kind == FC_BEZIER || p->kind == FC_RECT ||
+                  p->kind == FC_OVAL || p->kind == FC_POLY || p->kind == FC_CURVE)) return FC_ERR_ARG;
+            p->ext.dash = o->dash; p->has_ext = 1;
+        }
+        if (o->name && fc_prim_set_text(d, o->index, 1, o->name) != FC_OK) return FC_ERR_ARG;
+        if (o->value && fc_prim_set_text(d, o->index, 2, o->value) != FC_OK) return FC_ERR_ARG;
+        if (o->text && fc_prim_set_text(d, o->index, 0, o->text) != FC_OK) return FC_ERR_ARG;
+    } else return FC_ERR_ARG;
+    return FC_OK;
+}
+
+static int query_drawing(const Opt *o, const FcDrawing *d, const FcLib *lib) {
+    FcBuf b;
+    int i, n = 0;
+    fc_buf_init(&b);
+    if (fc_streq(o->cmd, "hit")) {
+        if (!o->has_at) return FC_ERR_ARG;
+        fc_buf_printf(&b, "{\"index\":%d}\n", fc_hit_test(d, lib, o->x, o->y, o->tolerance));
+    } else {
+        if (!o->has_box) return FC_ERR_ARG;
+        fc_buf_puts(&b, "{\"indices\":[");
+        for (i = 0; i < d->nprims; i++) {
+            FcRect r;
+            if (fc_prim_bounds(d, lib, i, &r) && r.min_x <= o->box.max_x && r.max_x >= o->box.min_x &&
+                r.min_y <= o->box.max_y && r.max_y >= o->box.min_y) {
+                fc_buf_printf(&b, "%s%d", n++ ? "," : "", i);
+            }
+        }
+        fc_buf_puts(&b, "]}\n");
+    }
+    i = write_out(o, b.p, b.n); fc_buf_free(&b); return i;
+}
+
+static int cmd_macro(const Opt *o, FcLib *lib) {
+    FcDrawing d, expanded;
+    FcPrim *p;
+    char *json, key[512];
+    int rc;
+    if (!o->file || strlen(o->file) >= sizeof key) return FC_ERR_ARG;
+    snprintf(key, sizeof key, "%s", o->file); fc_tolower_buf(key);
+    if (!fc_lib_find(lib, key)) { fprintf(stderr, "fcai: unknown macro %s\n", key); return FC_ERR_ARG; }
+    fc_drawing_init(&d); fc_drawing_init(&expanded);
+    p = fc_drawing_push(&d);
+    if (!p) { fc_drawing_free(&d); fc_drawing_free(&expanded); return FC_ERR_NOMEM; }
+    p->kind = FC_MACRO; p->u.macro.key = key;
+    p->u.macro.p.x = o->has_at ? o->x : 100;
+    p->u.macro.p.y = o->has_at ? o->y : 100;
+    p->u.macro.orient = o->orient; p->u.macro.mirror = o->mirror;
+    fc_expand(&d, &expanded, lib);
+    json = fc_to_json(&expanded, NULL);
+    rc = json ? write_out(o, json, strlen(json)) : FC_ERR_NOMEM;
+    free(json); fc_drawing_free(&d); fc_drawing_free(&expanded); return rc;
+}
+
 static int run_on_drawing(const Opt *o, FcDrawing *d, FcLib *lib) {
     const char *cmd = o->cmd[0] ? o->cmd : "context";
     FcDescribeOpts dopts;
@@ -354,6 +456,19 @@ static int run_on_drawing(const Opt *o, FcDrawing *d, FcLib *lib) {
     dopts.verbose = o->verbose || fc_streq(cmd, "context");
     eopts.extensions = o->extensions;
     eopts.header = 1;
+    if (fc_streq(cmd, "edit")) {
+        rc = edit_drawing(o, d);
+        if (rc != FC_OK) { fprintf(stderr, "fcai: invalid edit action, index, or fields\n"); return rc; }
+        size_t n = fc_emit(d, &s, &eopts);
+        rc = s ? write_out(o, s, n) : FC_ERR_NOMEM;
+        free(s); return rc;
+    }
+    if (fc_streq(cmd, "hit") || fc_streq(cmd, "find")) return query_drawing(o, d, lib);
+    if (fc_streq(cmd, "lint")) {
+        s = fc_lint(d, lib, o->json);
+        rc = s ? write_out(o, s, strlen(s)) : FC_ERR_NOMEM;
+        free(s); return rc;
+    }
     check_macros(d, lib);
 
     if (fc_streq(cmd, "context")) {
@@ -400,6 +515,8 @@ static int run_on_drawing(const Opt *o, FcDrawing *d, FcLib *lib) {
     if (fc_streq(cmd, "render")) {
         FcRenderOpts ro;
         fc_render_opts_init(&ro);
+        ro.has_crop = o->has_crop;
+        ro.crop = o->crop;
         ro.scale = o->scale;
         ro.margin = o->margin;
         ro.max_w = o->max_w;
@@ -474,6 +591,7 @@ static int session_append(const char *dir, FcBuf *b) {
     return FC_OK;
 }
 
+/* Read complete event lines without a fixed drawing-size limit. */
 static int session_wait(const char *dir, int timeout_s) {
     char epath[4096], ppath[4096];
     long pos = 0;
@@ -483,144 +601,190 @@ static int session_wait(const char *dir, int timeout_s) {
     snprintf(ppath, sizeof ppath, "%s/.events.pos", dir);
     pf = fopen(ppath, "rb");
     if (pf) {
-        if (fscanf(pf, "%ld", &pos) != 1) pos = 0;
+        if (fscanf(pf, "%ld", &pos) != 1 || pos < 0) pos = 0;
         fclose(pf);
     }
     for (;;) {
         FILE *f = fopen(epath, "rb");
         if (f) {
-            if (fseek(f, pos, SEEK_SET) == 0) {
-                char buf[131072];
-                size_t n = fread(buf, 1, sizeof buf - 1, f);
+            char *line = NULL;
+            size_t cap = 0;
+            ssize_t n;
+            if (fseek(f, 0, SEEK_END) == 0 && ftell(f) < pos) pos = 0;
+            if (fseek(f, pos, SEEK_SET) == 0 && (n = getline(&line, &cap, f)) > 0 &&
+                line[n - 1] == '\n') {
+                pos = ftell(f);
                 fclose(f);
-                if (n > 0) {
-                    char *nl;
-                    buf[n] = 0;
-                    nl = memchr(buf, '\n', n);
-                    if (nl) {
-                        size_t len = (size_t)(nl - buf) + 1;
-                        fwrite(buf, 1, len, stdout);
-                        fflush(stdout);
-                        pos += (long)len;
-                        pf = fopen(ppath, "wb");
-                        if (pf) {
-                            fprintf(pf, "%ld", pos);
-                            fclose(pf);
-                        }
-                        return 0;
-                    }
-                }
-            } else {
-                fclose(f);
+                fwrite(line, 1, (size_t)n, stdout);
+                free(line);
+                pf = fopen(ppath, "wb");
+                if (pf) { fprintf(pf, "%ld", pos); fclose(pf); }
+                return 0;
             }
+            free(line);
+            fclose(f);
         }
         if (timeout_s > 0 && waited >= timeout_s) {
             fprintf(stderr, "fcai: session wait: timeout after %d s\n", timeout_s);
             return 3;
         }
-        {
-            struct timespec ts = {0, 100000000};
-            nanosleep(&ts, NULL);
+        { struct timespec ts = {0, 100000000}; nanosleep(&ts, NULL); }
+        waited += 0.1;
+    }
+}
+
+static int session_status(const char *dir) {
+    char path[4096], *line = NULL;
+    size_t cap = 0;
+    long pos = 0, pending = 0, sends = 0;
+    ssize_t n;
+    FILE *f;
+    snprintf(path, sizeof path, "%s/.events.pos", dir);
+    f = fopen(path, "rb");
+    if (f) { if (fscanf(f, "%ld", &pos) != 1 || pos < 0) pos = 0; fclose(f); }
+    snprintf(path, sizeof path, "%s/events.jsonl", dir);
+    f = fopen(path, "rb");
+    if (!f) { fprintf(stderr, "fcai: cannot read %s\n", path); return 1; }
+    if (fseek(f, 0, SEEK_END) == 0 && ftell(f) < pos) pos = 0;
+    if (fseek(f, pos, SEEK_SET) != 0) { fclose(f); return 1; }
+    while ((n = getline(&line, &cap, f)) > 0) {
+        if (line[n - 1] != '\n') break;
+        pending++;
+        /* GUI events are compact JSON; FCD text quotes are escaped. */
+        if (strstr(line, "\"event\":\"send\"")) sends++;
+    }
+    free(line);
+    fclose(f);
+    printf("{\"pending\":%ld,\"pending_sends\":%ld,\"read_offset\":%ld}\n", pending, sends, pos);
+    return 0;
+}
+
+static int session_reply(const char *dir, const char *id, int timeout_s, int print_reply) {
+    char path[4096];
+    double waited = 0;
+    snprintf(path, sizeof path, "%s/replies/%s.json", dir, id);
+    for (;;) {
+        char *reply = NULL;
+        size_t n = 0;
+        if (file_exists(path) && fc_read_file(path, &reply, &n) == FC_OK) {
+            int ok = strstr(reply, "\"ok\":true") != NULL;
+            if (!print_reply) ok = ok && strstr(reply, "\"protocol\":2") != NULL;
+            if (print_reply) fwrite(reply, 1, n, stdout);
+            free(reply);
+            unlink(path);
+            return ok ? 0 : 1;
         }
+        if (waited >= timeout_s) {
+            fprintf(stderr, "fcai: session reply: timeout after %d s (command may still apply)\n", timeout_s);
+            return 3;
+        }
+        { struct timespec ts = {0, 100000000}; nanosleep(&ts, NULL); }
         waited += 0.1;
     }
 }
 
 static void session_usage(void) {
     fputs("usage: fcai session <command> DIR [args]\n"
-          "  wait DIR [--timeout SECS]   print the next event line from the GUI\n"
-          "  push DIR [FILE]             replace the drawing (FILE default stdin)\n"
+          "  status DIR                  pending event counts (does not consume)\n"
+          "  wait DIR [--timeout SECS]    print the next event line from the GUI\n"
+          "  push DIR [FILE] [--base FCD] replace drawing; reject if base changed\n"
           "  set DIR KEY VALUE           change a gui.conf setting live\n"
-          "  get DIR                     append a full state event (then wait)\n"
-          "  ack DIR [TEXT]              acknowledge the user's send (shown in the GUI)\n"
+          "  get DIR                     request full state\n"
+          "  save DIR                    save the current GUI drawing\n"
+          "  reload DIR [--force]        reload disk (refuses unsaved GUI edits)\n"
+          "  reload-libs DIR             reload libraries without restarting\n"
+          "  ack DIR [TEXT]              acknowledge the user's send\n"
           "  quit DIR                    ask the GUI to close (Done)\n"
-          "  path FILE                   print the default session dir for a drawing\n",
+          "  path FILE                   print the default session dir\n"
+          "get/push/save/reload/reload-libs: --wait [--timeout SECS] prints a\n"
+          "correlated reply without consuming pending events (default 5 s).\n",
           stderr);
 }
 
 static int cmd_session(int argc, char **argv) {
-    const char *sub = argc > 1 ? argv[1] : NULL;
-    const char *dir;
+    const char *sub = argc > 1 ? argv[1] : NULL, *dir;
+    const char *args[3], *base = NULL;
+    int nargs = 0, wait_reply = 0, timeout = 5, force = 0, i, rc;
+    char id[100] = "";
     FcBuf b;
-    int rc;
     if (!sub || fc_streq(sub, "-h") || fc_streq(sub, "--help") || fc_streq(sub, "help")) {
-        session_usage();
-        return sub ? 0 : 1;
+        session_usage(); return sub ? 0 : 1;
     }
+    if (argc < 3) { session_usage(); return 1; }
+    dir = argv[2];
     if (fc_streq(sub, "path")) {
-        char out[4096];
-        if (argc < 3) {
-            session_usage();
-            return 1;
+        char out[4096]; default_session_dir(dir, out, sizeof out); puts(out); return 0;
+    }
+    if (fc_streq(sub, "wait")) timeout = 0;
+    for (i = 3; i < argc; i++) {
+        if (fc_streq(argv[i], "--wait")) wait_reply = 1;
+        else if (fc_streq(argv[i], "--force")) force = 1;
+        else if (fc_streq(argv[i], "--base") && i + 1 < argc) base = argv[++i];
+        else if (fc_streq(argv[i], "--timeout") && i + 1 < argc) {
+            if (!fc_parse_int(argv[++i], &timeout) || timeout <= 0) {
+                fprintf(stderr, "fcai: timeout must be a positive integer\n"); return 1;
+            }
+        } else if (nargs < 3 && (argv[i][0] != '-' || fc_streq(argv[i], "-"))) args[nargs++] = argv[i];
+        else { session_usage(); return 1; }
+    }
+    if (base && !fc_streq(sub, "push")) { session_usage(); return 1; }
+    if (force && !fc_streq(sub, "reload")) { session_usage(); return 1; }
+    if (fc_streq(sub, "wait") && !nargs && !wait_reply) return session_wait(dir, timeout);
+    if (fc_streq(sub, "status") && !nargs && !wait_reply) return session_status(dir);
+    if (wait_reply && !(fc_streq(sub, "get") || fc_streq(sub, "push") ||
+                       fc_streq(sub, "save") || fc_streq(sub, "reload") || fc_streq(sub, "reload-libs"))) {
+        session_usage(); return 1;
+    }
+    fc_buf_init(&b);
+    fc_buf_puts(&b, "{\"cmd\":"); fc_json_escape(&b, sub);
+    if (wait_reply || base) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        snprintf(id, sizeof id, "%ld-%ld-%ld", (long)getpid(), (long)ts.tv_sec, ts.tv_nsec);
+        if (wait_reply) { fc_buf_puts(&b, ",\"id\":"); fc_json_escape(&b, id); }
+    }
+    if (fc_streq(sub, "push") && nargs <= 1) {
+        char *content = NULL; size_t len = 0;
+        if (fc_read_file(nargs ? args[0] : "-", &content, &len) != FC_OK) goto bad_file;
+        fc_buf_puts(&b, ",\"fcd\":"); fc_json_escape(&b, content); free(content);
+        if (base) {
+            if (fc_read_file(base, &content, &len) != FC_OK) goto bad_file;
+            fc_buf_puts(&b, ",\"base\":"); fc_json_escape(&b, content); free(content);
         }
-        default_session_dir(argv[2], out, sizeof out);
-        printf("%s\n", out);
-        return 0;
-    }
-    dir = argc > 2 ? argv[2] : NULL;
-    if (!dir) {
-        session_usage();
-        return 1;
-    }
-    if (fc_streq(sub, "wait")) {
-        int timeout = 0, i;
-        for (i = 3; i + 1 < argc; i++)
-            if (fc_streq(argv[i], "--timeout")) fc_parse_int(argv[i + 1], &timeout);
-        return session_wait(dir, timeout);
-    }
-    if (fc_streq(sub, "push")) {
-        const char *file = argc > 3 ? argv[3] : "-";
-        char *text = NULL;
-        size_t len = 0;
-        if (fc_read_file(file, &text, &len) != FC_OK) {
-            fprintf(stderr, "fcai: cannot read %s\n", file);
-            return 1;
+    } else if (fc_streq(sub, "set") && nargs == 2) {
+        fc_buf_puts(&b, ",\"key\":"); fc_json_escape(&b, args[0]);
+        fc_buf_puts(&b, ",\"value\":"); fc_json_escape(&b, args[1]);
+    } else if (fc_streq(sub, "ack") && nargs <= 1) {
+        fc_buf_puts(&b, ",\"text\":"); fc_json_escape(&b, nargs ? args[0] : "");
+    } else if (!nargs && (fc_streq(sub, "get") || fc_streq(sub, "quit") ||
+                         fc_streq(sub, "save") || fc_streq(sub, "reload") || fc_streq(sub, "reload-libs"))) {
+        if (force) fc_buf_puts(&b, ",\"force\":true");
+    } else { session_usage(); fc_buf_free(&b); return 1; }
+    fc_buf_puts(&b, "}\n");
+    if (base) {
+        /* Old GUIs ignore unknown fields. Verify support before sending a
+         * guarded mutation, so --base can never degrade to an unguarded push. */
+        FcBuf probe;
+        char probe_id[120];
+        snprintf(probe_id, sizeof probe_id, "%s-probe", id);
+        fc_buf_init(&probe);
+        fc_buf_puts(&probe, "{\"cmd\":\"get\",\"id\":");
+        fc_json_escape(&probe, probe_id); fc_buf_puts(&probe, "}\n");
+        rc = session_append(dir, &probe);
+        fc_buf_free(&probe);
+        if (rc == FC_OK) rc = session_reply(dir, probe_id, timeout, 0);
+        if (rc != 0) {
+            fprintf(stderr, "fcai: guarded push not sent; need a running GUI with protocol 2 (reopen older windows)\n");
+            fc_buf_free(&b); return rc;
         }
-        fc_buf_init(&b);
-        fc_buf_puts(&b, "{\"cmd\":\"push\",\"fcd\":");
-        fc_json_escape(&b, text ? text : "");
-        fc_buf_puts(&b, "}\n");
-        rc = session_append(dir, &b);
-        fc_buf_free(&b);
-        free(text);
-        return rc == FC_OK ? 0 : 1;
     }
-    if (fc_streq(sub, "set")) {
-        if (argc < 5) {
-            session_usage();
-            return 1;
-        }
-        fc_buf_init(&b);
-        fc_buf_puts(&b, "{\"cmd\":\"set\",\"key\":");
-        fc_json_escape(&b, argv[3]);
-        fc_buf_puts(&b, ",\"value\":");
-        fc_json_escape(&b, argv[4]);
-        fc_buf_puts(&b, "}\n");
-        rc = session_append(dir, &b);
-        fc_buf_free(&b);
-        return rc == FC_OK ? 0 : 1;
-    }
-    if (fc_streq(sub, "ack")) {
-        const char *text = argc > 3 ? argv[3] : "";
-        fc_buf_init(&b);
-        fc_buf_puts(&b, "{\"cmd\":\"ack\",\"text\":");
-        fc_json_escape(&b, text);
-        fc_buf_puts(&b, "}\n");
-        rc = session_append(dir, &b);
-        fc_buf_free(&b);
-        return rc == FC_OK ? 0 : 1;
-    }
-    if (fc_streq(sub, "get") || fc_streq(sub, "quit")) {
-        char line[64];
-        snprintf(line, sizeof line, "{\"cmd\":\"%s\"}\n", sub);
-        fc_buf_init(&b);
-        fc_buf_puts(&b, line);
-        rc = session_append(dir, &b);
-        fc_buf_free(&b);
-        return rc == FC_OK ? 0 : 1;
-    }
-    fprintf(stderr, "fcai: unknown session command '%s'\n", sub);
-    session_usage();
+    rc = session_append(dir, &b);
+    fc_buf_free(&b);
+    if (rc != FC_OK) return 1;
+    return wait_reply ? session_reply(dir, id, timeout, 1) : 0;
+bad_file:
+    fprintf(stderr, "fcai: cannot read push/base file\n");
+    fc_buf_free(&b);
     return 1;
 }
 
@@ -1039,6 +1203,51 @@ int main(int argc, char **argv) {
             parse_bg(argv[++i], &o.bg);
             continue;
         }
+        if ((fc_streq(a, "--crop") || fc_streq(a, "--bbox")) && i + 4 < argc) {
+            FcRect *r = fc_streq(a, "--crop") ? &o.crop : &o.box;
+            if (!fc_parse_double(argv[++i], &r->min_x) || !fc_parse_double(argv[++i], &r->min_y) ||
+                !fc_parse_double(argv[++i], &r->max_x) || !fc_parse_double(argv[++i], &r->max_y) ||
+                !isfinite(r->min_x) || !isfinite(r->min_y) || !isfinite(r->max_x) || !isfinite(r->max_y) ||
+                r->min_x >= r->max_x || r->min_y >= r->max_y) {
+                fprintf(stderr, "fcai: expected increasing finite bounds\n"); return 1;
+            }
+            if (fc_streq(a, "--crop")) o.has_crop = 1; else o.has_box = 1;
+            continue;
+        }
+        if ((fc_streq(a, "--at") || fc_streq(a, "--by") || fc_streq(a, "--near")) && i + 2 < argc) {
+            double x, y;
+            if (!fc_parse_double(argv[++i], &x) || !fc_parse_double(argv[++i], &y) ||
+                !isfinite(x) || !isfinite(y) || fabs(x) > FC_MAX_COORD || fabs(y) > FC_MAX_COORD) {
+                fprintf(stderr, "fcai: invalid coordinates\n"); return 1;
+            }
+            if (fc_streq(a, "--by")) { o.dx = x; o.dy = y; }
+            else { o.x = x; o.y = y; o.has_at = 1; }
+            if (fc_streq(a, "--near")) {
+                double radius;
+                if (i + 1 >= argc || !fc_parse_double(argv[++i], &radius) || !isfinite(radius) || radius <= 0 || radius > FC_MAX_COORD) return 1;
+                o.box = (FcRect){x - radius, y - radius, x + radius, y + radius}; o.has_box = 1;
+            }
+            continue;
+        }
+        if (fc_streq(a, "--tol") && i + 1 < argc) {
+            if (!fc_parse_double(argv[++i], &o.tolerance) || !isfinite(o.tolerance) || o.tolerance < 0) return 1;
+            continue;
+        }
+        if ((fc_streq(a, "--index") || fc_streq(a, "--layer") || fc_streq(a, "--dash") || fc_streq(a, "--orient")) && i + 1 < argc) {
+            int n;
+            if (!fc_parse_int(argv[++i], &n) || n < 0) return 1;
+            if (fc_streq(a, "--index")) o.index = n;
+            else if (fc_streq(a, "--layer") && n < FC_MAX_LAYERS) o.layer = n;
+            else if (fc_streq(a, "--dash") && n <= 4) o.dash = n;
+            else if (fc_streq(a, "--orient") && n <= 3) o.orient = n;
+            else return 1;
+            continue;
+        }
+        if (fc_streq(a, "--mirror")) { o.mirror = 1; continue; }
+        if (fc_streq(a, "--from") && i + 1 < argc) { o.from = argv[++i]; continue; }
+        if (fc_streq(a, "--name") && i + 1 < argc) { o.name = argv[++i]; continue; }
+        if (fc_streq(a, "--value") && i + 1 < argc) { o.value = argv[++i]; continue; }
+        if (fc_streq(a, "--text") && i + 1 < argc) { o.text = argv[++i]; continue; }
         if (a[0] == '-' && a[1] != 0) {
             fprintf(stderr, "fcai: unknown option %s\n", a);
             return 1;
@@ -1047,10 +1256,13 @@ int main(int argc, char **argv) {
             (fc_streq(a, "context") || fc_streq(a, "describe") || fc_streq(a, "json") ||
              fc_streq(a, "dump") || fc_streq(a, "parse") || fc_streq(a, "emit") ||
              fc_streq(a, "validate") || fc_streq(a, "render") || fc_streq(a, "expand") ||
-             fc_streq(a, "lib") || fc_streq(a, "config") || fc_streq(a, "diff"))) {
+             fc_streq(a, "lib") || fc_streq(a, "config") || fc_streq(a, "diff") ||
+             fc_streq(a, "macro") || fc_streq(a, "lint") || fc_streq(a, "edit") ||
+             fc_streq(a, "hit") || fc_streq(a, "find"))) {
             snprintf(o.cmd, sizeof o.cmd, "%s", a);
             continue;
         }
+        if (fc_streq(o.cmd, "edit") && !o.action) { o.action = a; continue; }
         if (!o.file) {
             o.file = a;
             continue;
@@ -1070,6 +1282,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    if (fc_streq(o.cmd, "macro")) {
+        rc = cmd_macro(&o, lib); fc_lib_free(lib); return rc == FC_OK ? 0 : 1;
+    }
     if (fc_streq(o.cmd, "lib")) {
         rc = cmd_lib(&o, lib);
         fc_lib_free(lib);

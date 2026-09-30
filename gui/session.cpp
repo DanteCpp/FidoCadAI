@@ -1,10 +1,13 @@
 #include "session.h"
 
 #include <QDir>
+#include <QDateTime>
 #include <QFile>
 #include <QFileSystemWatcher>
 #include <QJsonDocument>
 #include <QTimer>
+#include <QSaveFile>
+#include <QUuid>
 
 Session::Session(const QString &dir, QObject *owner) : dir_(dir) {
     watch_ = new QFileSystemWatcher(owner);
@@ -26,15 +29,26 @@ bool Session::start() {
         err_ = "cannot create " + dir_;
         return false;
     }
-    /* A new GUI run is a new conversation: fresh logs, fresh read offsets. */
+    /* Keep old conversations, but never replay their commands into a new GUI. */
+    run_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QString archive = file("history") + "/" +
+        QDateTime::currentDateTimeUtc().toString("yyyyMMddTHHmmsszzz") + "-" + run_;
     for (const char *n : {"events.jsonl", "commands.jsonl", ".events.pos"}) {
-        QFile::remove(file(n));
+        if (QFile::exists(file(n)) &&
+            (!QDir().mkpath(archive) || !QFile::rename(file(n), archive + "/" + n))) {
+            err_ = "cannot archive " + file(n);
+            return false;
+        }
     }
     {
         QFile events(file("events.jsonl"));
-        (void)events.open(QIODevice::WriteOnly | QIODevice::Truncate);
         QFile cmds(file("commands.jsonl"));
-        (void)cmds.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        if (!events.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+            !cmds.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+            !QDir().mkpath(file("replies"))) {
+            err_ = "cannot create session files";
+            return false;
+        }
     }
     pos_ = 0;
     watch_->addPath(file("commands.jsonl"));
@@ -44,11 +58,25 @@ bool Session::start() {
 }
 
 void Session::send(const QJsonObject &event) {
+    QJsonObject e = event;
+    e["seq"] = ++seq_;
+    e["session_id"] = run_;
+    e["time"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+    QByteArray line = QJsonDocument(e).toJson(QJsonDocument::Compact) + '\n';
     QFile f(file("events.jsonl"));
     if (!f.open(QIODevice::WriteOnly | QIODevice::Append)) return;
-    f.write(QJsonDocument(event).toJson(QJsonDocument::Compact));
-    f.write("\n");
+    f.write(line);
     f.flush();
+    /* Correlated replies do not consume the agent's pending user events. */
+    QString id = e["id"].toString();
+    if (id.isEmpty() || id.size() > 100) return;
+    for (QChar c : id)
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '-' || c == '_')) return;
+    QSaveFile reply(file("replies") + "/" + id + ".json");
+    if (reply.open(QIODevice::WriteOnly)) {
+        if (reply.write(line) == line.size()) reply.commit();
+    }
 }
 
 void Session::pollNow() {

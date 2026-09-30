@@ -23,6 +23,7 @@ class MainWindow : public QMainWindow {
 public:
     MainWindow(Document *doc, Settings *settings, Theme *theme, QApplication *app,
                const QString &sessionDir);
+    ~MainWindow() override;
 
     Canvas *canvas() const { return canvas_; }
     Session *session() const { return session_; }
@@ -62,7 +63,7 @@ private:
     void toggleBar();                      /* I */
     void report(const QString &text);      /* transient message in the bottom bar */
     void applyCommand(const QJsonObject &cmd);
-    QJsonObject stateEvent(const QString &event, const QString &note) const;
+    QJsonObject stateEvent(const QString &event, const QString &note);
     void watchFile();
 
     Document *doc_;
@@ -81,5 +82,7 @@ private:
     QString title_;
     QString status_ = "closed", note_, save_err_;
     bool saved_ok_ = false, finishing_ = false;
-    bool writing_ = false; /* ignore our own saves in the file watcher */
+    bool disk_changed_ = false;
+    QByteArray previous_event_;
+    QByteArray conflict_disk_;
 };

@@ -49,7 +49,9 @@ Spec: `~/Projects/FidoCadJS/FIDOSPECS.md`. Behaviour should match FidoCadJS
   (`line_aa` disks at solid thick-line ends).
 - The session protocol is an interface for other programs: JSON lines in
   `DIR/commands.jsonl` and `DIR/events.jsonl`, read offsets in `DIR/.events.pos`.
-  The GUI truncates both files at start. Do not silently change field names —
+  The GUI archives both files and the read offset under `DIR/history/` at start,
+  then starts fresh logs. Correlated `--wait` replies also use `DIR/replies/`.
+  Do not silently change field names —
   agents and the shipped skill (`share/skills/fidocad/SKILL.md`) depend on them;
   keep that skill in sync when the CLI/GUI workflow changes.
 - No dialog windows for editing (Hyprland can bury them behind the drawing):
@@ -164,18 +166,26 @@ separate session directory keeps the workspace clean:
 ```
 fcai gui sketch.fcd --session-dir /tmp/sketch.session &
 fcai session wait   /tmp/sketch.session --timeout 300   # user pressed Return
-fcai session push   /tmp/sketch.session /tmp/new.fcd    # live replace (or stdin)
+fcai session get    /tmp/sketch.session --wait         # current state without consuming sends
+fcai session push   /tmp/sketch.session /tmp/new.fcd --wait # confirmed live replace
+fcai session save   /tmp/sketch.session --wait         # persist GUI drawing
+fcai session reload-libs /tmp/sketch.session --wait    # refresh macros without restart
 fcai session set    /tmp/sketch.session grid 10
 fcai session ack    /tmp/sketch.session "got your edit" # acknowledge the user's send
 fcai session quit   /tmp/sketch.session                 # Done
 ```
 
 `wait` prints one JSON event line: `send` (the user's `note`, `fcd`,
-`selection`, `diff`), `state` (answer to `get`) or `closed`. Exit 3 = timeout.
+`selection`, `diff`, `diff_prev`), `state`, `applied`, `conflict` or `closed`.
+Events include `seq` and `session_id`. Exit 3 = timeout. `get/push/save/reload/
+reload-libs --wait` returns a correlated reply without consuming queued sends;
+`session status` reports pending counts. `push --base FILE` rejects stale edits.
 **Acknowledging a `send` is part of the protocol:** say what the `diff` shows
 before editing, and put a one-liner in the window's bottom bar with
 `fcai session ack` so the user knows the agent got it.
-Editing the `.fcd` on disk also live-reloads the window. The window shows only
+Editing the `.fcd` on disk live-reloads a clean window; unsaved GUI edits block
+the reload and emit `conflict` with both versions. Read/merge the GUI state,
+then `push --base FILE --wait` and `save --wait` to apply feedback safely. The window shows only
 the drawing — never put status messages over it; report in your own interface.
 The window blocks
 until done/closed, then prints status, note, selection, the diff since opening

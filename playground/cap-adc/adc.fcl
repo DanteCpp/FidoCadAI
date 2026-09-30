@@ -1,0 +1,14 @@
+{ADC building blocks}
+[ssw Sample switch with control]
+LI 100 100 103 100
+LI 107 100 110 100
+LI 103 100 108 94
+LI 108 94 108 86
+LI 108 86 118 86
+[cell 5-bit CDAC bit cell (C + SPDT to Vref/GND)]
+MC 100 100 1 0 170
+MC 100 110 1 0 880
+LI 85 115 85 132 0
+LI 100 120 100 144 0
+LI 93 113 93 215 1
+FCJ 0 0 3 2 1 0

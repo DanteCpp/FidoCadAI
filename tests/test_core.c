@@ -630,6 +630,153 @@ static void test_exe_path(void) {
     EXPECT(strcmp(dir, "/") == 0);
 }
 
+static void test_drawing_lint(void) {
+    FcDrawing d;
+    char *s;
+    fc_drawing_init(&d);
+    fc_parse(&d, "LI 0 0 10 0 0\nLI 10 0 10 10 0\nSA 10 0 0\n", 0);
+    s = fc_lint(&d, NULL, 1);
+    EXPECT(s && strstr(s, "corner-dot")); free(s);
+    fc_drawing_clear(&d);
+    fc_parse(&d, "LI 0 0 20 0 0\nLI 10 0 10 10 0\n", 0);
+    s = fc_lint(&d, NULL, 1);
+    EXPECT(s && strstr(s, "missing-junction-dot")); free(s);
+    fc_append_fcd(&d, "SA 10 0 0\n", 0);
+    s = fc_lint(&d, NULL, 1);
+    EXPECT(s && strstr(s, "\"count\":0")); free(s);
+    fc_append_fcd(&d, "LI 15 0 25 0 0\n", 0);
+    s = fc_lint(&d, NULL, 1);
+    EXPECT(s && strstr(s, "overlapping-wires")); free(s);
+    fc_drawing_clear(&d);
+    /* A crossing without an endpoint is not automatically a connection. */
+    fc_parse(&d, "LI 0 10 20 10 0\nLI 10 0 10 20 0\nLI 15 10 15 20 1\n", 0);
+    s = fc_lint(&d, NULL, 1);
+    EXPECT(s && strstr(s, "\"count\":0")); free(s);
+    fc_drawing_free(&d);
+}
+
+static void test_dash_scale_and_crop(void) {
+    FcDrawing d;
+    FcView v = {0};
+    uint8_t pixels[240 * 80 * 3];
+    int scale;
+    fc_drawing_init(&d);
+    fc_parse(&d, "LI 0 10 80 10 0\nFCJ 0 0 3 2 1 0\n", 0);
+    v.bg = 0xFFFFFF;
+    for (scale = 1; scale <= 3; scale++) {
+        v.scale = scale;
+        EXPECT(fc_render_rgb(&d, NULL, &v, pixels, 240, 80, 240 * 3) == FC_OK);
+        EXPECT(pixels[(10 * scale * 240 + 2 * scale) * 3] == 0);
+        EXPECT(pixels[(10 * scale * 240 + 7 * scale) * 3] == 255);
+        EXPECT(pixels[(10 * scale * 240 + 12 * scale) * 3] == 0);
+        /* Panning clips the line without restarting its dash pattern. */
+        v.ox = -6 * scale;
+        EXPECT(fc_render_rgb(&d, NULL, &v, pixels, 240, 80, 240 * 3) == FC_OK);
+        EXPECT(pixels[(10 * scale * 240 + scale) * 3] == 255);
+        EXPECT(pixels[(10 * scale * 240 + 6 * scale) * 3] == 0);
+        v.ox = 0;
+    }
+    d.prims[0].ext.dash = 4;
+    v.scale = 2;
+    EXPECT(fc_render_rgb(&d, NULL, &v, pixels, 240, 80, 240 * 3) == FC_OK);
+    EXPECT(pixels[(20 * 240 + 15 * 2) * 3] == 255);
+    EXPECT(pixels[(20 * 240 + 18 * 2) * 3] == 0);
+    {
+        FcRenderOpts o;
+        FILE *f;
+        char header[80];
+        fc_render_opts_init(&o);
+        o.has_crop = 1; o.crop = (FcRect){0, 5, 20, 15};
+        o.scale = 2; o.margin = 0; o.ppm = 1;
+        EXPECT(fc_render_file(&d, NULL, &o, "build/test-crop.ppm") == FC_OK);
+        f = fopen("build/test-crop.ppm", "rb");
+        EXPECT(f != NULL);
+        if (f) {
+            size_t n = fread(header, 1, sizeof header - 1, f); header[n] = 0;
+            EXPECT(strstr(header, "40 20") != NULL); fclose(f);
+        }
+        remove("build/test-crop.ppm");
+        o.crop.max_x = o.crop.min_x;
+        EXPECT(fc_render_file(&d, NULL, &o, "build/test-crop.ppm") == FC_ERR_ARG);
+    }
+    fc_drawing_free(&d);
+}
+
+static void test_label_handles(void) {
+    FcDrawing d, roundtrip;
+    FcPoint point;
+    char *emitted = NULL, *again = NULL;
+    int index;
+    fc_drawing_init(&d);
+    fc_drawing_init(&roundtrip);
+    fc_parse(&d,
+             "LI 10 10 30 10 0\nBE 10 10 15 20 25 20 30 10 0\n"
+             "RV 10 10 30 20 0\nEV 10 10 30 20 0\n"
+             "PV 10 10 20 20 30 10 0\nCV 0 10 10 20 20 30 10 0\n"
+             "SA 10 10 0\nPL 10 10 30 10 2 0\nPA 10 10 5 5 2 0 0\n"
+             "MC 10 10 3 1 080\nTY 10 10 4 3 0 0 0 * text\n", 0);
+    EXPECT(d.nprims == 11);
+    for (index = 0; index < d.nprims - 1; index++) {
+        FcPrim *p = &d.prims[index];
+        int n = fc_prim_handles(p);
+        char *before = fc_prim_fcd(p), *after;
+        EXPECT(fc_prim_set_text(&d, index, 1, "R1") == FC_OK);
+        EXPECT(fc_prim_set_text(&d, index, 2, "10k") == FC_OK);
+        EXPECT(fc_prim_handles(p) == n + 2);
+        fc_prim_set_handle(p, n, 40, 45);
+        EXPECT(p->name.p.x == 40 && p->name.p.y == 45);
+        EXPECT(p->value.p.x == 20 && p->value.p.y == 15);
+        fc_prim_set_handle(p, n + 1, 60, 65);
+        EXPECT(p->name.p.x == 40 && p->name.p.y == 45);
+        EXPECT(p->value.p.x == 60 && p->value.p.y == 65);
+        EXPECT(fc_prim_handle(p, n, &point) && point.x == 40 && point.y == 45);
+        EXPECT(fc_prim_handle(p, n + 1, &point) && point.x == 60 && point.y == 65);
+        EXPECT(!fc_prim_handle(p, -1, &point));
+        EXPECT(!fc_prim_handle(p, n + 2, &point));
+        fc_prim_set_handle(p, -1, 0, 0);
+        fc_prim_set_handle(p, n + 2, 0, 0);
+        EXPECT(p->name.p.x == 40 && p->value.p.x == 60);
+        /* Removing the labels leaves precisely the original geometry/style. */
+        p->has_name = p->has_value = 0;
+        after = fc_prim_fcd(p);
+        EXPECT(before && after && strcmp(before, after) == 0);
+        free(before); free(after);
+        p->has_name = p->has_value = 1;
+    }
+    EXPECT(fc_prim_handles(&d.prims[d.nprims - 1]) == 1); /* standalone TY */
+    fc_emit(&d, &emitted, NULL);
+    EXPECT(emitted && fc_parse(&roundtrip, emitted, 0) == FC_OK);
+    fc_emit(&roundtrip, &again, NULL);
+    EXPECT(emitted && again && strcmp(emitted, again) == 0);
+    free(emitted); free(again);
+
+    /* Empty FCJ slots stay hidden, including a value with no name. */
+    fc_drawing_clear(&d);
+    fc_parse(&d, "MC 100 100 0 0 080\nFCJ\n"
+                 "TY 110 100 4 3 0 0 0 * \nTY 110 105 4 3 0 0 0 * 10k\n", 0);
+    EXPECT(d.nprims == 1 && !d.prims[0].has_name && d.prims[0].has_value);
+    EXPECT(fc_prim_handles(&d.prims[0]) == 2);
+    EXPECT(fc_prim_handle(&d.prims[0], 1, &point) && point.x == 110 && point.y == 105);
+    /* Direct API callers may keep a label slot whose text is empty. */
+    d.prims[0].has_name = 1;
+    d.prims[0].name.text = "";
+    d.prims[0].name.p = (FcPoint){110, 100};
+    EXPECT(fc_prim_handles(&d.prims[0]) == 2);
+    fc_prim_set_handle(&d.prims[0], 1, -10, FC_MAX_COORD + 10);
+    EXPECT(d.prims[0].value.p.x == 0 && d.prims[0].value.p.y == FC_MAX_COORD);
+    EXPECT(d.prims[0].name.p.x == 110 && d.prims[0].name.p.y == 100);
+    fc_prim_set_text(&d, 0, 2, "");
+    EXPECT(fc_prim_handles(&d.prims[0]) == 1);
+    fc_prim_set_text(&d, 0, 1, "R1");
+    EXPECT(fc_prim_handles(&d.prims[0]) == 2);
+    EXPECT(fc_prim_handle(&d.prims[0], 1, &point) && point.x == 110 && point.y == 100);
+    EXPECT(fc_prim_handles(NULL) == 0);
+    EXPECT(!fc_prim_handle(NULL, 0, &point));
+    fc_prim_set_handle(NULL, 0, 0, 0);
+    fc_drawing_free(&roundtrip);
+    fc_drawing_free(&d);
+}
+
 static void test_full_pattern_file(void) {
     FcDrawing d;
     char *rep = NULL;
@@ -674,6 +821,9 @@ int main(int argc, char **argv) {
     test_many_macros_and_json();
     test_edge_fixture();
     test_exe_path();
+    test_drawing_lint();
+    test_dash_scale_and_crop();
+    test_label_handles();
     printf("%d passed, %d failed\n", g_ok, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -35,7 +35,7 @@ static void shift(FcPoint *p, double dx, double dy) {
     p->y = fc_clamp_coord(p->y + dy);
 }
 
-int fc_prim_handles(const FcPrim *p) {
+static int geometry_handles(const FcPrim *p) {
     if (!p) return 0;
     switch (p->kind) {
     case FC_LINE:
@@ -58,8 +58,36 @@ int fc_prim_handles(const FcPrim *p) {
     return 0;
 }
 
+static int label_has_handle(int present, const FcLabel *label) {
+    return present && label->text && label->text[0];
+}
+
+int fc_prim_handles(const FcPrim *p) {
+    if (!p) return 0;
+    return geometry_handles(p) + label_has_handle(p->has_name, &p->name) +
+           label_has_handle(p->has_value, &p->value);
+}
+
+/* Geometry keeps its indices; append only the visible name/value handles.
+ * Empty TY slots in an FCJ pair must not create invisible drag targets. */
+static int label_handle_slot(const FcPrim *p, int i) {
+    i -= geometry_handles(p);
+    if (i < 0) return 0;
+    if (label_has_handle(p->has_name, &p->name)) {
+        if (i == 0) return 1;
+        i--;
+    }
+    return i == 0 && label_has_handle(p->has_value, &p->value) ? 2 : 0;
+}
+
 int fc_prim_handle(const FcPrim *p, int i, FcPoint *out) {
+    int label;
     if (!p || !out || i < 0 || i >= fc_prim_handles(p)) return 0;
+    label = label_handle_slot(p, i);
+    if (label) {
+        *out = label == 1 ? p->name.p : p->value.p;
+        return 1;
+    }
     switch (p->kind) {
     case FC_LINE:
         *out = i ? p->u.line.b : p->u.line.a;
@@ -100,9 +128,16 @@ int fc_prim_handle(const FcPrim *p, int i, FcPoint *out) {
 
 void fc_prim_set_handle(FcPrim *p, int i, double x, double y) {
     FcPoint q;
+    int label;
     if (!p || i < 0 || i >= fc_prim_handles(p)) return;
     q.x = fc_clamp_coord(x);
     q.y = fc_clamp_coord(y);
+    label = label_handle_slot(p, i);
+    if (label) {
+        if (label == 1) p->name.p = q;
+        else p->value.p = q;
+        return;
+    }
     switch (p->kind) {
     case FC_LINE:
         if (i)

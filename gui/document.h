@@ -23,6 +23,7 @@ public:
     /* libraries */
     void loadLibraries(bool stdlib, const QStringList &libs, const QStringList &libdirs,
                        const char *argv0);
+    bool reloadLibraries(QString *err = nullptr);
     const FcLib *lib() const { return lib_; }
 
     /* file */
@@ -33,6 +34,7 @@ public:
     bool reloadFromDisk(QString *err); /* also resets the diff baseline */
     QString path() const { return path_; }
     bool modified() const { return fcd() != saved_; }
+    QByteArray savedFcd() const { return saved_; }
     bool changedSinceOpen() const { return fcd() != original_; }
     void setBaseline(); /* what fc_diff compares against */
 
@@ -94,4 +96,7 @@ private:
     std::vector<QByteArray> undo_, redo_;
     int batch_ = 0;
     int grid_ = 5;
+    bool stdlib_ = true;
+    QStringList libs_, libdirs_;
+    QByteArray argv0_;
 };
