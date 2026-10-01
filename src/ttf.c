@@ -241,7 +241,7 @@ int fc_ttf_glyph(int slot, float px_size, float xratio, int cp, float shift_x, f
     int x0, y0, x1, y1, w, h, adv, lsb, qx, qy;
     uint8_t *pix;
     memset(out, 0, sizeof *out);
-    if (slot < 0 || slot >= N_FACE || !faces[slot].loaded || px_size < 2) return 0;
+    if (slot < 0 || slot >= N_FACE || !faces[slot].loaded || px_size < 1) return 0;
     if (cp <= 0 || cp > 0x10FFFF) return 0;
     f = &faces[slot];
     px_size = fc_ttf_quantize(px_size);

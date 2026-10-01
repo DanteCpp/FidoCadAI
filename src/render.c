@@ -16,6 +16,7 @@ typedef struct {
 
 #define MAX_RASTER 8192
 #define MAX_TEXT_PX 2048.0 /* glyph height cap; TTF bitmaps are capped at 512 anyway */
+#define MIN_TEXT_PX 1.0    /* below this a label is skipped rather than smeared */
 
 /* Pixel values far outside the raster are pinned here so int maths cannot overflow;
  * every drawing loop below is clipped to the raster. */
@@ -651,13 +652,10 @@ static void draw_math_run(Raster *r, const char *latex, int n, int display, floa
             float gy = base - o->y * em - 0.78f * gh;
             if (o->glyph >= 32 && o->glyph <= 126) {
                 float s = gh / 12.0f;
-                if (s < 0.35f) s = 0.35f;
                 draw_cp_stroke(r, o->glyph, gx, s, s, 0, o->italic, o->bold, x0, y0 + (int)gy, ca,
                                sa, mirror, rgb, a);
             } else {
                 float gw = (o->w > 0 ? o->w : 0.62f * o->size) * em;
-                if (gw < 3) gw = 3;
-                if (gh < 4) gh = 4;
                 blit_bitmap_glyph(r, x0, y0, ca, sa, mirror, o->glyph, gx, gy, gw, gh, o->italic,
                                   o->bold, rgb, a);
             }
@@ -680,18 +678,21 @@ static void draw_text(Raster *r, const FcLabel *l, uint32_t rgb, float a) {
     float pen = 0, base = 0, sx, sy, em, ph, xratio;
     double hpx, wpx, fx, fy;
     if (!*s) return;
+    /* Text scales with the view and nothing else: no pixel floors, and the cap
+       shrinks height and width together, so zooming never changes its shape or
+       its size relative to the drawing. */
     hpx = l->size_y * r->scale;
     wpx = l->size_x * r->scale;
-    if (hpx > MAX_TEXT_PX) hpx = MAX_TEXT_PX;
-    if (wpx > MAX_TEXT_PX) wpx = MAX_TEXT_PX;
+    if (hpx > MAX_TEXT_PX || wpx > MAX_TEXT_PX) {
+        double k = MAX_TEXT_PX / (hpx > wpx ? hpx : wpx);
+        hpx *= k;
+        wpx *= k;
+    }
+    if (hpx < MIN_TEXT_PX) return; /* thinner than a pixel row: nothing to see */
     sy = (float)(hpx / 12.0);
     sx = (float)(wpx / 10.0);
-    if (sy < 0.35f) sy = 0.35f;
-    if (sx < 0.30f) sx = 0.30f;
     em = (float)hpx;
-    if (em < 6) em = 6;
     ph = (float)(hpx * 1.15);
-    if (ph < 8) ph = 8;
     xratio = 1.0f;
     if (l->size_y > 0.1)
         xratio = (float)((l->size_x / l->size_y) * (4.0 / 3.0)); /* 1.0 at default 3×4 */

@@ -164,7 +164,7 @@ fcai hit d.fcd --at 40 20        # primitive index near a point
 fcai find d.fcd --bbox 20 10 80 60 # indices whose bounds intersect a region
 fcai lint d.fcd --json           # advisory wire/junction geometry
 fcai render d.fcd --crop 20 10 80 60 --scale 8 -o /tmp/detail.png
-fcai diff a.fcd b.fcd           # primitive-level changes
+fcai diff a.fcd b.fcd           # primitive-level + layer colour/opacity changes
 fcai config                     # effective CLI configuration
 ```
 
@@ -187,6 +187,29 @@ Moving a primitive carries its attached name/value labels. Separate wires or
 stubs are independent primitives: move or reroute them deliberately. `--text`
 edits a standalone TY; `--name`/`--value` edit attached labels. `find --near X Y R`
 uses a bounding square, not electrical connectivity.
+
+### Layer colours and transparency
+
+Each of the 16 layers has a colour, an opacity and a name, stored per drawing
+as `FJC L layer rgb alpha` and `FJC N layer name` (FidoCadJS reads both).
+`fcai json`/`context` list the effective values under `layers`. Change them
+with `edit layer` instead of recolouring primitives:
+
+```bash
+fcai edit layer draft.fcd --layer 2 --color 00AAFF -o next.fcd      # colour (RRGGBB)
+fcai edit layer draft.fcd --layer 2 --alpha 0.4 -o next.fcd         # opacity 0..1
+fcai edit layer draft.fcd --layer 3 --name "Silk top" -o next.fcd   # display name
+fcai edit layer draft.fcd --layer 2 --reset -o next.fcd             # back to default
+```
+
+Options combine in one call. Opacity applies to everything on the layer
+(fills overlap visibly below 1). Layer 0 is the black circuit layer; in a dark
+GUI theme near-black layers are drawn in the theme foreground, but the file
+keeps the real colour. `fcai diff` and the GUI `diff`/`diff_prev` report layer
+changes as `L [n] before -> after` (JSON: `layers_changed` and a `layers`
+array of `{layer, before, after}` with `rgb`, `alpha`, `name`); `changes`
+counts them too. With a GUI open, write the result and `session push` it (or
+edit the open file) so the window reloads with the new colours.
 
 ## Drawing in the GUI
 
@@ -220,6 +243,8 @@ MC x y orientation mirror key macro instance (orientation 0-3, mirror 0/1)
 TY x y sizeY sizeX rotation style layer font text...
 TY 20 40 4 3 0 0 0 * Vout      (a standalone label)
 TE x y text                   legacy text — always emit TY
+FJC L layer rgb alpha         layer colour (R<<16|G<<8|B, decimal) + opacity 0..1
+FJC N layer name...           layer display name
 ```
 
 * Component and terminal names/values are **attached properties**: `MC`, bare

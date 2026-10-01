@@ -599,10 +599,53 @@ static void json_str_trim(FcBuf *b, const char *s) {
     free(t);
 }
 
+/* Layer colour, opacity and name (FJC L / FJC N) as they would be emitted. */
+static int layer_differs(const FcLayer *a, const FcLayer *b) {
+    char x[32], y[32];
+    fc_fmt_num(x, sizeof x, a->alpha);
+    fc_fmt_num(y, sizeof y, b->alpha);
+    return a->rgb != b->rgb || !fc_streq(x, y) || !fc_streq(a->name, b->name);
+}
+
+static void put_layer(FcBuf *b, const FcLayer *l, int json) {
+    char al[32];
+    fc_fmt_num(al, sizeof al, l->alpha);
+    if (json) {
+        fc_buf_printf(b, "{\"rgb\":\"%06X\",\"alpha\":%s,\"name\":", (unsigned)l->rgb, al);
+        fc_json_escape(b, l->name);
+        fc_buf_putc(b, '}');
+    } else {
+        fc_buf_printf(b, "#%06X alpha %s \"%s\"", (unsigned)l->rgb, al, l->name);
+    }
+}
+
+static void put_layer_changes(FcBuf *b, const FcDrawing *before, const FcDrawing *after, int json) {
+    int i, n = 0;
+    if (json) fc_buf_puts(b, ",\"layers\":[");
+    for (i = 0; i < FC_MAX_LAYERS; i++) {
+        if (!layer_differs(&before->layers[i], &after->layers[i])) continue;
+        if (json) {
+            fc_buf_printf(b, "%s{\"layer\":%d,\"before\":", n ? "," : "", i);
+            put_layer(b, &before->layers[i], 1);
+            fc_buf_puts(b, ",\"after\":");
+            put_layer(b, &after->layers[i], 1);
+            fc_buf_putc(b, '}');
+        } else {
+            fc_buf_printf(b, "L [%d] ", i);
+            put_layer(b, &before->layers[i], 0);
+            fc_buf_puts(b, " -> ");
+            put_layer(b, &after->layers[i], 0);
+            fc_buf_putc(b, '\n');
+        }
+        n++;
+    }
+    if (json) fc_buf_putc(b, ']');
+}
+
 char *fc_diff(const FcDrawing *before, const FcDrawing *after, int json) {
     PrimList A, B;
     DiffOp *ops = NULL;
-    int nops = 0, pre = 0, suf = 0, n, m, i, j, nadd = 0, ndel = 0, nmod = 0;
+    int nops = 0, pre = 0, suf = 0, n, m, i, j, nadd = 0, ndel = 0, nmod = 0, nlay = 0;
     int *lcs = NULL;
     FcBuf b;
 
@@ -661,14 +704,22 @@ char *fc_diff(const FcDrawing *before, const FcDrawing *after, int json) {
         else nmod++;
     }
 
+    for (i = 0; i < FC_MAX_LAYERS; i++) nlay += layer_differs(&before->layers[i], &after->layers[i]);
+
+    /* "changes" counts primitive ops plus layer (colour/opacity/name) changes */
     if (json) {
-        fc_buf_printf(&b, "{\"changes\":%d,\"added\":%d,\"removed\":%d,\"modified\":%d,\"ops\":[",
-                      nops, nadd, ndel, nmod);
-    } else if (!nops) {
+        fc_buf_printf(&b,
+                      "{\"changes\":%d,\"added\":%d,\"removed\":%d,\"modified\":%d,"
+                      "\"layers_changed\":%d,\"ops\":[",
+                      nops + nlay, nadd, ndel, nmod, nlay);
+    } else if (!nops && !nlay) {
         fc_buf_puts(&b, "no changes\n");
     } else {
-        fc_buf_printf(&b, "%d change%s: %d added, %d removed, %d modified\n", nops,
-                      nops == 1 ? "" : "s", nadd, ndel, nmod);
+        fc_buf_printf(&b, "%d change%s: %d added, %d removed, %d modified", nops + nlay,
+                      nops + nlay == 1 ? "" : "s", nadd, ndel, nmod);
+        if (nlay) fc_buf_printf(&b, ", %d layer%s", nlay, nlay == 1 ? "" : "s");
+        fc_buf_putc(&b, '\n');
+        put_layer_changes(&b, before, after, 0);
     }
     for (i = 0; i < nops; i++) {
         const DiffOp *o = &ops[i];
@@ -719,7 +770,11 @@ char *fc_diff(const FcDrawing *before, const FcDrawing *after, int json) {
             }
         }
     }
-    if (json) fc_buf_puts(&b, "]}\n");
+    if (json) {
+        fc_buf_putc(&b, ']');
+        put_layer_changes(&b, before, after, 1);
+        fc_buf_puts(&b, "}\n");
+    }
 
 done:
     free(ops);

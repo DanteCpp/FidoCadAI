@@ -28,7 +28,7 @@ static const char *k_help =
     "  lint       Advisory wire/dot geometry checks (--json supported)\n"
     "  hit FILE --at X Y [--tol N]   Pick a primitive index\n"
     "  find FILE --bbox X0 Y0 X1 Y1  Indices intersecting bounds\n"
-    "  edit move|rm|add|set FILE      Structured edit; emit result to stdout/-o\n"
+    "  edit move|rm|add|set|layer FILE  Structured edit; emit result to stdout/-o\n"
     "  config     Show effective settings\n"
     "  diff A B   Primitive-level changes from A to B (--json for ops)\n"
     "  gui        Open the drawing editor (fcai-gui) for the user; Return sends\n"
@@ -71,6 +71,8 @@ static const char *k_help =
     "  edit set: --index N --layer 0..15 --dash 0..4 --name TEXT --value TEXT\n"
     "            --stroke W (line width, FCJ; 0 = drawing default FJC B/C)\n"
     "            --text TEXT (standalone TY); supply only fields to change\n"
+    "  edit layer: --layer 0..15 --color RRGGBB --alpha 0..1 --name TEXT\n"
+    "            (FJC L/N: colour, opacity, name) or --reset to the default\n"
     "\n"
     "Environment (booleans: 0/false/no/off = off, anything else = on):\n"
     "  FIDO_STDLIB_DIR      Directory with FCDstdlib_en.fcl etc.\n"
@@ -112,8 +114,10 @@ typedef struct {
     int nlibdirs;
     int has_crop, has_at, has_box, index, layer, dash, orient, mirror;
     FcRect crop, box;
-    double x, y, tolerance, dx, dy, stroke;
+    double x, y, tolerance, dx, dy, stroke, alpha;
     const char *action, *from, *name, *value, *text;
+    int has_color, reset;
+    uint32_t color;
 } Opt;
 
 static int is_false(const char *v) {
@@ -133,6 +137,7 @@ static void opt_init(Opt *o) {
     o->index = o->layer = o->dash = -1;
     o->tolerance = 2;
     o->stroke = -1;
+    o->alpha = -1;
     o->stdlib = 1;
     o->extensions = 1;
     o->margin = 12;
@@ -391,6 +396,25 @@ static int edit_drawing(const Opt *o, FcDrawing *d) {
             else fc_append_fcd(d, text, n);
         }
         free(text); fc_drawing_free(&extra); return rc;
+    }
+    if (fc_streq(o->action, "layer")) {
+        FcLayer *l;
+        if (o->layer < 0 || (!o->reset && !o->has_color && o->alpha < 0 && !o->name)) return FC_ERR_ARG;
+        l = &d->layers[o->layer];
+        if (o->reset) {
+            snprintf(l->name, sizeof l->name, "%s", fc_layer_default_name(o->layer));
+            l->rgb = fc_layer_default_rgb(o->layer);
+            l->alpha = fc_layer_default_alpha(o->layer);
+            l->modified = 0;
+        }
+        if (o->has_color) l->rgb = o->color;
+        if (o->alpha >= 0) l->alpha = (float)o->alpha;
+        if (o->name) {
+            if (!o->name[0] || strlen(o->name) >= sizeof l->name || strchr(o->name, '\n')) return FC_ERR_ARG;
+            snprintf(l->name, sizeof l->name, "%s", o->name);
+        }
+        if (o->has_color || o->alpha >= 0 || o->name) l->modified = 1;
+        return FC_OK;
     }
     if (o->index < 0 || o->index >= d->nprims) return FC_ERR_ARG;
     p = &d->prims[o->index];
@@ -1251,6 +1275,23 @@ int main(int argc, char **argv) {
                 o.stroke > FC_MAX_COORD) return 1;
             continue;
         }
+        if (fc_streq(a, "--color") && i + 1 < argc) {
+            const char *c = argv[++i];
+            size_t n = strlen(c[0] == '#' ? c + 1 : c);
+            if (n != 6 || strspn(c[0] == '#' ? c + 1 : c, "0123456789abcdefABCDEF") != 6 ||
+                !parse_bg(c, &o.color)) {
+                fprintf(stderr, "fcai: --color expects RRGGBB\n"); return 1;
+            }
+            o.has_color = 1;
+            continue;
+        }
+        if (fc_streq(a, "--alpha") && i + 1 < argc) {
+            if (!fc_parse_double(argv[++i], &o.alpha) || !isfinite(o.alpha) || o.alpha < 0 || o.alpha > 1) {
+                fprintf(stderr, "fcai: --alpha expects 0..1\n"); return 1;
+            }
+            continue;
+        }
+        if (fc_streq(a, "--reset")) { o.reset = 1; continue; }
         if (fc_streq(a, "--tol") && i + 1 < argc) {
             if (!fc_parse_double(argv[++i], &o.tolerance) || !isfinite(o.tolerance) || o.tolerance < 0) return 1;
             continue;

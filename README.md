@@ -170,6 +170,7 @@ fcai edit move sketch.fcd --index 3 --by 10 0 -o draft.fcd
 fcai edit set sketch.fcd --index 3 --name R1 --value 10k -o draft.fcd
 fcai edit set sketch.fcd --index 5 --dash 1 --layer 0 -o draft.fcd
 fcai edit set sketch.fcd --index 5 --stroke 1 -o draft.fcd   # per-primitive line width
+fcai edit layer sketch.fcd --layer 2 --color 00AAFF --alpha 0.4 -o draft.fcd  # layer colour/opacity
 fcai edit rm sketch.fcd --index 5 -o draft.fcd
 fcai edit add sketch.fcd --from additions.fcd -o draft.fcd
 fcai lint sketch.fcd --json

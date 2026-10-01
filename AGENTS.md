@@ -163,7 +163,7 @@ fcai json file.fcd
 fcai render file.fcd -o /tmp/d.png
 fcai lib                  # keys an MC may use
 fcai config               # every knob currently in effect
-fcai diff a.fcd b.fcd     # what changed, primitive by primitive
+fcai diff a.fcd b.fcd     # what changed: primitives and layer colour/opacity/name
 fcai skill                # the fidocad skill text (libraries, GUI workflow)
 fcai skill install        # register it with the local agents
 ```

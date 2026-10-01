@@ -778,6 +778,44 @@ static void test_text_zoom_smooth(void) {
     fc_drawing_free(&d);
 }
 
+/* Zooming out must shrink text with the drawing: same width/height ratio and
+ * the same size relative to the geometry (no minimum glyph size in pixels). */
+static void ink_extent(const uint8_t *px, int w, int h, int *iw, int *ih) {
+    int x, y, x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++)
+            if (px[(y * w + x) * 3] < 160) {
+                if (x < x0) x0 = x;
+                if (x > x1) x1 = x;
+                if (y < y0) y0 = y;
+                if (y > y1) y1 = y;
+            }
+    *iw = x1 < 0 ? 0 : x1 - x0 + 1;
+    *ih = y1 < 0 ? 0 : y1 - y0 + 1;
+}
+
+static void test_text_zoom_out_proportional(void) {
+    FcDrawing d;
+    FcView v = {0};
+    enum { W = 800, H = 200 };
+    static uint8_t pixels[W * H * 3];
+    int w4, h4, w1, h1;
+    fc_drawing_init(&d);
+    fc_parse(&d, "TY 2 2 12 9 0 0 0 * HELLO WORLD HELLO\n", 0);
+    v.bg = 0xFFFFFF;
+    v.scale = 2;
+    EXPECT(fc_render_rgb(&d, NULL, &v, pixels, W, H, W * 3) == FC_OK);
+    ink_extent(pixels, W, H, &w4, &h4);
+    v.scale = 0.5; /* 4.8 px tall: used to be held at 8 px */
+    EXPECT(fc_render_rgb(&d, NULL, &v, pixels, W, H, W * 3) == FC_OK);
+    ink_extent(pixels, W, H, &w1, &h1);
+    EXPECT(w4 > 0 && h4 > 0 && w1 > 0 && h1 > 0);
+    /* 4x smaller, within antialiasing */
+    EXPECT(fabs(w1 - w4 / 4.0) <= 3.0);
+    EXPECT(fabs(h1 - h4 / 4.0) <= 2.0);
+    fc_drawing_free(&d);
+}
+
 static void test_label_handles(void) {
     FcDrawing d, roundtrip;
     FcPoint point;
@@ -901,6 +939,7 @@ int main(int argc, char **argv) {
     test_drawing_lint();
     test_dash_scale_and_crop();
     test_text_zoom_smooth();
+    test_text_zoom_out_proportional();
     test_label_handles();
     printf("%d passed, %d failed\n", g_ok, g_fail);
     return g_fail ? 1 : 0;

@@ -41,4 +41,16 @@ FCL
 "$fcai" render "$task_tmp/line.fcd" --crop 0 35 20 45 --scale 2 --margin 0 --ppm -o "$task_tmp/crop.ppm"
 head -n 3 "$task_tmp/crop.ppm" | grep -q '^40 20$'
 if "$fcai" render "$task_tmp/line.fcd" --crop 20 0 0 10 -o "$task_tmp/bad.png" 2>/dev/null; then exit 1; fi
+"$fcai" edit layer "$task_tmp/line.fcd" --layer 2 --color 00AAFF --alpha 0.4 --name "Top Cu" -o "$task_tmp/layer.fcd"
+grep -q '^FJC L 2 43775 0.4$' "$task_tmp/layer.fcd"
+grep -q '^FJC N 2 Top Cu$' "$task_tmp/layer.fcd"
+"$fcai" json "$task_tmp/layer.fcd" | grep -q '"id":2,"name":"Top Cu","rgb":43775,"alpha":0.4,"modified":true'
+"$fcai" diff "$task_tmp/line.fcd" "$task_tmp/layer.fcd" | grep -q '^L \[2\] #FF0000 alpha 1 "Top copper" -> #00AAFF alpha 0.4 "Top Cu"$'
+"$fcai" --json diff "$task_tmp/line.fcd" "$task_tmp/layer.fcd" | grep -q '"changes":1,.*"layers_changed":1,.*"layers":\[{"layer":2,'
+"$fcai" edit layer "$task_tmp/layer.fcd" --layer 2 --reset -o "$task_tmp/reset.fcd"
+! grep -q '^FJC' "$task_tmp/reset.fcd"
+"$fcai" diff "$task_tmp/line.fcd" "$task_tmp/reset.fcd" | grep -q 'no changes'
+if "$fcai" edit layer "$task_tmp/line.fcd" --layer 2 --color red 2>/dev/null; then exit 1; fi
+if "$fcai" edit layer "$task_tmp/line.fcd" --layer 2 --alpha 1.5 2>/dev/null; then exit 1; fi
+if "$fcai" edit layer "$task_tmp/line.fcd" --layer 2 2>/dev/null; then exit 1; fi
 printf 'CLI feedback tools passed\n'
