@@ -567,14 +567,21 @@ static void blit_bitmap_glyph(Raster *r, int x0, int y0, double ca, double sa, i
     }
 }
 
-static float draw_cp_ttf(Raster *r, int cp, float pen, int slot, int fake_italic, float ph,
-                         float xratio, int x0, int y0, double ca, double sa, int mirror,
+static float draw_cp_ttf(Raster *r, int cp, float pen, float base, int slot, int fake_italic,
+                         float ph, float xratio, int x0, int y0, double ca, double sa, int mirror,
                          uint32_t rgb, float a) {
     FcTtfGlyph g;
-    float ascent;
-    int i, j;
-    if (slot < 0 || !fc_ttf_glyph(slot, ph, xratio, cp, &g)) return 0;
+    float ascent, bx, by;
+    int i, j, ix, iy;
+    if (slot < 0) return 0;
+    /* Split the pen and the baseline into whole pixels plus a sub-pixel shift
+       that goes into the glyph bitmap, so text glides instead of snapping. */
     ascent = fc_ttf_ascent(slot, ph);
+    bx = floorf(pen * FC_TTF_SUBPIX + 0.5f) / FC_TTF_SUBPIX;
+    by = floorf((base + ascent) * FC_TTF_SUBPIX + 0.5f) / FC_TTF_SUBPIX;
+    ix = (int)floorf(bx);
+    iy = (int)floorf(by);
+    if (!fc_ttf_glyph(slot, ph, xratio, cp, bx - (float)ix, by - (float)iy, &g)) return 0;
     for (j = 0; j < g.h; j++) {
         for (i = 0; i < g.w; i++) {
             float cov, gx, gy;
@@ -582,30 +589,31 @@ static float draw_cp_ttf(Raster *r, int cp, float pen, int slot, int fake_italic
             if (!g.cover) break;
             cov = g.cover[j * g.w + i] / 255.0f;
             if (cov < 0.03f) continue;
-            gx = pen + (float)g.xoff + (float)i;
-            gy = ascent + (float)g.yoff + (float)j;
-            if (fake_italic) gx += 0.20f * (ascent - gy);
+            gx = (float)(ix + g.xoff + i);
+            gy = (float)(iy + g.yoff + j);
+            if (fake_italic) gx += 0.20f * (by - gy);
             if (mirror) gx = -gx;
             qx = x0 + (int)floor(gx * ca - gy * sa + 0.5);
             qy = y0 + (int)floor(gx * sa + gy * ca + 0.5);
             put_px(r, qx, qy, rgb, a * cov);
         }
     }
-    return g.advance > 0 ? (float)g.advance : ph * 0.3f;
+    return g.advance > 0 ? g.advance : ph * 0.3f;
 }
 
-static void draw_plain_run(Raster *r, const char *s, int n, float *pen, float sx, float sy, int mono,
-                           int italic, int bold, int x0, int y0, double ca, double sa, int mirror,
-                           uint32_t rgb, float a, int slot, int fake_italic, float ph,
-                           float xratio) {
+static void draw_plain_run(Raster *r, const char *s, int n, float *pen, float base, float sx,
+                           float sy, int mono, int italic, int bold, int x0, int y0, double ca,
+                           double sa, int mirror, uint32_t rgb, float a, int slot,
+                           int fake_italic, float ph, float xratio) {
     const char *p = s;
     const char *end = s + n;
     while (p < end) {
         int cp = fc_utf8_next(&p, end);
         float adv = 0;
         if (!cp) break;
-        if (slot >= 0) adv = draw_cp_ttf(r, cp, *pen, slot, fake_italic, ph, xratio, x0, y0, ca, sa,
-                                         mirror, rgb, a);
+        if (slot >= 0)
+            adv = draw_cp_ttf(r, cp, *pen, base, slot, fake_italic, ph, xratio, x0, y0, ca, sa,
+                              mirror, rgb, a);
         if (adv <= 0)
             adv = draw_cp_stroke(r, cp, *pen, sx, sy, mono, italic, bold, x0, y0, ca, sa, mirror,
                                  rgb, a);
@@ -627,8 +635,8 @@ static void draw_math_run(Raster *r, const char *latex, int n, int display, floa
     sy = em / 12.0f;
     if (!fc_tex_compile(buf, display, &g) || !g.ok) {
         *pen += draw_cp_stroke(r, '$', *pen, sx, sy, 0, 0, 0, x0, y0, ca, sa, mirror, rgb, a);
-        draw_plain_run(r, buf, n, pen, sx, sy, 0, 0, 0, x0, y0, ca, sa, mirror, rgb, a, -1, 0, 0,
-                       1);
+        draw_plain_run(r, buf, n, pen, 0, sx, sy, 0, 0, 0, x0, y0, ca, sa, mirror, rgb, a, -1, 0,
+                       0, 1);
         *pen += draw_cp_stroke(r, '$', *pen, sx, sy, 0, 0, 0, x0, y0, ca, sa, mirror, rgb, a);
         free(buf);
         fc_tex_geom_free(&g);
@@ -669,8 +677,8 @@ static void draw_text(Raster *r, const FcLabel *l, uint32_t rgb, float a) {
     const char *s = l->text ? l->text : "";
     int x0, y0, mirror, bold, italic, mono, slot, fake_it = 0;
     double ang, ca, sa;
-    float pen = 0, sx, sy, em, ph, xratio;
-    double hpx, wpx;
+    float pen = 0, base = 0, sx, sy, em, ph, xratio;
+    double hpx, wpx, fx, fy;
     if (!*s) return;
     hpx = l->size_y * r->scale;
     wpx = l->size_x * r->scale;
@@ -695,6 +703,14 @@ static void draw_text(Raster *r, const FcLabel *l, uint32_t rgb, float a) {
     ca = cos(ang);
     sa = sin(ang);
     mirror = (l->style & FC_STYLE_MIRROR) != 0;
+    /* the anchor's sub-pixel remainder, rotated back into text space */
+    fx = l->p.x * r->scale + r->ox - x0;
+    fy = l->p.y * r->scale + r->oy - y0;
+    if (fabs(fx) <= 1 && fabs(fy) <= 1) {
+        pen = (float)(fx * ca + fy * sa);
+        base = (float)(fy * ca - fx * sa);
+        if (mirror) pen = -pen;
+    }
     bold = (l->style & FC_STYLE_BOLD) != 0;
     italic = (l->style & FC_STYLE_ITALIC) != 0;
     mono = fc_font_is_mono(l->font);
@@ -702,8 +718,8 @@ static void draw_text(Raster *r, const FcLabel *l, uint32_t rgb, float a) {
     if (fc_ttf_ready())
         slot = fc_ttf_resolve(fc_font_family(l->font), bold, italic, &fake_it);
     if (!r->tex || !fc_tex_has_math(s)) {
-        draw_plain_run(r, s, (int)fc_strlen(s), &pen, sx, sy, mono, italic, bold, x0, y0, ca, sa,
-                       mirror, rgb, a, slot, fake_it, ph, xratio);
+        draw_plain_run(r, s, (int)fc_strlen(s), &pen, base, sx, sy, mono, italic, bold, x0, y0,
+                       ca, sa, mirror, rgb, a, slot, fake_it, ph, xratio);
         return;
     }
     {
@@ -721,8 +737,8 @@ static void draw_text(Raster *r, const FcLabel *l, uint32_t rgb, float a) {
                 draw_math_run(r, segs[i].p, segs[i].n, segs[i].math == 2, &pen, em, x0, y0, ca, sa,
                               mirror, rgb, a);
             else
-                draw_plain_run(r, segs[i].p, segs[i].n, &pen, sx, sy, mono, italic, bold, x0, y0,
-                               ca, sa, mirror, rgb, a, slot, fake_it, ph, xratio);
+                draw_plain_run(r, segs[i].p, segs[i].n, &pen, base, sx, sy, mono, italic, bold,
+                               x0, y0, ca, sa, mirror, rgb, a, slot, fake_it, ph, xratio);
         }
         free(segs);
     }
@@ -753,9 +769,9 @@ static void draw_prim(Raster *r, const FcDrawing *d, const FcPrim *p) {
     if (p->layer < 0 || p->layer >= FC_MAX_LAYERS) return;
     rgb = d->layers[p->layer].rgb;
     a = d->layers[p->layer].alpha;
-    lw = scale_len(r, d->cfg.line_width);
+    lw = scale_len(r, p->ext.width > 0 ? p->ext.width : d->cfg.line_width);
     if (lw < 1) lw = 1;
-    lwc = scale_len(r, d->cfg.line_width_circles);
+    lwc = scale_len(r, p->ext.width > 0 ? p->ext.width : d->cfg.line_width_circles);
     if (lwc < 1) lwc = 1;
     dash = p->ext.dash;
     switch (p->kind) {

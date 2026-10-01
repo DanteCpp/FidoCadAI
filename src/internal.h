@@ -85,7 +85,8 @@ int fc_font_is_serif(const char *name);
 int fc_font_family(const char *name); /* 0 sans, 1 serif, 2 mono */
 
 typedef struct {
-    int w, h, xoff, yoff, advance;
+    int w, h, xoff, yoff;
+    float advance; /* unrounded, so runs of glyphs scale smoothly */
     const uint8_t *cover;
 } FcTtfGlyph;
 
@@ -102,7 +103,11 @@ int fc_ttf_ready(void);
 void fc_ttf_shutdown(void);
 int fc_ttf_resolve(int family, int bold, int italic, int *fake_italic);
 float fc_ttf_ascent(int slot, float px_size);
-int fc_ttf_glyph(int slot, float px_size, float xratio, int cp, FcTtfGlyph *out);
+/* shift_x/shift_y: sub-pixel origin in [0,1), quantized to FC_TTF_SUBPIX steps */
+#define FC_TTF_SUBPIX 4
+float fc_ttf_quantize(float px_size); /* the size glyphs are actually cached at */
+int fc_ttf_glyph(int slot, float px_size, float xratio, int cp, float shift_x, float shift_y,
+                 FcTtfGlyph *out);
 int fc_font_decompose(int cp, int *base, int *acc);
 float fc_stroke_advance(int cp, int mono);
 int fc_stroke_lr(int cp, int *left, int *right);

@@ -68,6 +68,7 @@ static const char *k_help =
     "  edit move: --index N --by DX DY (carries attached labels)\n"
     "  edit rm: --index N; edit add: --from FILE\n"
     "  edit set: --index N --layer 0..15 --dash 0..4 --name TEXT --value TEXT\n"
+    "            --stroke W (line width, FCJ; 0 = drawing default FJC B/C)\n"
     "            --text TEXT (standalone TY); supply only fields to change\n"
     "\n"
     "Environment (booleans: 0/false/no/off = off, anything else = on):\n"
@@ -109,7 +110,7 @@ typedef struct {
     int nlibdirs;
     int has_crop, has_at, has_box, index, layer, dash, orient, mirror;
     FcRect crop, box;
-    double x, y, tolerance, dx, dy;
+    double x, y, tolerance, dx, dy, stroke;
     const char *action, *from, *name, *value, *text;
 } Opt;
 
@@ -129,6 +130,7 @@ static void opt_init(Opt *o) {
     memset(o, 0, sizeof *o);
     o->index = o->layer = o->dash = -1;
     o->tolerance = 2;
+    o->stroke = -1;
     o->stdlib = 1;
     o->extensions = 1;
     o->margin = 12;
@@ -392,10 +394,11 @@ static int edit_drawing(const Opt *o, FcDrawing *d) {
     else if (fc_streq(o->action, "rm")) fc_drawing_remove(d, o->index);
     else if (fc_streq(o->action, "set")) {
         if (o->layer >= 0) p->layer = o->layer;
-        if (o->dash >= 0) {
-            if (!(p->kind == FC_LINE || p->kind == FC_BEZIER || p->kind == FC_RECT ||
-                  p->kind == FC_OVAL || p->kind == FC_POLY || p->kind == FC_CURVE)) return FC_ERR_ARG;
-            p->ext.dash = o->dash; p->has_ext = 1;
+        if (o->dash >= 0 || o->stroke >= 0) {
+            if (!fc_kind_uses_fcj(p->kind)) return FC_ERR_ARG;
+            if (o->dash >= 0) p->ext.dash = o->dash;
+            if (o->stroke >= 0) p->ext.width = o->stroke;
+            p->has_ext = 1;
         }
         if (o->name && fc_prim_set_text(d, o->index, 1, o->name) != FC_OK) return FC_ERR_ARG;
         if (o->value && fc_prim_set_text(d, o->index, 2, o->value) != FC_OK) return FC_ERR_ARG;
@@ -1227,6 +1230,11 @@ int main(int argc, char **argv) {
                 if (i + 1 >= argc || !fc_parse_double(argv[++i], &radius) || !isfinite(radius) || radius <= 0 || radius > FC_MAX_COORD) return 1;
                 o.box = (FcRect){x - radius, y - radius, x + radius, y + radius}; o.has_box = 1;
             }
+            continue;
+        }
+        if (fc_streq(a, "--stroke") && i + 1 < argc) {
+            if (!fc_parse_double(argv[++i], &o.stroke) || !isfinite(o.stroke) || o.stroke < 0 ||
+                o.stroke > FC_MAX_COORD) return 1;
             continue;
         }
         if (fc_streq(a, "--tol") && i + 1 < argc) {

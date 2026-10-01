@@ -144,6 +144,7 @@ unless deliberately chosen as the output. Re-query indices after add/remove.
 fcai edit move draft.fcd --index 3 --by 10 0 -o next.fcd
 fcai edit set draft.fcd --index 3 --name R1 --value 10k -o next.fcd
 fcai edit set draft.fcd --index 5 --dash 1 --layer 0 -o next.fcd
+fcai edit set draft.fcd --index 5 --stroke 1 -o next.fcd   # own line width; 0 = default
 fcai edit rm draft.fcd --index 5 -o next.fcd
 fcai edit add draft.fcd --from additions.fcd -o next.fcd
 ```
@@ -191,6 +192,13 @@ TE x y text                   legacy text — always emit TY
   `FCJ`, then two `TY` lines (name, value; empty text for an unused slot).
   Loose `TY` is for sheet annotations. Parameterized `FCJ` carries arrows/dash
   and a `textFlag` for labels.
+* Line width is per primitive (FidoCadAI extension): an optional width in
+  logical units sits **between the dash style and the text flag** of the `FCJ`
+  after `LI`/`BE`/`CV`/`CP` (`FCJ arrows style len halfw dash [width] text`) or
+  `RV`/`RP`/`EV`/`EP`/`PV`/`PP` (`FCJ dash [width] text`). Omitted or `0` = the
+  drawing default (`FJC B` lines, `FJC C` ellipses; 0.5 / 0.35).
+  FidoCadJS/FidoCadJ ignore the token and draw the default width.
+  `LI 10 10 60 10 0` + `FCJ 0 0 3 1 0 2 0` is a line 2 units thick.
 * `$...$` / `$$...$$` in TY text is typeset (scripts, `\frac`, `\sqrt`, Greek,
   `\sum`, ...); plain text is fine too.
 * Coordinates are non-negative integers on a grid; origin is top-left, x right,

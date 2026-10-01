@@ -1,0 +1,113 @@
+[FIDOCAD]
+MC 16 60 2 0 000
+LI 16 60 30 60 0
+MC 30 60 0 0 080
+FCJ
+TY 30 48 4 3 0 0 0 * R1
+TY 30 53 4 3 0 0 0 * 10k
+LI 40 60 70 60 0
+SA 56 60 0
+MC 70 70 2 1 580
+TY 80 49 4 4 0 0 0 * A1
+MC 70 70 0 0 ey_libraries.refpnt0
+LI 70 60 70 45 0
+LI 70 45 80 45 0
+MC 80 45 0 0 170
+FCJ
+TY 81 35 4 3 0 0 0 * C1
+TY 81 40 4 3 0 0 0 * 2p
+LI 90 45 95 45 0
+LI 95 45 95 65 0
+SA 70 60 0
+SA 95 65 0
+TY 6 53 5 4 0 0 0 * IN
+LI 95 65 115 65 0
+RV 115 50 145 80 0
+TY 124 62 6 5 0 0 0 * VCO
+LI 121 75 125 75 0
+LI 125 75 125 71 0
+LI 125 71 129 71 0
+LI 129 71 129 75 0
+LI 129 75 133 75 0
+LI 133 75 133 71 0
+LI 133 71 137 71 0
+LI 137 71 137 75 0
+LI 137 75 141 75 0
+LI 145 65 160 65 0
+RV 160 50 190 80 0
+TY 164 63 4 4 0 0 0 * COUNTER
+LI 175 80 175 85 0
+MC 175 85 1 0 000
+TY 180 84 4 3 0 0 0 * CLK = fs
+LI 190 65 205 65 0
+RV 205 50 235 80 0
+TY 211 63 5 4 0 0 0 * $1-z^{-1}$
+LI 235 65 240 65 0
+MC 240 65 0 0 000
+SA 240 65 0
+TY 248 60 5 4 0 0 0 * DOUT
+LI 240 65 240 105 0
+LI 240 105 71 105 0
+RV 41 95 71 115 0
+TY 51 102 5 4 0 0 0 * DAC
+LI 56 60 56 95 0
+TY 201 108 4 3 0 0 0 * N-bit feedback
+TY 20 14 7 5 0 0 0 * 2nd-order VCO-based ΣΔ ADC
+TY 20 26 4 3 0 0 0 * continuous-time loop: integrator + VCO + counter/differentiator + feedback DAC
+TY 20 122 4 3 0 0 0 * VCO: f = f0 + Kv Vc - its phase is the 2nd integration.
+TY 20 130 4 3 0 0 0 * Counter counts VCO edges per fs; the differentiator forms the digital output.
+TY 20 138 4 3 0 0 0 * Feedback DAC at the virtual ground keeps the average VCO frequency equal to the input.
+TY 20 158 6 4 0 0 0 * VCO implementation: 3-stage current-starved ring oscillator
+TY 20 168 4 3 0 0 0 * each inverter's pull-down current is set by Vctrl, so fout tracks Vctrl
+MC 40 205 0 0 ey_libraries.trnpmos1
+MC 40 225 0 0 ey_libraries.trnmos0
+MC 40 245 0 0 ey_libraries.trnmos0
+MC 75 205 0 0 ey_libraries.trnpmos1
+MC 75 225 0 0 ey_libraries.trnmos0
+MC 75 245 0 0 ey_libraries.trnmos0
+MC 110 205 0 0 ey_libraries.trnpmos1
+MC 110 225 0 0 ey_libraries.trnmos0
+MC 110 245 0 0 ey_libraries.trnmos0
+LI 35 205 35 225 0
+LI 70 205 70 225 0
+LI 105 205 105 225 0
+LI 45 210 45 220 0
+LI 80 210 80 220 0
+LI 115 210 115 220 0
+LI 45 230 45 240 0
+LI 80 230 80 240 0
+LI 115 230 115 240 0
+LI 45 200 45 190 0
+LI 80 200 80 190 0
+LI 115 200 115 190 0
+LI 35 190 115 190 0
+LI 35 190 35 186 0
+LI 30 186 40 186 0
+SA 45 190 0
+SA 80 190 0
+TY 43 182 4 3 0 0 0 * VDD
+MC 45 250 0 0 ey_libraries.refpnt0
+MC 80 250 0 0 ey_libraries.refpnt0
+MC 115 250 0 0 ey_libraries.refpnt0
+LI 45 215 70 215 0
+LI 80 215 105 215 0
+LI 115 215 140 215 0
+LI 130 215 130 178 0
+LI 130 178 25 178 0
+LI 25 178 25 205 0
+LI 25 205 35 205 0
+SA 35 205 0
+SA 45 215 0
+SA 80 215 0
+SA 115 215 0
+SA 70 215 0
+SA 105 215 0
+SA 130 215 0
+MC 140 215 0 0 000
+TY 133 205 4 3 0 0 0 * fout
+LI 20 245 105 245 0
+FCJ 0 0 3 1 1 0
+MC 20 245 2 0 000
+TY 3 236 4 3 0 0 0 * Vctrl
+TY 20 272 4 3 0 0 0 * stage delay td ~ C*VDD/I(Vctrl); ring period = 6*td, so fout rises with Vctrl.
+TY 20 280 4 3 0 0 0 * fout drives the counter of the modulator in the figure above.

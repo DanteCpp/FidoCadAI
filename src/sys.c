@@ -1,5 +1,10 @@
 /* Platform glue: where the running binary lives, and the data directories to search
  * relative to it. Everything else in the tree is plain C11 + POSIX. */
+/* realpath() is declared by glibc under __USE_XOPEN_EXTENDED, not the plain POSIX
+ * guard the Makefile sets, so ask for XSI here before any header is included. */
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
 #include "internal.h"
 
 #include <limits.h>

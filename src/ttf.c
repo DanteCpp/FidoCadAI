@@ -27,13 +27,15 @@ static const char *k_face_file[N_FACE] = {
 
 typedef struct {
     uint64_t key;
-    int w, h, xoff, yoff, advance;
+    int w, h, xoff, yoff;
+    float advance;
     uint8_t *pix;
 } CacheEnt;
 
 #define CACHE_N 2048
 static CacheEnt cache[CACHE_N];
 static int cache_count;
+static void cache_flush(void);
 
 static int load_face(Face *f, const char *path) {
     char *buf = NULL;
@@ -125,12 +127,7 @@ void fc_ttf_shutdown(void) {
                 }
         }
     }
-    for (i = 0; i < CACHE_N; i++) {
-        free(cache[i].pix);
-        cache[i].pix = NULL;
-        cache[i].key = 0;
-    }
-    cache_count = 0;
+    cache_flush();
     ttf_inited = 0;
 }
 
@@ -164,20 +161,34 @@ int fc_ttf_resolve(int family, int bold, int italic, int *fake_italic) {
     return -1;
 }
 
+float fc_ttf_quantize(float px_size) { return floorf(px_size * 32.0f + 0.5f) / 32.0f; }
+
 float fc_ttf_ascent(int slot, float px_size) {
     int asc, desc, gap;
     float sc;
     if (slot < 0 || slot >= N_FACE || !faces[slot].loaded) return px_size * 0.8f;
-    sc = stbtt_ScaleForPixelHeight(&faces[slot].info, px_size);
+    sc = stbtt_ScaleForPixelHeight(&faces[slot].info, fc_ttf_quantize(px_size));
     stbtt_GetFontVMetrics(&faces[slot].info, &asc, &desc, &gap);
     return (float)asc * sc;
 }
 
-static uint64_t cache_key(int slot, int cp, float px, float xratio) {
-    uint32_t ph = (uint32_t)(px * 8.0f + 0.5f);
+/* cp:21 | slot:4 | subpixel x:2 | subpixel y:2 | px*32:20 | xratio*256:12 */
+static uint64_t cache_key(int slot, int cp, float px, float xratio, int qx, int qy) {
+    uint32_t ph = (uint32_t)(px * 32.0f + 0.5f);
     uint32_t xr = (uint32_t)(xratio * 256.0f + 0.5f);
-    return ((uint64_t)(uint32_t)cp << 32) | ((uint64_t)slot << 24) | ((uint64_t)(ph & 0xFFF) << 12) |
-           (xr & 0xFFF);
+    return ((uint64_t)((uint32_t)cp & 0x1FFFFF) << 40) | ((uint64_t)(slot & 0xF) << 36) |
+           ((uint64_t)(qx & 3) << 34) | ((uint64_t)(qy & 3) << 32) |
+           ((uint64_t)(ph & 0xFFFFF) << 12) | (xr & 0xFFF);
+}
+
+static void cache_flush(void) {
+    int i;
+    for (i = 0; i < CACHE_N; i++) {
+        free(cache[i].pix);
+        cache[i].pix = NULL;
+        cache[i].key = 0;
+    }
+    cache_count = 0;
 }
 
 static CacheEnt *cache_get(uint64_t key) {
@@ -197,6 +208,9 @@ static CacheEnt *cache_put(uint64_t key) {
     int i = (int)(h & (CACHE_N - 1));
     int n = CACHE_N;
     int hole = -1;
+    /* continuous zoom keeps producing new sizes: start over rather than let
+       linear probing degrade to full-table scans */
+    if (cache_count >= CACHE_N * 3 / 4) cache_flush();
     while (n--) {
         if (!cache[i].key) {
             hole = i;
@@ -218,20 +232,28 @@ static CacheEnt *cache_put(uint64_t key) {
     return &cache[hole];
 }
 
-int fc_ttf_glyph(int slot, float px_size, float xratio, int cp, FcTtfGlyph *out) {
+int fc_ttf_glyph(int slot, float px_size, float xratio, int cp, float shift_x, float shift_y,
+                 FcTtfGlyph *out) {
     uint64_t key;
     CacheEnt *e;
     Face *f;
-    float sx, sy;
-    int x0, y0, x1, y1, w, h, adv, lsb;
+    float sx, sy, fx, fy;
+    int x0, y0, x1, y1, w, h, adv, lsb, qx, qy;
     uint8_t *pix;
     memset(out, 0, sizeof *out);
     if (slot < 0 || slot >= N_FACE || !faces[slot].loaded || px_size < 2) return 0;
-    if (cp <= 0) return 0;
+    if (cp <= 0 || cp > 0x10FFFF) return 0;
     f = &faces[slot];
+    px_size = fc_ttf_quantize(px_size);
     sy = stbtt_ScaleForPixelHeight(&f->info, px_size);
     sx = sy * (xratio > 0.05f ? xratio : 1.0f);
-    key = cache_key(slot, cp, px_size, xratio);
+    qx = (int)floorf(shift_x * FC_TTF_SUBPIX + 0.5f);
+    qy = (int)floorf(shift_y * FC_TTF_SUBPIX + 0.5f);
+    if (qx < 0 || qx >= FC_TTF_SUBPIX) qx = 0;
+    if (qy < 0 || qy >= FC_TTF_SUBPIX) qy = 0;
+    fx = (float)qx / FC_TTF_SUBPIX;
+    fy = (float)qy / FC_TTF_SUBPIX;
+    key = cache_key(slot, cp, px_size, xratio, qx, qy);
     e = cache_get(key);
     if (e) {
         out->w = e->w;
@@ -243,7 +265,7 @@ int fc_ttf_glyph(int slot, float px_size, float xratio, int cp, FcTtfGlyph *out)
         return 1;
     }
     stbtt_GetCodepointHMetrics(&f->info, cp, &adv, &lsb);
-    stbtt_GetCodepointBitmapBox(&f->info, cp, sx, sy, &x0, &y0, &x1, &y1);
+    stbtt_GetCodepointBitmapBoxSubpixel(&f->info, cp, sx, sy, fx, fy, &x0, &y0, &x1, &y1);
     w = x1 - x0;
     h = y1 - y0;
     if (w < 0) w = 0;
@@ -254,15 +276,15 @@ int fc_ttf_glyph(int slot, float px_size, float xratio, int cp, FcTtfGlyph *out)
     if (w > 0 && h > 0) {
         pix = (uint8_t *)calloc((size_t)w * (size_t)h, 1);
         if (!pix) return 0;
-        stbtt_MakeCodepointBitmap(&f->info, pix, w, h, w, sx, sy, cp);
+        stbtt_MakeCodepointBitmapSubpixel(&f->info, pix, w, h, w, sx, sy, fx, fy, cp);
     }
     e = cache_put(key);
     e->w = w;
     e->h = h;
     e->xoff = x0;
     e->yoff = y0;
-    e->advance = (int)floor(adv * sx + 0.5);
-    if (e->advance < 1 && cp != ' ') e->advance = w + 1;
+    e->advance = (float)adv * sx;
+    if (e->advance < 1 && cp != ' ') e->advance = (float)w + 1;
     e->pix = pix;
     out->w = w;
     out->h = h;

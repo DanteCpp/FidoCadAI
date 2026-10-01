@@ -203,7 +203,7 @@ InlineForm *editProperties(QWidget *parent, Document *doc, int i) {
     QLineEdit *width = nullptr, *padX = nullptr, *padY = nullptr, *hole = nullptr;
     QComboBox *padStyle = nullptr;
     QComboBox *arrows = nullptr, *arrowStyle = nullptr, *dash = nullptr;
-    QLineEdit *arrowLen = nullptr, *arrowW = nullptr;
+    QLineEdit *arrowLen = nullptr, *arrowW = nullptr, *stroke = nullptr;
     QCheckBox *filled = nullptr, *closed = nullptr;
     QLineEdit *name = nullptr, *value = nullptr;
     /* copied now: the drawing's strings do not outlive an undo */
@@ -227,7 +227,11 @@ InlineForm *editProperties(QWidget *parent, Document *doc, int i) {
     QLineEdit *coords = f->addText("Coordinates", coordsOf(p0), coordsHint(k));
     if (fillable(k)) filled = f->addCheck("Filled", p0.filled);
     if (k == FC_CURVE) closed = f->addCheck("Closed", p0.u.curve.closed);
-    if (hasDash(k)) dash = f->addChoice("Dash", kDash, p0.ext.dash);
+    if (hasDash(k)) {
+        dash = f->addChoice("Dash", kDash, p0.ext.dash);
+        stroke = f->addText("Line width", p0.ext.width > 0 ? num(p0.ext.width) : QString(),
+                            "empty = drawing default");
+    }
     if (isArrowed(k)) {
         arrows = f->addChoice("Arrows", kArrows, p0.ext.arrows & 3);
         arrowStyle = f->addChoice("Arrow style", kArrowStyle, p0.ext.arrow_style & 3);
@@ -292,6 +296,12 @@ InlineForm *editProperties(QWidget *parent, Document *doc, int i) {
         if (filled) p.filled = filled->isChecked();
         if (closed) p.u.curve.closed = closed->isChecked();
         if (dash) p.ext.dash = dash->currentIndex();
+        if (stroke) {
+            QString s = stroke->text().trimmed();
+            p.ext.width = 0;
+            if (!s.isEmpty() && (!parseNum(s, &p.ext.width) || p.ext.width < 0))
+                return "line width must be a non-negative number (empty = drawing default)";
+        }
         if (arrows) {
             p.ext.arrows = arrows->currentIndex();
             p.ext.arrow_style = arrowStyle->currentIndex();

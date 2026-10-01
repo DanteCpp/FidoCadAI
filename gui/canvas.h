@@ -73,6 +73,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *) override;
     void mouseDoubleClickEvent(QMouseEvent *) override;
     void wheelEvent(QWheelEvent *) override;
+    bool event(QEvent *) override; /* touchpad pinch / pan gestures */
     void keyPressEvent(QKeyEvent *) override;
     void keyReleaseEvent(QKeyEvent *) override;
     void leaveEvent(QEvent *) override;
@@ -109,6 +110,7 @@ private:
     QList<QPointF> handle_starts_;
 
     double ox_ = 40, oy_ = 40, scale_ = 4; /* widget px = logical * scale + origin */
+    void panBy(QPointF d);
     bool auto_fit_ = true; /* follow canvas resizes until the user pans or zooms */
     QImage cache_;
     bool dirty_ = true;

@@ -269,6 +269,15 @@ static void commit(ParseCtx *cx) {
     cx->labels_left = 0;
 }
 
+static double fcj_width(ParseCtx *cx, const char *s) {
+    double w = tok_dbl(s, -1);
+    if (w < 0) {
+        fc_drawing_diag(cx->d, cx->line, FC_DIAG_WARN, "bad FCJ stroke width '%s'", s);
+        return 0;
+    }
+    return w;
+}
+
 static void apply_fcj(ParseCtx *cx, const char **tok, int ntok) {
     FcPrim *p = &cx->pend;
     int text_flag = 0;
@@ -279,26 +288,23 @@ static void apply_fcj(ParseCtx *cx, const char **tok, int ntok) {
         cx->labels_seen = 0;
         return;
     }
-    if (fc_kind_arrowed(p->kind)) {
-        if (ntok >= 7) {
-            p->ext.arrows = tok_int(tok[1], 0);
-            p->ext.arrow_style = tok_int(tok[2], 0);
-            p->ext.arrow_len = tok_dbl(tok[3], 3);
-            p->ext.arrow_half_w = tok_dbl(tok[4], 1);
-            p->ext.dash = fc_clamp_dash(tok_int(tok[5], 0));
-            text_flag = tok_int(tok[6], 0);
-            p->has_ext = 1;
-        } else if (ntok >= 3) {
-            p->ext.dash = fc_clamp_dash(tok_int(tok[1], 0));
-            text_flag = tok_int(tok[2], 0);
-            p->has_ext = 1;
-        }
-    } else if (fc_kind_uses_fcj(p->kind)) {
-        if (ntok >= 3) {
-            p->ext.dash = fc_clamp_dash(tok_int(tok[1], 0));
-            text_flag = tok_int(tok[2], 0);
-            p->has_ext = 1;
-        }
+    /* The optional stroke width sits between the dash style and the text flag:
+     * FidoCadJS/FidoCadJ read the dash by position and the text flag as the last
+     * token, so they ignore it and still attach the labels. */
+    if (fc_kind_arrowed(p->kind) && ntok >= 7) {
+        p->ext.arrows = tok_int(tok[1], 0);
+        p->ext.arrow_style = tok_int(tok[2], 0);
+        p->ext.arrow_len = tok_dbl(tok[3], 3);
+        p->ext.arrow_half_w = tok_dbl(tok[4], 1);
+        p->ext.dash = fc_clamp_dash(tok_int(tok[5], 0));
+        if (ntok >= 8) p->ext.width = fcj_width(cx, tok[6]);
+        text_flag = tok_int(tok[ntok >= 8 ? 7 : 6], 0);
+        p->has_ext = 1;
+    } else if (fc_kind_uses_fcj(p->kind) && ntok >= 3) {
+        p->ext.dash = fc_clamp_dash(tok_int(tok[1], 0));
+        if (ntok >= 4) p->ext.width = fcj_width(cx, tok[2]);
+        text_flag = tok_int(tok[ntok >= 4 ? 3 : 2], 0);
+        p->has_ext = 1;
     }
     if (text_flag) {
         cx->labels_left = 2;

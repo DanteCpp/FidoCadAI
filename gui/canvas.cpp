@@ -6,6 +6,7 @@
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QMouseEvent>
+#include <QNativeGestureEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QScrollBar>
@@ -169,6 +170,15 @@ void Canvas::zoomBy(double f, QPointF at) {
     oy_ = at.y() - lg.y() * scale_;
     dirty_ = true;
     status();
+    update();
+}
+
+void Canvas::panBy(QPointF d) {
+    if (d.isNull()) return;
+    auto_fit_ = false;
+    ox_ += d.x();
+    oy_ += d.y();
+    dirty_ = true;
     update();
 }
 
@@ -513,6 +523,8 @@ void Canvas::paintEvent(QPaintEvent *) {
             {"Shift+G", "snap to grid on/off"},
             {"view", ""},
             {"wheel", "zoom"},
+            {"two-finger drag", "pan the view (touchpad)"},
+            {"pinch", "zoom at the fingers (touchpad)"},
             {"+ / =", "zoom in"},
             {"-", "zoom out"},
             {"0 / Space", "fit the drawing in the window"},
@@ -1003,15 +1015,36 @@ void Canvas::wheelEvent(QWheelEvent *e) {
     }
     QPoint pd = e->pixelDelta();
     if (!pd.isNull() && !(e->modifiers() & Qt::ControlModifier)) {
-        /* touchpad two-finger scroll pans; pinch arrives with Ctrl */
-        ox_ += pd.x();
-        oy_ += pd.y();
-        dirty_ = true;
-        update();
+        /* touchpad two-finger scroll pans */
+        panBy(pd);
         return;
     }
+    /* Ctrl+scroll zooms; some stacks deliver pinch that way too */
     double steps = e->angleDelta().y() / 120.0;
     if (steps != 0) zoomBy(std::pow(1.2, steps), e->position());
+}
+
+bool Canvas::event(QEvent *e) {
+    if (e->type() != QEvent::NativeGesture) return QWidget::event(e);
+    /* Wayland (zwp_pointer_gestures), X11 XInput 2.4 and macOS deliver
+       touchpad pinch as native gestures; value() is the incremental scale */
+    auto *g = static_cast<QNativeGestureEvent *>(e);
+    if (cheats_) return true;
+    switch (g->gestureType()) {
+    case Qt::ZoomNativeGesture:
+        if (g->value() > -1.0) zoomBy(1.0 + g->value(), g->position());
+        break;
+    case Qt::SmartZoomNativeGesture: /* macOS two-finger double tap */
+        fit();
+        break;
+    case Qt::PanNativeGesture:
+        panBy(g->delta()); /* swipe: content follows the fingers */
+        break;
+    default:
+        break;
+    }
+    g->accept();
+    return true;
 }
 
 void Canvas::leaveEvent(QEvent *) {

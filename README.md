@@ -124,6 +124,7 @@ fcai find sketch.fcd --near 40 20 10        # same query in a square
 fcai edit move sketch.fcd --index 3 --by 10 0 -o draft.fcd
 fcai edit set sketch.fcd --index 3 --name R1 --value 10k -o draft.fcd
 fcai edit set sketch.fcd --index 5 --dash 1 --layer 0 -o draft.fcd
+fcai edit set sketch.fcd --index 5 --stroke 1 -o draft.fcd   # per-primitive line width
 fcai edit rm sketch.fcd --index 5 -o draft.fcd
 fcai edit add sketch.fcd --from additions.fcd -o draft.fcd
 fcai lint sketch.fcd --json
@@ -254,7 +255,7 @@ with a live preview of the selected macro under the tree.
 
 **P** (or F2, or double-click) opens the properties of the selected element
 inside the drawing: layer, coordinates, name and value, and whatever that kind
-has: dash, arrows (start/end, style, length, width), fill, closed curve, text
+has: dash, line width (empty = drawing default), arrows (start/end, style, length, width), fill, closed curve, text
 height/width/rotation/bold/italic/mirrored/font, symbol key/rotation/mirror, PCB
 track width, pad size/hole/shape. Enter applies, Esc cancels, one undo step.
 The window shows only the drawing: the agent puts no messages over it — it just

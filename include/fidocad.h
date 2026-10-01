@@ -95,6 +95,7 @@ typedef struct {
     int dash;
     double arrow_len;
     double arrow_half_w;
+    double width; /* stroke width in logical units; 0 = drawing default (FJC B/C) */
 } FcExt;
 
 typedef struct {

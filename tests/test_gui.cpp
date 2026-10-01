@@ -22,6 +22,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QNativeGestureEvent>
 #include <QPixmap>
 #include <QScrollBar>
 #include <QStatusBar>
@@ -341,11 +342,52 @@ static void test_grouped_handles(const char *argv0) {
     EXPECT(doc.primFcd(0) == "MC 65 100 0 0 080");
 }
 
+/* touchpad: pinch zooms about the fingers, two-finger scroll / swipe pans */
+static void test_touchpad_gestures(const char *argv0) {
+    QTemporaryDir tmp;
+    Settings settings(tmp.path() + "/gui.conf");
+    Theme theme = Theme::load("dark");
+    Document doc;
+    doc.loadLibraries(true, {}, {}, argv0);
+    EXPECT(doc.openText("LI 10 10 90 60 0\n"));
+    Canvas canvas(&doc, &settings, &theme);
+    Canvas *c = &canvas;
+    c->resize(800, 600);
+    c->show();
+    c->fit();
+    QTest::qWait(20);
+    const QPointF anchor(50, 35);
+    const QPointF at = c->toPixel(anchor);
+    const double w0 = c->toPixel(QPointF(90, 0)).x() - c->toPixel(QPointF(10, 0)).x();
+    auto gesture = [c](Qt::NativeGestureType type, double value, QPointF pos, QPointF delta) {
+        QNativeGestureEvent g(type, QPointingDevice::primaryPointingDevice(), 2, pos,
+                              pos, c->mapToGlobal(pos), value, delta);
+        QApplication::sendEvent(c, &g);
+    };
+    gesture(Qt::BeginNativeGesture, 0, at, {});
+    gesture(Qt::ZoomNativeGesture, 0.5, at, {});
+    gesture(Qt::EndNativeGesture, 0, at, {});
+    const double w1 = c->toPixel(QPointF(90, 0)).x() - c->toPixel(QPointF(10, 0)).x();
+    EXPECT(std::abs(w1 / w0 - 1.5) < 1e-6);
+    EXPECT((c->toPixel(anchor) - at).manhattanLength() < 1e-6);
+
+    QPointF before = c->toPixel(QPointF(10, 10));
+    QWheelEvent wheel(at, c->mapToGlobal(at), QPoint(12, -7), QPoint(12, -7), Qt::NoButton,
+                      Qt::NoModifier, Qt::ScrollUpdate, false);
+    QApplication::sendEvent(c, &wheel);
+    EXPECT(c->toPixel(QPointF(10, 10)) - before == QPointF(12, -7));
+
+    before = c->toPixel(QPointF(10, 10));
+    gesture(Qt::PanNativeGesture, 0, at, QPointF(-5, 9));
+    EXPECT(c->toPixel(QPointF(10, 10)) - before == QPointF(-5, 9));
+}
+
 int main(int argc, char **argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
     test_label_handles(argv[0]);
     test_grouped_handles(argv[0]);
+    test_touchpad_gestures(argv[0]);
     test_session_feedback(app, argv[0]);
     QTemporaryDir tmp;
     QString fcd = tmp.path() + "/t.fcd";
@@ -701,6 +743,25 @@ int main(int argc, char **argv) {
     QTest::qWait(10);
     EXPECT(!c->editing());
     EXPECT(doc.primFcd(0).contains("FCJ 2 0 3 1 1 0"));
+
+    /* per-primitive line width goes into FCJ before the text flag; empty resets */
+    for (const char *w : {"1.5", ""}) {
+        c->setSelection({0});
+        c->editSelection();
+        form = c->form();
+        QLineEdit *lw = nullptr;
+        if (form)
+            for (QLineEdit *e : form->findChildren<QLineEdit *>())
+                if (e->placeholderText() == "empty = drawing default") lw = e;
+        EXPECT(lw != nullptr);
+        if (lw) {
+            lw->setText(w);
+            form->apply();
+        }
+        QTest::qWait(10);
+        EXPECT(!c->editing());
+        EXPECT(doc.primFcd(0).contains(*w ? "FCJ 2 0 3 1 1 1.5 0" : "FCJ 2 0 3 1 1 0"));
+    }
 
     /* bad input keeps the form open with the error */
     c->setSelection({0});

@@ -1,5 +1,6 @@
 #include "fidocad.h"
 #include "../src/internal.h" /* fc_xform_* */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -404,6 +405,41 @@ static void test_label_pair_roundtrip(void) {
     fc_drawing_free(&d);
 }
 
+/* FCJ stroke width: optional token between dash and text flag (FidoCadJS reads the
+ * text flag as the last token, so it ignores the width and keeps the labels). */
+static void test_fcj_stroke_width(void) {
+    FcDrawing d, r;
+    char *a, *b;
+    fc_drawing_init(&d);
+    fc_drawing_init(&r);
+    EXPECT(fc_parse_file(&d, "tests/fixtures/stroke-width.fcd") == FC_OK);
+    EXPECT(d.nprims == 9);
+    EXPECT(d.ndiags == 0);
+    EXPECT(d.prims[0].ext.width == 2 && d.prims[0].ext.dash == 0);
+    EXPECT(fabs(d.prims[1].ext.width - 0.25) < 1e-9 && d.prims[1].ext.dash == 1 && d.prims[1].ext.arrows == 2);
+    EXPECT(d.prims[1].has_name && d.prims[1].has_value);
+    EXPECT(d.prims[2].kind == FC_RECT && d.prims[2].ext.width == 1.5);
+    EXPECT(d.prims[3].kind == FC_OVAL && fabs(d.prims[3].ext.width - 0.1) < 1e-9 && d.prims[3].ext.dash == 2);
+    EXPECT(d.prims[4].ext.width == 3 && fabs(d.prims[5].ext.width - 0.75) < 1e-9 && d.prims[6].ext.width == 1);
+    EXPECT(d.prims[7].ext.width == 0 && d.prims[8].kind == FC_TEXT);
+    a = NULL;
+    fc_emit(&d, &a, NULL);
+    EXPECT(a && strstr(a, "FCJ 2 0 3 1 1 0.25 1\n") && strstr(a, "FCJ 0 1.5 0\n"));
+    EXPECT(a && !strstr(a, "FCJ 0 0\n")); /* no override, no FCJ */
+    EXPECT(a && fc_parse(&r, a, 0) == FC_OK);
+    b = NULL;
+    fc_emit(&r, &b, NULL);
+    EXPECT(a && b && strcmp(a, b) == 0);
+    free(a);
+    free(b);
+    fc_drawing_free(&r);
+    fc_drawing_init(&r);
+    fc_parse(&r, "LI 0 0 10 0 0\nFCJ 0 -1 0\n", 0);
+    EXPECT(r.nprims == 1 && r.prims[0].ext.width == 0 && r.ndiags == 1);
+    fc_drawing_free(&r);
+    fc_drawing_free(&d);
+}
+
 static void test_validate_degenerate(void) {
     FcDrawing d;
     char *rep = NULL;
@@ -702,6 +738,46 @@ static void test_dash_scale_and_crop(void) {
     fc_drawing_free(&d);
 }
 
+/* Zooming in small steps must grow text steadily: no glyph snaps backwards
+ * and the ink centroid never jumps (rounded advances used to move it ~9 px). */
+static void test_text_zoom_smooth(void) {
+    FcDrawing d;
+    FcView v = {0};
+    enum { W = 600, H = 120 };
+    static uint8_t pixels[W * H * 3];
+    double last = 0, last_step = 0, worst = 0;
+    int prev_edge = -1, backwards = 0, i, x, y;
+    fc_drawing_init(&d);
+    fc_parse(&d, "TY 20 10 4 3 0 0 0 * Resistor R1 10k VCO\n", 0);
+    v.bg = 0xFFFFFF;
+    v.ox = 13.37;
+    v.oy = 7.1;
+    for (i = 0; i < 80; i++) {
+        double sx = 0, sw = 0, cx;
+        int edge = -1;
+        v.scale = 3.0 * pow(1.002, i);
+        EXPECT(fc_render_rgb(&d, NULL, &v, pixels, W, H, W * 3) == FC_OK);
+        for (y = 0; y < H; y++)
+            for (x = 0; x < W; x++) {
+                int k = 255 - pixels[(y * W + x) * 3];
+                if (k <= 8) continue;
+                if (x > edge) edge = x;
+                sx += (double)k * x;
+                sw += k;
+            }
+        EXPECT(sw > 0);
+        cx = sw > 0 ? sx / sw : 0;
+        if (edge < prev_edge) backwards++;
+        if (i > 1 && fabs((cx - last) - last_step) > worst) worst = fabs((cx - last) - last_step);
+        if (i) last_step = cx - last;
+        last = cx;
+        prev_edge = edge;
+    }
+    EXPECT(backwards == 0);
+    EXPECT(worst < 1.0);
+    fc_drawing_free(&d);
+}
+
 static void test_label_handles(void) {
     FcDrawing d, roundtrip;
     FcPoint point;
@@ -811,6 +887,7 @@ int main(int argc, char **argv) {
     test_full_pattern_file();
     test_fmt_num_saturates();
     test_label_pair_roundtrip();
+    test_fcj_stroke_width();
     test_validate_degenerate();
     test_recursive_macro();
     test_expand_budget();
@@ -823,6 +900,7 @@ int main(int argc, char **argv) {
     test_exe_path();
     test_drawing_lint();
     test_dash_scale_and_crop();
+    test_text_zoom_smooth();
     test_label_handles();
     printf("%d passed, %d failed\n", g_ok, g_fail);
     return g_fail ? 1 : 0;

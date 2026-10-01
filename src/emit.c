@@ -41,20 +41,25 @@ static int need_fcj(const FcPrim *p) {
     if (!fc_kind_uses_fcj(p->kind)) return 0;
     if (p->has_name || p->has_value) return 1;
     if (p->ext.dash > 0) return 1;
+    if (p->ext.width > 0) return 1;
     if (fc_kind_arrowed(p->kind) && p->ext.arrows) return 1;
     return 0;
 }
 
 static void emit_fcj(FcBuf *b, const FcPrim *p) {
     int text = (p->has_name || p->has_value) ? 1 : 0;
-    char al[32], ah[32];
+    char al[32], ah[32], w[40] = "";
+    if (p->ext.width > 0) { /* optional: only when it overrides FJC B/C */
+        w[0] = ' ';
+        fc_fmt_num(w + 1, sizeof w - 1, p->ext.width);
+    }
     if (fc_kind_arrowed(p->kind)) {
         fc_fmt_num(al, sizeof al, p->ext.arrow_len);
         fc_fmt_num(ah, sizeof ah, p->ext.arrow_half_w);
-        fc_buf_printf(b, "FCJ %d %d %s %s %d %d\n", p->ext.arrows, p->ext.arrow_style, al, ah,
-                      fc_clamp_dash(p->ext.dash), text);
+        fc_buf_printf(b, "FCJ %d %d %s %s %d%s %d\n", p->ext.arrows, p->ext.arrow_style, al, ah,
+                      fc_clamp_dash(p->ext.dash), w, text);
     } else {
-        fc_buf_printf(b, "FCJ %d %d\n", fc_clamp_dash(p->ext.dash), text);
+        fc_buf_printf(b, "FCJ %d%s %d\n", fc_clamp_dash(p->ext.dash), w, text);
     }
 }
 
@@ -330,12 +335,13 @@ static void json_prim(FcBuf *b, const FcPrim *p) {
         json_label(b, "text", &p->u.text);
         break;
     }
-    if (p->has_ext || p->ext.dash || p->ext.arrows) {
-        char al[32], ah[32];
+    if (p->has_ext || p->ext.dash || p->ext.arrows || p->ext.width > 0) {
+        char al[32], ah[32], w[32];
         fc_fmt_num(al, 32, p->ext.arrow_len);
         fc_fmt_num(ah, 32, p->ext.arrow_half_w);
-        fc_buf_printf(b, ",\"ext\":{\"arrows\":%d,\"arrow_style\":%d,\"arrow_len\":%s,\"arrow_half_w\":%s,\"dash\":%d}",
-                      p->ext.arrows, p->ext.arrow_style, al, ah, p->ext.dash);
+        fc_fmt_num(w, 32, p->ext.width);
+        fc_buf_printf(b, ",\"ext\":{\"arrows\":%d,\"arrow_style\":%d,\"arrow_len\":%s,\"arrow_half_w\":%s,\"dash\":%d,\"width\":%s}",
+                      p->ext.arrows, p->ext.arrow_style, al, ah, p->ext.dash, w);
     }
     if (p->has_name) {
         fc_buf_putc(b, ',');
@@ -516,6 +522,10 @@ static void describe_prim(FcBuf *b, const FcPrim *p, int i) {
         break;
     default:
         break;
+    }
+    if (p->ext.width > 0) {
+        fc_fmt_num(a, 32, p->ext.width);
+        fc_buf_printf(b, " width=%s", a);
     }
     if (p->has_name && p->name.text && p->name.text[0])
         fc_buf_printf(b, " name=\"%s\"", p->name.text);
