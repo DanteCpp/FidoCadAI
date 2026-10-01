@@ -570,8 +570,7 @@ int main(int argc, char **argv) {
     EXPECT(win.barVisible());
     EXPECT(settings.get("statusbar") == "1");
     auto *keyHint = win.findChild<QLabel *>("keybindingsHint");
-    EXPECT(keyHint && keyHint->isVisible() && keyHint->text().contains("K") &&
-           keyHint->text().contains("Keybindings cheatsheet"));
+    EXPECT(keyHint && keyHint->isVisible() && keyHint->text() == "K  ·  Keybindings");
     QTest::keyClick(c, Qt::Key_I);
     EXPECT(!win.barVisible());
     EXPECT(settings.get("statusbar") == "0");

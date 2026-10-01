@@ -329,7 +329,7 @@ void MainWindow::buildBar() {
     info_->setTextFormat(Qt::RichText); /* the layer name is tinted with its colour */
     info_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     bar->addWidget(info_, 1);
-    auto *hint = new QLabel("K  ·  Keybindings cheatsheet", bar);
+    auto *hint = new QLabel("K  ·  Keybindings", bar);
     hint->setObjectName("keybindingsHint");
     hint->setContentsMargins(12, 0, 8, 0);
     bar->addPermanentWidget(hint);
