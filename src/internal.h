@@ -97,6 +97,12 @@ int fc_exe_path(char *out, size_t cap);
  * install prefixes, then ./share); stops and returns 1 when it returns non-zero. */
 int fc_find_data(const char *sub, int (*try_dir)(void *ctx, const char *dir), void *ctx);
 int fc_stdin_is_tty(void);
+/* User-owned application data: $FCAI_HOME, else ~/.fcai. */
+int fc_app_dir(char *out, size_t cap);
+
+/* CLI-only style profile support (style.c). */
+int fc_cmd_style(int argc, char **argv);
+int fc_style_context(FcBuf *b);
 
 int fc_ttf_init(void);
 int fc_ttf_ready(void);

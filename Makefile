@@ -16,7 +16,7 @@ DATADIR ?= $(PREFIX)/share/fidocad
 
 SRC := src/util.c src/sys.c src/parse.c src/emit.c src/edit.c src/lint.c src/lib.c src/tex.c src/font.c src/ttf.c src/vendor_impl.c src/render.c
 OBJ := $(patsubst src/%.c,build/%.o,$(SRC))
-CLI_OBJ := build/cli.o
+CLI_OBJ := build/cli.o build/style.o
 TEST_OBJ := build/test_core.o
 
 # Optional Qt6 GUI (fcai-gui). The core library and fcai stay dependency-free;
@@ -86,6 +86,7 @@ build/test_core: $(OBJ) $(TEST_OBJ)
 test: build/test_core build/fcai
 	./build/test_core
 	sh tests/test_cli.sh ./build/fcai
+	sh tests/test_style.sh ./build/fcai
 	./build/fcai validate tests/fixtures/full-pattern.fcd
 	./build/fcai describe tests/fixtures/full-pattern.fcd >/dev/null
 	./build/fcai json tests/fixtures/full-pattern.fcd >/dev/null

@@ -10,7 +10,7 @@
 #   scripts/install.sh hook [enable|disable]
 #
 # install/update build the tree, stage a `make install` into the prefix, create
-# the user library directory (~/Documents/FidoLib) and deliver
+# the user library directory (~/.fcai/lib) and deliver
 # share/skills/fidocad to the local coding agents: when the Omarchy
 # default-agents channel is present (Linux) it gets one canonical copy with a
 # symlink at /usr/share/omarchy/default/agents/skills/fidocad, otherwise every
@@ -34,7 +34,7 @@
 #   --no-build       use the existing build/ binaries (install from a build done as the user)
 #   --no-path        do not add the install prefix to system PATH files
 #   --no-skill       do not register the agent skill
-#   --no-userlib     do not create ~/Documents/FidoLib
+#   --no-userlib     do not create/migrate ~/.fcai/lib
 #   --no-hook        do not install/refresh the auto-update git hook
 #   --link           create the /usr/local/bin symlinks (default: only for the
 #                    default prefix)
@@ -208,7 +208,13 @@ documents_dir() {
 }
 
 user_lib_dir() {
-    printf '%s/FidoLib\n' "$(documents_dir)"
+    if [ -n "${FIDO_USER_LIB_DIR:-}" ]; then
+        printf '%s\n' "$FIDO_USER_LIB_DIR"
+    elif [ -n "${FCAI_HOME:-}" ]; then
+        printf '%s/lib\n' "${FCAI_HOME%/}"
+    else
+        printf '%s/.fcai/lib\n' "$RUN_HOME"
+    fi
 }
 
 hook_enabled() {
@@ -431,14 +437,22 @@ remove_path_files() {
 do_userlib() {
     [ "$WITH_USERLIB" -eq 1 ] || return 0
     libdir=$(user_lib_dir)
-    case $libdir in
-        "$RUN_HOME"/*) ;;
-        *)
-            warn "unexpected user library dir $libdir; using $RUN_HOME/Documents/FidoLib"
-            libdir="$RUN_HOME/Documents/FidoLib"
-            ;;
-    esac
     mkdir -p "$libdir"
+    # Copy legacy libraries without removing the originals or overwriting new
+    # definitions. Explicit overrides choose an isolated directory instead.
+    if [ -z "${FIDO_USER_LIB_DIR:-}" ] && [ -z "${FCAI_HOME:-}" ]; then
+        legacy="$(documents_dir)/FidoLib"
+        for oldlib in "$legacy"/*.fcl; do
+            [ -f "$oldlib" ] || continue
+            newlib="$libdir/$(basename "$oldlib")"
+            if [ -e "$newlib" ] || [ -L "$newlib" ]; then
+                cmp -s "$oldlib" "$newlib" || warn "keeping $newlib; legacy library differs: $oldlib"
+            else
+                cp -p "$oldlib" "$newlib"
+                log "migrated library: $newlib (original retained)"
+            fi
+        done
+    fi
     if [ ! -f "$libdir/README.md" ]; then
         cat > "$libdir/README.md" <<'EOF'
 # FidoLib — your FidoCad libraries

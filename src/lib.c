@@ -331,17 +331,12 @@ static int xdg_documents_dir(char *out, size_t cap) {
     return found;
 }
 
-int fc_user_lib_dir(char *out, size_t cap) {
+static int legacy_user_lib_dir(char *out, size_t cap) {
     const char *home = getenv("HOME");
     const char *env;
     char doc[1024];
     size_t n;
     if (!out || cap == 0) return 0;
-    env = getenv("FIDO_USER_LIB_DIR");
-    if (env && *env) {
-        snprintf(out, cap, "%s", env);
-        return 1;
-    }
     env = getenv("XDG_DOCUMENTS_DIR");
     if (env && *env) snprintf(doc, sizeof doc, "%s", env);
     else if (!xdg_documents_dir(doc, sizeof doc)) {
@@ -354,10 +349,32 @@ int fc_user_lib_dir(char *out, size_t cap) {
     return 1;
 }
 
+int fc_user_lib_dir(char *out, size_t cap) {
+    const char *env = getenv("FIDO_USER_LIB_DIR");
+    char root[4096];
+    int n;
+    if (!out || !cap) return 0;
+    out[0] = 0;
+    if (env && *env) n = snprintf(out, cap, "%s", env);
+    else if (fc_app_dir(root, sizeof root)) n = snprintf(out, cap, "%s/lib", root);
+    else return 0;
+    if (n < 0 || (size_t)n >= cap) { out[0] = 0; return 0; }
+    return 1;
+}
+
 int fc_lib_load_user_dir(FcLib *lib) {
-    char dir[1024];
+    const char *override = getenv("FIDO_USER_LIB_DIR");
+    const char *root = getenv("FCAI_HOME");
+    char dir[4096], legacy[1024];
+    int old_rc = FC_ERR_IO, rc;
     if (!lib || !fc_user_lib_dir(dir, sizeof dir)) return FC_ERR_ARG;
-    return fc_lib_load_dir(lib, dir);
+    /* Transitional compatibility: explicit overrides isolate the library;
+       otherwise load old Documents libraries first, so new definitions win. */
+    if ((!override || !*override) && (!root || !*root) &&
+        legacy_user_lib_dir(legacy, sizeof legacy) && !fc_streq(legacy, dir))
+        old_rc = fc_lib_load_dir(lib, legacy);
+    rc = fc_lib_load_dir(lib, dir);
+    return rc == FC_OK || old_rc == FC_OK ? FC_OK : rc;
 }
 
 static int try_stdlib_dir(FcLib *lib, const char *dir) {

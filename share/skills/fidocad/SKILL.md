@@ -8,6 +8,40 @@ description: Draw, edit, validate and render FidoCad (.fcd) schematics, PCB layo
 Use `fcai` to inspect, edit and render `.fcd` drawings and `.fcl` libraries;
 use its live GUI to work with the user.
 
+## User drawing preferences
+
+Read `fcai style show --json` at the start of drawing work and again before
+recording feedback. This shared user profile lives in `~/.fcai/style.md`
+(`FCAI_HOME` overrides the directory), outside the installed skill. Its scoped
+preferences are drawing defaults: follow current user instructions and the
+document's established conventions; preserve valid connections. Apply only
+preferences whose scope matches the task.
+
+If `learning` is true, save reusable preferences expressed in explicit style
+feedback, including a GUI example the user identifies as their desired style.
+Do not generalize silent acceptance, an unexplained GUI movement, a one-off
+layout request, exact coordinates, device sizing or a bug workaround. State
+briefly what you remembered. If learning is off, apply saved preferences but
+capture new ones only when the user asks to remember them.
+
+Use stable keys, narrow scopes and a short source (the user's statement or a
+report/example reference). Update a matching key when corrected, preserving
+unrelated preferences. Snapshot before changes and use the stale-base guard:
+
+```bash
+fcai style show > /tmp/style-base.md
+fcai style set mos-labels "Place MOS names and values beside the body at mid-height." \
+  --scope "MOS schematics" --source "User: this is how I want the labels" \
+  --base /tmp/style-base.md
+fcai style show --json
+```
+
+On a stale-base error, read fresh preferences, reconcile the correction and
+retry with a new snapshot. `style forget KEY` removes a rule; `style history`
+and `style restore ID` recover previous profiles. `style learning on|off`
+controls future capture. No profile means learning is off and no preferences
+are saved. The CLI stores the profile; the calling agent interprets feedback.
+
 ## First step: open the GUI before drawing
 
 **When asked to create or edit a drawing, open the GUI first**, before adding
@@ -235,6 +269,7 @@ the coordinate boundary to avoid clipping rotated/mirrored geometry.
   and input/output terminals. Derive junction spacing from pin span + two leads.
 * Keep branch spacing regular and wires orthogonal. Attach control flags
   directly at pins when clear; avoid unnecessary extension wires.
+  Preserve deliberate device and terminal orientation when changing spacing.
 * End rails deliberately: align return terminals beneath their matching power
   terminals, or trim the return rail to the outermost branches. No unexplained
   overhangs. A wire that ends at a corner needs neither an extension nor a dot.
@@ -281,9 +316,11 @@ Loading rules:
 
 * bundled standard libraries: keys unprefixed; `FIDO_STDLIB_DIR` overrides
   their location, `--stdlib`/`--no-stdlib` toggle them;
-* **your own library directory `~/Documents/FidoLib/`** (overridable with
-  `FIDO_USER_LIB_DIR`) is loaded automatically: every `*.fcl` in it is
-  available in every drawing;
+* **your own library directory `~/.fcai/lib/`** (`$FCAI_HOME/lib`, overridable
+  with `FIDO_USER_LIB_DIR`) is loaded automatically: every `*.fcl` in it is
+  available in every drawing. Read `fcai config` for the effective `user_lib`
+  path before writing. Without either override, legacy Documents/FidoLib
+  libraries load first for compatibility; definitions in the new directory win;
 * `FIDO_LIB_DIR` and `--lib-dir DIR` load extra directories;
 * keys in all of these are `prefix.key`, prefix from the file name lowercased
   unless the file itself declares one (`FCDstdlib*` is unprefixed);
@@ -293,14 +330,15 @@ Loading rules:
 
 Reuse existing macros for repeated symbols. For repeated groups of primitives
 such as connectors, footprints, logos or subcircuits, define a reusable macro
-in `~/Documents/FidoLib/<name>.fcl` and place `MC` instances. Preserve unrelated
+in the effective user library directory (`~/.fcai/lib/<name>.fcl` by default)
+and place `MC` instances. Preserve unrelated
 macros already in that file; inspect before editing. A library change affects
 every drawing using the key, so use a new key when the change is not meant to
 apply to existing instances.
 
 Create a library:
 
-1. Write `~/Documents/FidoLib/my_parts.fcl` with `[key Long name]` sections
+1. Write `my_parts.fcl` in the effective user library directory with `[key Long name]` sections
    (keep keys unique); draw bodies around the (100,100) origin.
 2. Test it: `fcai lib | grep my_parts` and `fcai render test.fcd`, where
    `test.fcd` places each macro with `MC 100 100 0 0 my_parts.key`.
@@ -345,7 +383,7 @@ FidoCadAI installs system-wide to `/opt/FidoCadAI` with the project's install
 script:
 
 ```bash
-scripts/install.sh install     # build, install, create ~/Documents/FidoLib,
+scripts/install.sh install     # build, install, create/migrate ~/.fcai/lib,
                                # register this skill, install the update hook
 scripts/install.sh update      # refresh after a source change
 scripts/install.sh status      # what is installed where

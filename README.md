@@ -40,7 +40,8 @@ on macOS. Without it everything except `fcai-gui` builds and tests normally.
 `fcai` and `fcai-gui` into `/usr/local/bin`, puts `/opt/FidoCadAI/bin` on `PATH`
 (`/etc/profile.d/fidocadai.sh` and `/etc/environment.d/99-fidocadai.conf` on
 Linux, `/etc/paths.d/fidocadai` on macOS), creates the user library directory
-`~/Documents/FidoLib` and registers the agent skill with every local harness
+`~/.fcai/lib` (copying legacy Documents/FidoLib libraries without overwriting
+new files or removing originals) and registers the agent skill with every local harness
 (one canonical copy; the Omarchy default-agents channel is used when present).
 It also installs a git hook that runs `scripts/install.sh update` after every
 commit, so the system copy follows the source tree.
@@ -64,9 +65,12 @@ Standard libraries ship in `share/lib/` (English FidoCadJ bundles) and fonts in
 to the binary (it resolves its own path through `/proc/self/exe` on Linux,
 `_NSGetExecutablePath` on macOS, else `argv[0]` + `$PATH`), or under
 `/usr/local`, `/opt/homebrew` or `/usr` `share/fidocad/`. Your own macro
-libraries live in `~/Documents/FidoLib/` (override with `FIDO_USER_LIB_DIR`) and
+libraries live in `~/.fcai/lib/` (`FCAI_HOME` changes the application directory;
+`FIDO_USER_LIB_DIR` overrides just the library directory) and
 are loaded automatically; `fcai config` prints the resolved executable, the
-effective `user_lib` path and whether TTF fonts were found.
+effective `user_lib` and `style_profile` paths and whether TTF fonts were found.
+Without overrides, old Documents/FidoLib libraries still load first; new
+definitions take precedence.
 
 ## CLI for agents
 
@@ -83,6 +87,7 @@ fcai config                       # dump effective settings
 fcai diff before.fcd after.fcd    # primitive-level changes (--json for ops)
 fcai session wait DIR             # next event from a running fcai-gui
 fcai skill                        # the shipped agent skill; `skill install`
+fcai style show --json             # shared user drawing preferences
 
 # show a drawing while you work on it (see the GUI section below)
 fcai gui drawing.fcd --session-dir /tmp/d.session -m "note" &
@@ -90,6 +95,46 @@ fcai gui drawing.fcd --session-dir /tmp/d.session -m "note" &
 
 Stdin is accepted (`fcai json -` or pipe), and bare `fcai` at a terminal prints
 the help and exits. Exit status is 0 on success.
+
+### User drawing style
+
+The installed skill reads `~/.fcai/style.md` before drawing. This is user-owned
+data, shared by all local agents and preserved across application/skill updates.
+`FCAI_HOME` overrides `~/.fcai` for both the profile and default `lib/` directory.
+
+```bash
+fcai style path
+fcai style show                    # readable Markdown; no file creation
+fcai style show --json             # path, learning flag, keyed preferences
+fcai style learning on            # enable agent capture of explicit style feedback
+fcai style show > /tmp/style-base.md
+fcai style set mos-labels "Place MOS labels beside the body." \
+  --scope "MOS schematics" --source "User's label example" --base /tmp/style-base.md
+fcai style forget mos-labels
+fcai style learning off           # retain/apply saved preferences, stop capture
+fcai style history                # previous-profile IDs
+fcai style restore ID             # restore one of those profiles
+```
+
+Learning is off when no profile exists. The agent interprets feedback and saves
+reusable, explicitly stated style preferences when enabled. The application
+does not infer preferences from mouse movements or acceptance. Current requests
+override saved defaults; each rule has a scope, source and update timestamp.
+Keep exact coordinates, circuit sizing and bug workarounds with the drawing.
+
+`set`/`forget` are explicit edits even with learning off. Updating a key preserves
+its scope/source unless supplied again. Keys are lowercase, at most 64 bytes;
+text, scope and source are nonempty single lines (limits 4096/1024/1024 bytes).
+The readable Markdown format can be edited directly while preserving its header,
+metadata and paragraph structure. CLI updates validate the whole profile, use a
+writer lock and atomic replacement, and save the previous file verbatim under
+`~/.fcai/history/style/`. `--base` on any mutation rejects stale snapshots; read
+fresh state and merge before retrying. The profile is limited to 64 KiB/256 rules.
+No-op updates do not add history. Restoring also saves the current version.
+
+Text `fcai context` includes the profile; drawing JSON and the core `fc_context`
+API retain their existing format. Use `style show --json` alongside JSON workflows.
+Style is guidance for the calling agent, rather than automatic rendering settings.
 
 ### Settings (all overridable by an agent)
 

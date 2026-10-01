@@ -35,6 +35,7 @@ static const char *k_help =
     "             edits to the agent, Ctrl+Return ends the session\n"
     "  session    Talk to a running GUI (`session --help` lists commands)\n"
     "  skill      Print the fidocad agent skill; `skill install [DIR...]` installs it\n"
+    "  style      Persistent drawing preferences (`style --help` lists commands)\n"
     "  help       This help\n"
     "  version    Print version\n"
     "\n"
@@ -74,7 +75,8 @@ static const char *k_help =
     "Environment (booleans: 0/false/no/off = off, anything else = on):\n"
     "  FIDO_STDLIB_DIR      Directory with FCDstdlib_en.fcl etc.\n"
     "  FIDO_LIB_DIR         Extra .fcl directory (loaded after stdlib)\n"
-    "  FIDO_USER_LIB_DIR    Your macro directory (default ~/Documents/FidoLib)\n"
+    "  FCAI_HOME           User data directory (default ~/.fcai): style.md + lib/\n"
+    "  FIDO_USER_LIB_DIR    Your macro directory (default ~/.fcai/lib)\n"
     "  FIDO_FONT_DIR        Directory with the Liberation TTFs\n"
     "  FIDO_NO_STDLIB=1     Same as --no-stdlib\n"
     "  FIDO_NO_TEX=1        Same as --no-tex\n"
@@ -236,7 +238,7 @@ static int load_all_libs(Opt *o, FcLib *lib) {
         if (fc_lib_load_stdlib(lib, o->argv0) != FC_OK && !o->quiet)
             fprintf(stderr, "fcai: warning: standard libraries not found\n");
     }
-    /* ~/Documents/FidoLib: the user's own parts (silent when absent). */
+    /* ~/.fcai/lib: the user's own parts (silent when absent). */
     fc_lib_load_user_dir(lib);
     {
         const char *extra = getenv("FIDO_LIB_DIR");
@@ -322,7 +324,8 @@ static int cmd_lib(const Opt *o, FcLib *lib) {
 
 static const char *const k_env[] = {"FIDO_STDLIB_DIR", "FIDO_LIB_DIR", "FIDO_FONT_DIR",
                                     "FIDO_NO_STDLIB",  "FIDO_NO_TEX",  "FIDO_SCALE",
-                                    "FIDO_MARGIN",     "FIDO_JSON",    NULL};
+                                    "FIDO_MARGIN",     "FIDO_JSON",    "FCAI_HOME",
+                                    "FIDO_USER_LIB_DIR", NULL};
 
 static int cmd_config(const Opt *o, const FcLib *lib) {
     FcBuf b;
@@ -333,6 +336,7 @@ static int cmd_config(const Opt *o, const FcLib *lib) {
     {
         char ulib[1024];
         if (fc_user_lib_dir(ulib, sizeof ulib)) fc_buf_printf(&b, "user_lib = %s\n", ulib);
+        if (fc_app_dir(ulib, sizeof ulib)) fc_buf_printf(&b, "style_profile = %s/style.md\n", ulib);
     }
     fc_buf_printf(&b, "extensions = %d\n", o->extensions);
     fc_buf_printf(&b, "json = %d\n", o->json);
@@ -476,7 +480,16 @@ static int run_on_drawing(const Opt *o, FcDrawing *d, FcLib *lib) {
 
     if (fc_streq(cmd, "context")) {
         s = o->json ? fc_to_json(d, lib) : fc_context(d, lib);
-        rc = s ? write_out(o, s, fc_strlen(s)) : FC_ERR_NOMEM;
+        if (s && !o->json) {
+            FcBuf b;
+            fc_buf_init(&b);
+            /* Keep fc_context and drawing JSON independent of user state. */
+            if (fc_style_context(&b) != FC_OK && !o->quiet)
+                fprintf(stderr, "fcai: warning: style profile unavailable; use `fcai style show`\n");
+            fc_buf_puts(&b, s);
+            rc = write_out(o, b.p ? b.p : "", b.n);
+            fc_buf_free(&b);
+        } else rc = s ? write_out(o, s, fc_strlen(s)) : FC_ERR_NOMEM;
         free(s);
         return rc;
     }
@@ -1101,6 +1114,7 @@ int main(int argc, char **argv) {
     if (argc > 1 && fc_streq(argv[1], "gui")) return exec_gui(argv[0], argc - 1, argv + 1);
     if (argc > 1 && fc_streq(argv[1], "session")) return cmd_session(argc - 1, argv + 1);
     if (argc > 1 && fc_streq(argv[1], "skill")) return cmd_skill(argv[0], argc - 2, argv + 2);
+    if (argc > 1 && fc_streq(argv[1], "style")) return fc_cmd_style(argc - 2, argv + 2);
 
     opt_init(&o);
     o.argv0 = argv[0];

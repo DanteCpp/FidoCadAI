@@ -127,7 +127,8 @@ flags. The post-commit hook refreshes `/opt/FidoCadAI` via
 `/opt/FidoCadAI` (override with `--prefix DIR`), symlinks `fcai`/`fcai-gui`
 into `/usr/local/bin` and puts the prefix on `PATH`: `/etc/profile.d`,
 `/etc/environment.d` and `/etc/fish/conf.d` on Linux, `/etc/paths.d` on macOS.
-It creates the user library directory `~/Documents/FidoLib` and delivers
+It creates `~/.fcai/lib`, copies legacy Documents/FidoLib libraries without
+overwriting new files or removing originals, and delivers
 `share/skills/fidocad` to every agent harness found (`fcai skill install`,
 with the Omarchy default-agents channel used when present). It also installs a
 `post-commit` git hook that runs `scripts/install.sh update --quiet` after
@@ -141,9 +142,18 @@ registration through `scripts/install-skill.sh` (real copies, so it works on
 Linux and macOS and never touches `$HOME` on a staged DESTDIR install).
 
 Macros the user (or an agent) creates for repeated patterns belong in
-`~/Documents/FidoLib/<prefix>.fcl`; `fcai` and `fcai-gui` load that directory
-automatically (`fc_user_lib_dir()`, `FIDO_USER_LIB_DIR` overrides). Never touch
+`~/.fcai/lib/<prefix>.fcl`; `fcai` and `fcai-gui` load that directory
+automatically (`fc_user_lib_dir()`, `FCAI_HOME` changes the application directory,
+`FIDO_USER_LIB_DIR` overrides the library directory). Without overrides, legacy
+Documents/FidoLib libraries load first; new definitions win. Never touch
 `share/lib/` from a session — that is the shipped standard library.
+
+User drawing preferences live in `~/.fcai/style.md`, shared across agent
+harnesses and preserved by application/skill updates. `fcai style show --json`
+reads them; `set`, `forget`, `learning`, `history` and `restore` maintain them.
+Read the profile for drawing work. When learning is on, record explicit reusable
+style feedback with scope/source and `--base`, following the shipped skill.
+Keep personal preferences out of the shipped skill and repo-wide defaults.
 
 ## Talking to this program
 

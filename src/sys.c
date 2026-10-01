@@ -101,6 +101,20 @@ int fc_stdin_is_tty(void) {
     return isatty(STDIN_FILENO);
 }
 
+int fc_app_dir(char *out, size_t cap) {
+    const char *root = getenv("FCAI_HOME");
+    const char *home = getenv("HOME");
+    int n;
+    if (!out || !cap) return 0;
+    out[0] = 0;
+    if (root && *root) n = snprintf(out, cap, "%s", root);
+    else if (home && *home) n = snprintf(out, cap, "%s/.fcai", home);
+    else return 0;
+    if (n < 0 || (size_t)n >= cap) { out[0] = 0; return 0; }
+    while (n > 1 && out[n - 1] == '/') out[--n] = 0;
+    return 1;
+}
+
 int fc_find_data(const char *sub, int (*try_dir)(void *ctx, const char *dir), void *ctx) {
     static const char *const k_prefixes[] = {"/usr/local/share/fidocad", "/opt/homebrew/share/fidocad",
                                              "/usr/share/fidocad", NULL};

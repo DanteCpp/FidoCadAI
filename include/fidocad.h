@@ -267,7 +267,8 @@ int fc_lib_load_dir(FcLib *lib, const char *dir);
 void fc_set_argv0(const char *argv0);
 int fc_lib_load_stdlib(FcLib *lib, const char *argv0);
 /* Directory for the user's own macros: $FIDO_USER_LIB_DIR, else
-   $XDG_DOCUMENTS_DIR/FidoLib, else ~/Documents/FidoLib. */
+   $FCAI_HOME/lib, else ~/.fcai/lib. Old Documents/FidoLib libraries are loaded
+   first for compatibility when neither override is set; new definitions win. */
 int fc_user_lib_dir(char *out, size_t cap);
 int fc_lib_load_user_dir(FcLib *lib); /* silent no-op when the directory is absent */
 const FcMacro *fc_lib_find(const FcLib *lib, const char *key);
