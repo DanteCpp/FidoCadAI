@@ -2,7 +2,7 @@
 
 A **dependency-free C11** interpreter for the [FidoCad](https://github.com/DarwinNE/FidoCadJ) drawing language (`.fcd` / `.fcl`). Built to be fast, embeddable, and **AI-centric**: every setting is a flag, env var, or config key, and the CLI speaks both human text and JSON so agents can read a drawing without a GUI.
 
-Reference implementations: `~/Projects/FidoCadJS` (TypeScript) and `~/Projects/FidoCadJ` (Java). Language spec: `FidoCadJS/FIDOSPECS.md`.
+Reference implementations: `~/Projects/fidocad/FidoCadJS` (TypeScript) and `~/Projects/fidocad/FidoCadJ` (Java). Language spec: `FidoCadJS/FIDOSPECS.md`.
 
 Builds and runs on **Linux and macOS** (Apple clang or gcc); CI runs `make test` and `make sanitize` on both.
 
@@ -20,7 +20,7 @@ Builds and runs on **Linux and macOS** (Apple clang or gcc); CI runs `make test`
 | GUI editor + agent session (`fcai-gui`, Qt6) | done |
 | Primitive diff (`fcai diff`) | done |
 
-Core parser/emitter is still libc + libm. Rendering vendors [stb](https://github.com/nothings/stb) (`stb_truetype`, `stb_image_write`) and Liberation fonts (`share/fonts/`) so TY text matches real Sans / Serif / Mono faces. See `THIRD_PARTY.md`.
+Core parser/emitter is still libc + libm. Rendering vendors [stb](https://github.com/nothings/stb) (`stb_truetype`, `stb_image_write`) and Liberation fonts (`share/fonts/`) so TY text matches real Sans / Serif / Mono faces. See [Third-party](#third-party).
 
 ## Build
 
@@ -383,3 +383,8 @@ tests/              fixtures + unit tests
 
 - In-place edit commands (`fcai add` / `move` / `set`) for agents
 - Netlist-ish queries
+
+## Third-party
+
+- `vendor/stb_truetype.h`, `vendor/stb_image_write.h` — [stb](https://github.com/nothings/stb) by Sean Barrett, public domain or MIT (your choice; terms at the end of each header).
+- `share/fonts/Liberation*.ttf` — [Liberation fonts](https://github.com/liberationfonts/liberation-fonts), Copyright (c) 2012 Red Hat, Inc., licensed under the [SIL Open Font License 1.1](https://openfontlicense.org). The OFL applies to the fonts only, not to FidoCadAI.
