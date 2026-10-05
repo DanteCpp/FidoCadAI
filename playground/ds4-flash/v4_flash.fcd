@@ -1,0 +1,225 @@
+[FIDOCAD]
+FJC L 10 65535 0.2
+FJC L 11 65280 0.2
+FJC L 12 16711935 0.2
+FJC L 13 16776960 0.2
+FJC L 14 16753920 0.2
+TY 150 20 12 9 0 0 0 * DeepSeek-V4-Flash Architecture
+TY 190 40 6 4 0 0 0 * Detailed Didactical Block Diagram (Matrix Multiplication Level)
+RP 100 80 250 100 10
+RV 100 80 250 100 0
+TY 110 85 4 3 0 0 0 * Input Tokens (Sequence)
+LI 175 100 175 120 0
+FCJ 2 0 3 1 0 0
+RP 100 120 250 140 11
+RV 100 120 250 140 0
+TY 110 125 4 3 0 0 0 * Token Embeddings
+LI 175 140 175 160 0
+FCJ 2 0 3 1 0 0
+RV 20 160 330 460 7
+FCJ 1 0
+TY 25 165 4 3 0 0 7 * Decoder Layer (Repeated N times)
+SA 175 170 0
+LI 175 160 175 180 0
+FCJ 2 0 3 1 0 0
+LI 175 170 40 170 0
+LI 40 170 40 250 0
+LI 40 250 100 250 0
+FCJ 2 0 3 1 0 0
+RP 100 180 250 220 12
+RV 100 180 250 220 0
+TY 110 185 4 3 0 0 0 * Hybrid Attention
+TY 110 195 3 2 0 0 0 * (CSA + HCA)
+TY 110 205 3 2 0 0 0 * See Zoom 1 -->
+LI 175 220 175 240 0
+FCJ 2 0 3 1 0 0
+RP 100 240 250 260 14
+RV 100 240 250 260 0
+TY 110 245 4 3 0 0 0 * mHC (Hyper-Connections)
+TY 110 253 3 2 0 0 0 * See Zoom 2 -->
+SA 175 270 0
+LI 175 260 175 280 0
+FCJ 2 0 3 1 0 0
+LI 175 270 40 270 0
+LI 40 270 40 430 0
+LI 40 430 100 430 0
+FCJ 2 0 3 1 0 0
+RP 100 280 250 400 14
+RV 100 280 250 400 0
+TY 105 285 4 3 0 0 0 * Mixture of Experts (MoE)
+TY 105 295 3 2 0 0 0 * See Zoom 3 -->
+RP 110 310 240 340 11
+RV 110 310 240 340 0
+TY 115 315 3 2 0 0 0 * 1 Shared Expert
+TY 115 325 3 2 0 0 0 * (FFN Dim: 2048)
+RP 110 350 240 390 11
+RV 110 350 240 390 0
+TY 115 355 3 2 0 0 0 * 256 Routed Experts
+TY 115 365 3 2 0 0 0 * (Top-6 Active / token)
+TY 115 375 3 2 0 0 0 * (FFN Dim: 2048 each)
+LI 175 400 175 420 0
+FCJ 2 0 3 1 0 0
+RP 100 420 250 440 14
+RV 100 420 250 440 0
+TY 110 425 4 3 0 0 0 * mHC (Hyper-Connections)
+LI 175 460 175 480 0
+FCJ 2 0 3 1 0 0
+RP 100 480 250 510 12
+RV 100 480 250 510 0
+TY 110 485 4 3 0 0 0 * RMSNorm & Linear Head
+TY 110 495 3 2 0 0 0 * (Vocab Size ~ 128K)
+LI 175 510 175 530 0
+FCJ 2 0 3 1 0 0
+RP 100 530 250 550 10
+RV 100 530 250 550 0
+TY 110 535 4 3 0 0 0 * Next Token Prediction
+RV 380 80 950 260 7
+FCJ 1 0
+TY 385 85 5 4 0 0 0 * Zoom 1: Hybrid Attention Algorithm
+TY 385 100 4 3 0 0 0 * DeepSeek-V4 compresses KV caches heavily to support 1M context windows.
+TY 450 120 4 3 0 0 0 * Queries (Q)
+TY 580 120 4 3 0 0 0 * Keys/Values (KV)
+LI 480 130 480 140 0
+FCJ 2 0 3 1 0 0
+LI 610 130 610 140 0
+FCJ 2 0 3 1 0 0
+RP 400 140 540 180 12
+RV 400 140 540 180 0
+TY 410 145 4 3 0 0 0 * Compressed Sparse
+TY 410 155 4 3 0 0 0 * Attention (CSA)
+TY 410 165 3 2 0 0 0 * Queries sparse indices
+RP 560 140 700 180 12
+RV 560 140 700 180 0
+TY 570 145 4 3 0 0 0 * Heavily Compressed
+TY 570 155 4 3 0 0 0 * Attention (HCA)
+TY 570 165 3 2 0 0 0 * Pools latent KV vectors
+LI 470 180 470 190 0
+LI 470 190 550 190 0
+LI 630 180 630 190 0
+LI 630 190 550 190 0
+LI 550 190 550 200 0
+FCJ 2 0 3 1 0 0
+SA 550 190 0
+RP 500 200 600 220 12
+RV 500 200 600 220 0
+TY 510 205 4 3 0 0 0 * Output Proj (O)
+LI 550 220 550 235 0
+FCJ 2 0 3 1 0 0
+TY 510 240 4 3 0 0 0 * Output to mHC
+TY 720 130 3 2 0 0 0 * Didactic Details:
+TY 720 145 3 2 0 0 0 * 1. Q, K, V are mapped from d_model (4096).
+TY 720 160 3 2 0 0 0 * 2. KV vectors are compressed to a single
+TY 720 175 3 2 0 0 0 * latent vector to save memory (HCA).
+TY 720 190 3 2 0 0 0 * 3. Q is augmented with RoPE and attends
+TY 720 205 3 2 0 0 0 * sparsely to the compressed KV (CSA).
+TY 720 220 3 2 0 0 0 * 4. This cuts KV cache by >75%, allowing
+TY 720 235 3 2 0 0 0 * 1 million token context lengths.
+RV 380 280 950 460 7
+FCJ 1 0
+TY 385 285 5 4 0 0 0 * Zoom 2: mHC (Manifold-Constrained Hyper-Connections)
+TY 385 300 4 3 0 0 0 * Replaces traditional X_out = X_in + Layer(X_in) to maintain stability.
+TY 450 320 4 3 0 0 0 * Residual Stream X_in
+LI 490 330 490 340 0
+SA 490 340 0
+LI 490 340 440 340 0
+LI 440 340 440 350 0
+FCJ 2 0 3 1 0 0
+LI 490 340 600 340 0
+LI 600 340 600 350 0
+FCJ 2 0 3 1 0 0
+RP 390 350 490 370 7
+RV 390 350 490 370 0
+TY 400 355 4 3 0 0 0 * Sub-Layer f(x)
+RP 520 350 670 370 13
+RV 520 350 670 370 0
+TY 530 355 4 3 0 0 0 * Hyper-Connection Matrix
+TY 530 365 3 2 0 0 0 * (Manifold Projection)
+LI 440 370 440 390 0
+LI 600 370 600 390 0
+LI 440 390 600 390 0
+LI 520 390 520 400 0
+FCJ 2 0 3 1 0 0
+SA 520 390 0
+EV 510 400 530 420 0
+LI 520 400 520 420 0
+LI 510 410 530 410 0
+LI 520 420 520 435 0
+FCJ 2 0 3 1 0 0
+TY 450 440 4 3 0 0 0 * X_out = Proj(X_in) + f(X_in)
+TY 700 330 3 2 0 0 0 * Didactic Details:
+TY 700 345 3 2 0 0 0 * 1. Deep MoEs suffer from signal collapse.
+TY 700 360 3 2 0 0 0 * 2. mHC mitigates this by passing the
+TY 700 375 3 2 0 0 0 * residual stream through a linear
+TY 700 390 3 2 0 0 0 * manifold projection matrix.
+TY 700 405 3 2 0 0 0 * 3. This scales down excessive norm growth
+TY 700 420 3 2 0 0 0 * without explicitly bounding capacity.
+RV 380 480 950 780 7
+FCJ 1 0
+TY 385 485 5 4 0 0 0 * Zoom 3: Mixture of Experts (Matrix Multiplication Level)
+TY 385 500 4 3 0 0 0 * Highly parallelized sparse matrix operations (284B total params, 13B active).
+TY 440 520 4 3 0 0 0 * Input X (Dim: 4096)
+LI 470 530 470 540 0
+SA 470 540 0
+LI 470 540 420 540 0
+LI 420 540 420 550 0
+FCJ 2 0 3 1 0 0
+LI 470 540 550 540 0
+LI 550 540 550 550 0
+FCJ 2 0 3 1 0 0
+TY 390 555 3 2 0 0 0 * Shared Expert (Always ON)
+RP 390 565 470 585 11
+RV 390 565 470 585 0
+TY 395 570 3 2 0 0 0 * W_gate, W_up (4096x2048)
+LI 430 585 430 595 0
+FCJ 2 0 3 1 0 0
+TY 395 600 3 2 0 0 0 * SiLU(X W_gate) * (X W_up)
+LI 430 610 430 620 0
+FCJ 2 0 3 1 0 0
+RP 390 620 470 640 11
+RV 390 620 470 640 0
+TY 395 625 3 2 0 0 0 * W_down (2048x4096)
+RP 520 550 600 570 14
+RV 520 550 600 570 0
+TY 525 555 3 2 0 0 0 * Router W_router
+TY 525 562 2 2 0 0 0 * (4096 x 256 experts)
+LI 550 570 550 580 0
+FCJ 2 0 3 1 0 0
+RP 520 580 600 600 14
+RV 520 580 600 600 0
+TY 525 585 3 2 0 0 0 * Softmax -> Top 6
+TY 525 592 2 2 0 0 0 * Yields Routing Weights g_i
+LI 550 600 550 610 0
+FCJ 2 0 3 1 0 0
+RP 500 610 650 670 11
+RV 500 610 650 670 0
+TY 505 615 3 2 0 0 0 * For i in Top-6 Active Experts:
+TY 505 625 3 2 0 0 0 * 1. H_i = SiLU(X W_gate_i) * (X W_up_i)
+TY 505 635 3 2 0 0 0 * where W \in (4096 x 2048)
+TY 505 645 3 2 0 0 0 * 2. Out_i = H_i W_down_i
+TY 505 655 3 2 0 0 0 * where W \in (2048 x 4096)
+LI 430 640 430 690 0
+LI 575 670 575 690 0
+LI 430 690 575 690 0
+LI 500 690 500 700 0
+FCJ 2 0 3 1 0 0
+SA 500 690 0
+EV 490 700 510 720 0
+LI 500 700 500 720 0
+LI 490 710 510 710 0
+TY 520 705 4 3 0 0 0 * Y = Shared + \sum (g_i * Out_i)
+LI 500 720 500 735 0
+FCJ 2 0 3 1 0 0
+TY 450 740 4 3 0 0 0 * Output to mHC 2
+TY 670 520 3 2 0 0 0 * Didactic Details (Matrix Level):
+TY 670 535 3 2 0 0 0 * 1. The input vector (dim 4096) is sent to a
+TY 670 550 3 2 0 0 0 * Shared Expert and a Top-K Router.
+TY 670 565 3 2 0 0 0 * 2. Router multiplies X by W_router to get
+TY 670 580 3 2 0 0 0 * 256 scores. Softmax picks the highest 6.
+TY 670 595 3 2 0 0 0 * 3. These 6 experts are loaded into VRAM.
+TY 670 610 3 2 0 0 0 * 4. Each expert uses SwiGLU: an up-proj
+TY 670 625 3 2 0 0 0 * and a gate-proj (4096x2048 each).
+TY 670 640 3 2 0 0 0 * They are multiplied element-wise.
+TY 670 655 3 2 0 0 0 * 5. Down-proj (2048x4096) maps it back.
+TY 670 670 3 2 0 0 0 * 6. The 6 outputs are weighted by the router
+TY 670 685 3 2 0 0 0 * scores (g_i) and added to the Shared
+TY 670 700 3 2 0 0 0 * Expert's output to form the final result.

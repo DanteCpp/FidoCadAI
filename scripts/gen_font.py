@@ -206,6 +206,6 @@ lines.append("static const int fc_stroke_extra_cp[] = { " + ", ".join(str(ord(c)
 lines.append("")
 lines.append("#endif")
 
-out = Path("/home/dante/Projects/FidoCadAI/src/font_stroke.h")
+out = Path("/Users/dante/Projects/fidocad/FidoCadAI/src/font_stroke.h")
 out.write_text("\n".join(lines) + "\n")
 print("wrote", out, "blob", len(blob), "glyphs", len(meta))
