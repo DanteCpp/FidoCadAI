@@ -26,15 +26,16 @@ Traditional EDA suites are heavy, closed, and full of friction. They store circu
 
 ## Live in Action: Session with Pi
 
-Watch an interactive session with **Pi** running `deepseek-v4.1-flash` inside the **Ghostty** terminal, assembling and refining an **inverting buck-boost converter** live:
+Watch a **real interactive Pi session**, under **15 seconds**, drawing a simple **buck converter** in `fcai-gui`. Pi runs `ollama-cloud/deepseek-v4.1-flash` in **Ghostty** on machy workspace 6:
 
-![Session with Pi in Ghostty creating a circuit live](docs/images/session_pi_demo.gif)
+![Real Pi session: type a buck converter request, select COUT in the GUI, and ask Pi to change it from 220u to 470u](docs/images/pi_buck_selection.gif)
 
-1. **Interactive Prompt:** `pi --model deepseek-v4.1-flash` in Ghostty with the request to draw a buck-boost converter.
-2. **Live Socket Connection:** Pi launches `fcai-gui` in the background with a synchronized session socket.
-3. **Step-by-Step Assembly:** Power rails, switching NMOS $Q_1$, inductor $L_1$, Schottky diode $D_1$, output filter $C_{OUT}$, load resistor $R_L$, and transfer formula appear in real time.
-4. **Voice / Interactive Feedback:** *"The gate wire is too long. Mount the PWM flag directly on the NMOS gate pin."*
-5. **Instant Refinement:** Pi reads the selection, removes the extraneous lead, mounts the PWM terminal directly on the gate pin, verifies geometry with `fcai validate`, and saves the finished circuit.
+1. **Type the Request:** *"Draw a simple 15 V to 12 V buck converter."* Each character is entered individually in the live agent.
+2. **Watch It Draw:** Pi builds the rails, switching MOSFET, freewheel diode, inductor, capacitors, and load in stages.
+3. **Select and Send:** Click **COUT** in the GUI and press **Return** to send the selected component to Pi.
+4. **Ask for a Change:** Type *"Set this capacitor to 470u."* Pi reads the selection, changes **COUT from 220u to 470u**, and saves it while keeping it highlighted.
+
+Typing plays at its recorded speed; agent work is accelerated and waiting periods are cut. The [drawing and symbol library](playground/buck-demo/) are included. Component values are illustrative.
 
 ---
 
