@@ -1,5 +1,6 @@
 /build/
 *.o
 *.png
+!docs/images/*.png
 *.ppm
 .cache/
