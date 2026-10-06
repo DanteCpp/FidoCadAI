@@ -56,7 +56,7 @@ Typing plays at its recorded speed; agent work is accelerated and waiting period
 
 ## Examples
 
-Schematics, PCB layouts, electrical distribution, architecture diagrams, and art drawn with `fcai`. Editable sources live in [`playground/`](playground/). Click an image to open the full-resolution render.
+Schematics, PCB layouts, home energy systems, and art drawn with `fcai`. Editable sources live in [`playground/`](playground/). Click an image to open the full-resolution render.
 
 | **Buck-Boost Schematic** | **Buck-Boost PCB Layout** |
 |:---:|:---:|
@@ -68,18 +68,21 @@ Schematics, PCB layouts, electrical distribution, architecture diagrams, and art
 | [![VCO-based ADC](docs/images/circuit_vco_adc.png)](docs/images/circuit_vco_adc.png?raw=true) | [![Capacitive SAR ADC](docs/images/circuit_cap_adc.png)](docs/images/circuit_cap_adc.png?raw=true) |
 | Modulator and current-starved ring oscillator. [FidoCad source](playground/vco-adc/vco_adc.fcd) | Binary-weighted capacitor array and SAR register. [FidoCad source](playground/cap-adc/cap_adc.fcd) |
 
-| **Single-Line Electrical Drawing** | **Enrico Fermi Portrait** |
-|:---:|:---:|
-| [![Single-line distribution drawing with meter, breakers, outgoing circuits, and protective earth](docs/images/example_unifilar.png)](docs/images/example_unifilar.png?raw=true) | [![Enrico Fermi drawn with FidoCad vector outlines and cross-hatching](docs/images/example_enrico_fermi.png)](docs/images/example_enrico_fermi.png?raw=true) |
-| A unifilar distribution diagram using electrical symbols. [Drawing and notes](playground/unifilar/) | Editable line art and cross-hatching. [Drawing and photo reference](playground/enrico-fermi/) |
+**Solar + Storage House — Single-Line Drawing**
 
-**DeepSeek-V4 Architecture**
+Rooftop solar, battery accumulation, a hybrid inverter, grid metering, protected house circuits, and heat-pump heating. The energy manager coordinates PV surplus, battery limits, room temperature, and hot-water demand.
 
-A readable crop of the decoder layer is shown below. Open it to view the complete diagram, including the attention, hyper-connection, and expert detail panels.
+[![Dark-mode fcai-gui screenshot of a house with solar PV, battery storage, hybrid inverter, heat pump, thermal storage, and energy management](docs/images/example_unifilar.png)](docs/images/example_unifilar.png?raw=true)
 
-[![DeepSeek-V4 decoder layer detail](docs/images/deepseek_decoder_detail.png)](docs/images/circuit_ds4_flash.png?raw=true)
+[Editable drawing and symbol library](playground/unifilar/) · Blue: AC power · Gold: PV DC · Green: battery / PE · Violet dashes: logical controls · Orange: thermal flow
 
-[Full-resolution diagram](docs/images/circuit_ds4_flash.png?raw=true) · [FidoCad source](playground/ds4-flash/v4_flash.fcd)
+**Enrico Fermi Portrait**
+
+<p align="center">
+  <a href="docs/images/example_enrico_fermi.png?raw=true"><img src="docs/images/example_enrico_fermi.png" width="480" alt="Enrico Fermi portrait in dark-mode fcai-gui, drawn with editable outlines and cross-hatching"></a>
+</p>
+
+[Editable artwork and reference photograph](playground/enrico-fermi/)
 
 ---
 
