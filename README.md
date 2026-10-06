@@ -54,24 +54,32 @@ Typing plays at its recorded speed; agent work is accelerated and waiting period
 
 ---
 
-## Built in the Playground
+## Examples
 
-Real circuits designed, iterated, and verified with AI in the [`playground/`](file:///Users/dante/Projects/fidocad/FidoCadAI/playground):
+Schematics, PCB layouts, electrical distribution, architecture diagrams, and art drawn with `fcai`. Editable sources live in [`playground/`](playground/). Click an image to open the full-resolution render.
 
-| **130 nm PMOS Differential Pair** (`playground/diff-pair`) | **Inverting Buck-Boost Converter** (`playground/buck-boost`) |
+| **Buck-Boost Schematic** | **Buck-Boost PCB Layout** |
 |:---:|:---:|
-| [![130nm PMOS Differential Pair](docs/images/circuit_diffpair.png)](file:///Users/dante/Projects/fidocad/FidoCadAI/playground/diff-pair/pmos_diffpair_130nm.fcd) | [![Buck-Boost Schematic](docs/images/circuit_buck_boost.png)](file:///Users/dante/Projects/fidocad/FidoCadAI/playground/buck-boost/buck_boost.fcd) |
-| *Active current-mirror bias, source degeneration, and native LaTeX math labels ($V_{DD}, V_{bias}, g_m, V_{out}$).* | *Clean power-stage topology with consistent lead lengths and verified junction dots.* |
+| [![Inverting buck-boost schematic](docs/images/circuit_buck_boost.png)](docs/images/circuit_buck_boost.png?raw=true) | [![Two-layer buck-boost PCB layout](docs/images/circuit_buck_boost_pcb.png)](docs/images/circuit_buck_boost_pcb.png?raw=true) |
+| Power-stage topology and component labels. [FidoCad source](playground/buck-boost/buck_boost.fcd) | Copper tracks, pads, and silkscreen. [FidoCad source](playground/buck-boost/buck_boost_pcb.fcd) |
 
-| **Buck-Boost 2-Layer PCB Layout** (`playground/buck-boost`) | **2nd-Order VCO-Based Sigma-Delta ADC** (`playground/vco-adc`) |
+| **VCO-Based Sigma-Delta ADC** | **Capacitive SAR ADC** |
 |:---:|:---:|
-| [![Buck-Boost PCB Layout](docs/images/circuit_buck_boost_pcb.png)](file:///Users/dante/Projects/fidocad/FidoCadAI/playground/buck-boost/buck_boost_pcb.fcd) | [![VCO ADC](docs/images/circuit_vco_adc.png)](file:///Users/dante/Projects/fidocad/FidoCadAI/playground/vco-adc/vco_adc.fcd) |
-| *PCB tracks, solder pads, thermal reliefs, and silkscreen footprints.* | *System-level modulator block diagram + transistor-level 3-stage current-starved ring oscillator.* |
+| [![VCO-based ADC](docs/images/circuit_vco_adc.png)](docs/images/circuit_vco_adc.png?raw=true) | [![Capacitive SAR ADC](docs/images/circuit_cap_adc.png)](docs/images/circuit_cap_adc.png?raw=true) |
+| Modulator and current-starved ring oscillator. [FidoCad source](playground/vco-adc/vco_adc.fcd) | Binary-weighted capacitor array and SAR register. [FidoCad source](playground/cap-adc/cap_adc.fcd) |
 
-| **5-Bit Capacitive SAR ADC** (`playground/cap-adc`) | **DeepSeek-V4 Neural Architecture** (`playground/ds4-flash`) |
+| **Single-Line Electrical Drawing** | **Enrico Fermi Portrait** |
 |:---:|:---:|
-| [![Capacitive SAR ADC](docs/images/circuit_cap_adc.png)](file:///Users/dante/Projects/fidocad/FidoCadAI/playground/cap-adc/cap_adc.fcd) | [![Neural Architecture Diagram](playground/ds4-flash/v4_flash.png)](file:///Users/dante/Projects/fidocad/FidoCadAI/playground/ds4-flash/v4_flash.fcd) |
-| *Binary-weighted capacitor array, custom CMOS switch macros, and SAR register.* | *Hierarchical machine-learning block diagram with matrix-multiplication callouts.* |
+| [![Single-line distribution drawing with meter, breakers, outgoing circuits, and protective earth](docs/images/example_unifilar.png)](docs/images/example_unifilar.png?raw=true) | [![Enrico Fermi drawn with FidoCad vector outlines and cross-hatching](docs/images/example_enrico_fermi.png)](docs/images/example_enrico_fermi.png?raw=true) |
+| A unifilar distribution diagram using electrical symbols. [Drawing and notes](playground/unifilar/) | Editable line art and cross-hatching. [Drawing and photo reference](playground/enrico-fermi/) |
+
+**DeepSeek-V4 Architecture**
+
+A readable crop of the decoder layer is shown below. Open it to view the complete diagram, including the attention, hyper-connection, and expert detail panels.
+
+[![DeepSeek-V4 decoder layer detail](docs/images/deepseek_decoder_detail.png)](docs/images/circuit_ds4_flash.png?raw=true)
+
+[Full-resolution diagram](docs/images/circuit_ds4_flash.png?raw=true) · [FidoCad source](playground/ds4-flash/v4_flash.fcd)
 
 ---
 
