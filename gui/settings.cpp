@@ -4,8 +4,10 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QImageReader>
 #include <QRegularExpression>
 #include <QTextStream>
+#include <cmath>
 
 namespace {
 
@@ -22,6 +24,12 @@ const Knob kKnobs[] = {
     {"filled", "0", "new rectangles/ellipses are filled (0/1)"},
     {"theme", "omarchy", "omarchy | light | dark"},
     {"paper", "theme", "canvas colour: theme | white | #RRGGBB"},
+    {"bg_image", "", "picture under the drawing for tracing; view only, never saved in the .fcd (path, empty = none)"},
+    {"bg_image_x", "0", "left edge of the picture in FidoCad units"},
+    {"bg_image_y", "0", "top edge of the picture in FidoCad units"},
+    {"bg_image_width", "0", "picture width in FidoCad units, height keeps the aspect (0 = 1 unit per pixel)"},
+    {"bg_image_opacity", "50", "picture opacity in percent (0-100)"},
+    {"show_bg_image", "1", "show the picture (0/1, H)"},
     {"font", "", "UI font family (empty = Omarchy/monospace)"},
     {"font_size", "11", "UI font size in points"},
     {"tex", "1", "typeset $...$ LaTeX in text (0/1)"},
@@ -34,7 +42,7 @@ const Knob kKnobs[] = {
 
 bool isBool(const QString &k) {
     return k == "snap" || k == "show_grid" || k == "filled" || k == "tex" || k == "palette" ||
-           k == "statusbar" || k == "float" || k == "autosave";
+           k == "statusbar" || k == "float" || k == "autosave" || k == "show_bg_image";
 }
 
 QString normBool(const QString &v, bool *ok) {
@@ -44,6 +52,13 @@ QString normBool(const QString &v, bool *ok) {
     if (s == "0" || s == "false" || s == "off" || s == "no") return "0";
     *ok = false;
     return v;
+}
+
+/* Relative paths in the settings file are relative to that file's folder. */
+QString resolvePath(const QString &settings_path, QString v) {
+    if (v.isEmpty()) return v;
+    if (v == "~" || v.startsWith("~/")) v = QDir::homePath() + v.mid(1);
+    return QDir(QFileInfo(settings_path).absolutePath()).absoluteFilePath(v);
 }
 
 QString defaultPath() {
@@ -89,6 +104,9 @@ bool Settings::save() const {
 QString Settings::get(const QString &key) const { return values_.value(key); }
 int Settings::getInt(const QString &key) const { return values_.value(key).toInt(); }
 bool Settings::getBool(const QString &key) const { return values_.value(key) == "1"; }
+double Settings::getDouble(const QString &key) const { return values_.value(key).toDouble(); }
+
+QString Settings::filePath(const QString &key) const { return resolvePath(path_, values_.value(key)); }
 
 QString Settings::set(const QString &key, const QString &value) {
     QString k = key.trimmed().toLower(), v = value.trimmed();
@@ -117,6 +135,19 @@ QString Settings::set(const QString &key, const QString &value) {
         v = v.toLower();
         if (v != "theme" && v != "white" && !QColor::isValidColorName(v))
             return "paper must be theme, white or a colour like #ffffff";
+    } else if (k == "bg_image") {
+        QString path = resolvePath(path_, v);
+        if (!v.isEmpty() && !QImageReader(path).canRead())
+            return QString("bg_image: cannot read a picture at %1").arg(path);
+    } else if (k == "bg_image_x" || k == "bg_image_y" || k == "bg_image_width") {
+        bool ok;
+        double d = v.toDouble(&ok);
+        if (!ok || !std::isfinite(d) || std::fabs(d) > 1e6) return QString("%1 must be a number").arg(k);
+        if (k == "bg_image_width" && d < 0) return "bg_image_width must be 0 or more";
+    } else if (k == "bg_image_opacity") {
+        bool ok;
+        int o = v.toInt(&ok);
+        if (!ok || o < 0 || o > 100) return "bg_image_opacity must be 0..100";
     } else if (k == "window_size") {
         static const QRegularExpression re("^([1-9][0-9]?|100)%$|^[0-9]{3,5}x[0-9]{3,5}$");
         v = v.toLower();

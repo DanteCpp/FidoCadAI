@@ -3,6 +3,8 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QFileInfo>
+#include <QImageReader>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QMouseEvent>
@@ -53,6 +55,7 @@ Canvas::Canvas(Document *doc, Settings *settings, const Theme *theme, QWidget *p
     setFocusPolicy(Qt::StrongFocus);
     setAttribute(Qt::WA_OpaquePaintEvent);
     setMinimumSize(320, 240);
+    loadBackground();
     cheats_bar_ = new QScrollBar(Qt::Vertical, this);
     cheats_bar_->setObjectName("cheatsheetScrollBar");
     cheats_bar_->setFocusPolicy(Qt::NoFocus);
@@ -147,8 +150,11 @@ void Canvas::selectAll() {
 }
 
 void Canvas::fit() {
-    QRectF b = doc_->boundsAll();
-    if (doc_->count() == 0) b = QRectF(0, 0, 200, 150);
+    QRectF b = doc_->boundsAll(), pic = backgroundRect();
+    if (doc_->count() == 0) b = pic.isEmpty() ? QRectF(0, 0, 200, 150) : pic;
+    else if (!pic.isEmpty()) /* not united(): that drops a zero-size drawing */
+        b = QRectF(QPointF(std::min(b.left(), pic.left()), std::min(b.top(), pic.top())),
+                   QPointF(std::max(b.right(), pic.right()), std::max(b.bottom(), pic.bottom())));
     b.adjust(-10, -10, 10, 10);
     double sx = width() / std::max(b.width(), 1.0), sy = height() / std::max(b.height(), 1.0);
     /* Fit must also contain drawings larger than the manual zoom range. */
@@ -190,6 +196,7 @@ void Canvas::fitIfOutside() {
 }
 
 void Canvas::refresh() {
+    loadBackground();
     dirty_ = true;
     status();
     update();
@@ -228,9 +235,42 @@ void Canvas::renderCache() {
     QColor gc = paper().lightnessF() < 0.5 ? theme_->muted : QColor(190, 190, 200);
     v.grid_rgb = toRgb(gc);
     v.tex = settings_->getBool("tex");
+    QRectF pic = backgroundRect();
+    if (!pic.isEmpty()) {
+        /* paper, then the tracing picture, then grid and drawing on top */
+        cache_.fill(paper());
+        QPainter p(&cache_);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        p.setOpacity(std::clamp(settings_->getInt("bg_image_opacity"), 0, 100) / 100.0);
+        p.drawImage(QRectF(toPixel(pic.topLeft()), toPixel(pic.bottomRight())), bg_img_);
+        v.keep_bg = 1;
+    }
     FcDrawing pv = paperView(doc_->drawing(), paper(), theme_->fg);
     fc_render_rgb(&pv, doc_->lib(), &v, cache_.bits(), w, h, (int)cache_.bytesPerLine());
     dirty_ = false;
+}
+
+void Canvas::loadBackground() {
+    QString path = settings_->filePath("bg_image");
+    QDateTime mtime = path.isEmpty() ? QDateTime() : QFileInfo(path).lastModified();
+    if (path == bg_path_ && mtime == bg_mtime_) return;
+    bg_path_ = path;
+    bg_mtime_ = mtime;
+    bg_img_ = QImage();
+    bg_error_.clear();
+    if (path.isEmpty()) return;
+    QImageReader reader(path);
+    reader.setAutoTransform(true); /* phone photos: honour the EXIF rotation */
+    bg_img_ = reader.read().convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    if (bg_img_.isNull()) bg_error_ = QString("cannot read bg_image %1: %2").arg(path, reader.errorString());
+}
+
+QRectF Canvas::backgroundRect() const {
+    if (bg_img_.isNull() || !settings_->getBool("show_bg_image")) return QRectF();
+    double w = settings_->getDouble("bg_image_width");
+    if (w <= 0) w = bg_img_.width();
+    return QRectF(settings_->getDouble("bg_image_x"), settings_->getDouble("bg_image_y"), w,
+                  w * bg_img_.height() / bg_img_.width());
 }
 
 QImage Canvas::renderImage(int w, int h) const {
@@ -527,7 +567,8 @@ void Canvas::paintEvent(QPaintEvent *) {
             {"pinch", "zoom at the fingers (touchpad)"},
             {"+ / =", "zoom in"},
             {"-", "zoom out"},
-            {"0 / Space", "fit the drawing in the window"},
+            {"0 / Space", "fit the drawing (and tracing picture) in the window"},
+            {"H", "tracing picture on/off (bg_image setting)"},
             {"right-drag", "ruler: length, mm and angle"},
             {"Shift+drag", "ruler — works from any tool"},
             {"Ctrl+S", "save"},
@@ -1115,6 +1156,7 @@ void Canvas::keyPressEvent(QKeyEvent *e) {
         case Qt::Key_BracketRight: cycleLayer(1); return;
         case Qt::Key_F: flipSetting("filled"); return;
         case Qt::Key_G: flipSetting(shift ? "snap" : "show_grid"); return;
+        case Qt::Key_H: flipSetting("show_bg_image"); return;
         case Qt::Key_0: fit(); return;
         case Qt::Key_Space: fit(); return;
         case Qt::Key_Plus:

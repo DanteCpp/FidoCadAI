@@ -19,6 +19,9 @@ public:
     QString get(const QString &key) const;
     int getInt(const QString &key) const;
     bool getBool(const QString &key) const;
+    double getDouble(const QString &key) const;
+    /* A path-valued knob: relative to the settings file's folder, ~/ is home. */
+    QString filePath(const QString &key) const;
     /* Returns an error message, empty on success. */
     QString set(const QString &key, const QString &value);
     QStringList keys() const;

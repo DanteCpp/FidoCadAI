@@ -229,6 +229,7 @@ typedef struct {
     int grid_major;    /* emphasise every Nth grid dot, 0 = none */
     uint32_t grid_rgb;
     int tex;
+    int keep_bg;       /* 1 = draw over the caller's pixels (e.g. a tracing picture), no bg fill */
 } FcView;
 
 /* --- arena / IO --- */

@@ -96,6 +96,8 @@ test: build/test_core build/fcai
 	@d=$$(mktemp -d); \
 	  ./build/fcai session set $$d grid 10 && \
 	  grep -q '"key":"grid"' $$d/commands.jsonl && \
+	  ./build/fcai session set $$d bg_image photo.jpg && \
+	  grep -q "\"value\":\"$$(pwd -P)/photo.jpg\"" $$d/commands.jsonl && \
 	  printf '[FIDOCAD]\n' | ./build/fcai session push $$d - && \
 	  grep -q '"cmd":"push"' $$d/commands.jsonl && \
 	  ./build/fcai session ack $$d "got it" && \

@@ -48,8 +48,9 @@ Typing plays at its recorded speed; agent work is accelerated and waiting period
 * **Symbol Library Sidebar (`Ctrl+B`):** Search and browse standard and custom symbol libraries with instant macro preview.
 * **Keybindings Cheatsheet (`K`):** Searchable overlay covering every tool and shortcut (`Esc` closes).
 * **Precision Ruler (`Shift+drag` or `Right-drag`):** Live measurement line with ticks showing distance in logical units, millimeters, and angle.
+* **Tracing Picture (`H`):** Show a photo or scan under the drawing and trace over it (`fcai session set DIR bg_image photo.jpg`, plus `bg_image_x`, `bg_image_y`, `bg_image_width` and `bg_image_opacity`). It is view-only and never saved in the `.fcd`.
 * **Smart Label Handles:** Component names and values have independent handles. Move labels anywhere without moving the symbol body.
-* **Single-Key Tools:** `S` select · `L` line · `B` rectangle · `E` ellipse · `J` connection dot · `T` text · `R` rotate · `M` mirror · `Space` fit-to-view · `Return` send to agent · `Ctrl+Return` save & finish.
+* **Single-Key Tools:** `S` select · `L` line · `B` rectangle · `E` ellipse · `J` connection dot · `T` text · `R` rotate · `M` mirror · `H` tracing picture · `Space` fit-to-view · `Return` send to agent · `Ctrl+Return` save & finish.
 * **Desktop Integration:** Seamlessly follows your system dark/light theme, font, and window tiling.
 
 ---

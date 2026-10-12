@@ -741,6 +741,8 @@ static void session_usage(void) {
           stderr);
 }
 
+static void make_abs(char *path, size_t cap);
+
 static int cmd_session(int argc, char **argv) {
     const char *sub = argc > 1 ? argv[1] : NULL, *dir;
     const char *args[3], *base = NULL;
@@ -792,8 +794,17 @@ static int cmd_session(int argc, char **argv) {
             fc_buf_puts(&b, ",\"base\":"); fc_json_escape(&b, content); free(content);
         }
     } else if (fc_streq(sub, "set") && nargs == 2) {
+        const char *value = args[1];
+        char pic[4096];
+        /* the GUI resolves relative paths from its config folder, not our cwd */
+        if (fc_streq(args[0], "bg_image") && value[0] && value[0] != '/' && value[0] != '~' &&
+            strlen(value) < sizeof pic) {
+            snprintf(pic, sizeof pic, "%s", value);
+            make_abs(pic, sizeof pic);
+            value = pic;
+        }
         fc_buf_puts(&b, ",\"key\":"); fc_json_escape(&b, args[0]);
-        fc_buf_puts(&b, ",\"value\":"); fc_json_escape(&b, args[1]);
+        fc_buf_puts(&b, ",\"value\":"); fc_json_escape(&b, value);
     } else if (fc_streq(sub, "ack") && nargs <= 1) {
         fc_buf_puts(&b, ",\"text\":"); fc_json_escape(&b, nargs ? args[0] : "");
     } else if (!nargs && (fc_streq(sub, "get") || fc_streq(sub, "quit") ||

@@ -4,6 +4,7 @@
 #include "settings.h"
 #include "theme.h"
 
+#include <QDateTime>
 #include <QImage>
 #include <QPointF>
 #include <QWidget>
@@ -30,6 +31,7 @@ public:
 
     void fit();
     void fitIfOutside(); /* keep agent updates visible without moving an already-fitting view */
+    bool autoFit() const { return auto_fit_; } /* no manual pan or zoom since the last fit */
     void zoomBy(double factor, QPointF at);
     void refresh(); /* settings/theme changed */
     void docChanged();
@@ -57,6 +59,9 @@ public:
     QImage renderImage(int w, int h) const; /* whole drawing, for vision models */
     QPointF toPixel(QPointF lg) const;     /* logical -> widget coordinates */
     QColor paper() const;                  /* canvas background (palette preview uses it) */
+    /* Tracing picture (bg_image): view only, never part of the drawing. */
+    QRectF backgroundRect() const; /* logical units; empty when unset or hidden */
+    QString backgroundError() const { return bg_error_; }
 
     std::function<void()> onSelectionChanged;
     std::function<void()> onToolChanged;
@@ -85,6 +90,7 @@ private:
     int layer() const;
     QColor layerColor(int l) const; /* layer ink, adapted for dark paper */
     void renderCache();
+    void loadBackground(); /* re-reads bg_image when its path or file changed */
     void finishLine();
     void cancelOp();
     void status();
@@ -114,6 +120,9 @@ private:
     bool auto_fit_ = true; /* follow canvas resizes until the user pans or zooms */
     QImage cache_;
     bool dirty_ = true;
+    QImage bg_img_;
+    QString bg_path_, bg_error_;
+    QDateTime bg_mtime_;
 
     enum Op { None, Panning, Moving, Resizing, Banding, Drawing, RulerArmed } op_ = None;
     QPointF press_px_, press_lg_, cursor_lg_, moved_;

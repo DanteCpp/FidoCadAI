@@ -378,8 +378,28 @@ Create a library:
 
 The GUI reads `$XDG_CONFIG_HOME/fidocad/gui.conf`; change values live with
 `fcai session set DIR key value`. Knobs include: `grid`, `snap`, `show_grid`,
-`layer`, `filled`, `theme` (omarchy|light|dark), `paper`, `font`, `font_size`,
-`tex`, `palette`, `statusbar`, `float`, `window_size`, `autosave`.
+`layer`, `filled`, `theme` (omarchy|light|dark), `paper`, `bg_image`,
+`bg_image_x`, `bg_image_y`, `bg_image_width`, `bg_image_opacity`,
+`show_bg_image`, `font`, `font_size`, `tex`, `palette`, `statusbar`, `float`,
+`window_size`, `autosave`.
+
+### Tracing picture
+
+To draw over a photo, scan or datasheet figure, show it under the drawing:
+
+```bash
+fcai session set DIR bg_image photo.jpg      # relative to your cwd; "" clears it
+fcai session set DIR bg_image_x 0            # top-left corner, FidoCad units
+fcai session set DIR bg_image_y 0
+fcai session set DIR bg_image_width 400      # height keeps the aspect; 0 = 1 unit/pixel
+fcai session set DIR bg_image_opacity 40     # percent
+```
+
+The picture is view-only: it is never written to the `.fcd`, and `fcai render`
+and `session get` do not include it, so look at the image file itself when you
+need its content. `H` hides or shows it, and Space fits drawing and picture. It
+is a GUI setting, so clear it when the tracing is done or it appears under the
+next drawing too.
 
 ## Verifying your work
 

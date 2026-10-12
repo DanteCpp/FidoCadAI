@@ -461,6 +461,10 @@ void MainWindow::settingChanged(const QString &key) {
         doc_->setGrid(settings_->getInt("grid"));
     }
     canvas_->refresh();
+    if (key == "bg_image") {
+        if (!canvas_->backgroundError().isEmpty()) report(canvas_->backgroundError());
+        else if (canvas_->autoFit()) canvas_->fit(); /* bring a new picture into view */
+    }
 }
 
 void MainWindow::docChanged() {

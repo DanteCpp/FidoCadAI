@@ -118,6 +118,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "fcai-gui: session: %s\n", qPrintable(sessionDir));
 
     MainWindow win(&doc, &settings, &theme, &app, sessionDir);
+    if (!win.canvas()->backgroundError().isEmpty())
+        fprintf(stderr, "fcai-gui: %s\n", qPrintable(win.canvas()->backgroundError()));
     if (cli.isSet(titleOpt)) win.setAgentTitle(cli.value(titleOpt));
 
     win.onFinished = [&app] { app.quit(); };

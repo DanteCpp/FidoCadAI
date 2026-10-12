@@ -740,6 +740,27 @@ static void test_dash_scale_and_crop(void) {
 
 /* Zooming in small steps must grow text steadily: no glyph snaps backwards
  * and the ink centroid never jumps (rounded advances used to move it ~9 px). */
+/* keep_bg draws over the caller's pixels (the GUI's tracing picture). */
+static void test_keep_bg(void) {
+    FcDrawing d;
+    FcView v = {0};
+    uint8_t pixels[100 * 20 * 3];
+    fc_drawing_init(&d);
+    fc_parse(&d, "LI 0 10 80 10 0\n", 0);
+    v.bg = 0xFFFFFF;
+    v.scale = 1;
+    memset(pixels, 0x40, sizeof pixels);
+    v.keep_bg = 1;
+    EXPECT(fc_render_rgb(&d, NULL, &v, pixels, 100, 20, 100 * 3) == FC_OK);
+    EXPECT(pixels[(2 * 100 + 50) * 3] == 0x40);  /* untouched */
+    EXPECT(pixels[(10 * 100 + 40) * 3] == 0);    /* ink on top */
+    EXPECT(pixels[(10 * 100 + 90) * 3] == 0x40); /* past the line's end */
+    v.keep_bg = 0;
+    EXPECT(fc_render_rgb(&d, NULL, &v, pixels, 100, 20, 100 * 3) == FC_OK);
+    EXPECT(pixels[(2 * 100 + 50) * 3] == 255);
+    fc_drawing_free(&d);
+}
+
 static void test_text_zoom_smooth(void) {
     FcDrawing d;
     FcView v = {0};
@@ -920,6 +941,7 @@ int main(int argc, char **argv) {
     test_fmt_num();
     test_stdlib_and_expand();
     test_render_png();
+    test_keep_bg();
     test_json_and_describe();
     test_tex();
     test_full_pattern_file();

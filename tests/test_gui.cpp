@@ -343,6 +343,82 @@ static void test_grouped_handles(const char *argv0) {
 }
 
 /* touchpad: pinch zooms about the fingers, two-finger scroll / swipe pans */
+/* bg_image: a tracing picture under the drawing, view only. */
+static void test_background_image(const char *argv0) {
+    QTemporaryDir tmp;
+    QImage red(40, 20, QImage::Format_RGB32);
+    red.fill(Qt::red);
+    EXPECT(red.save(tmp.path() + "/pic.png"));
+    Settings settings(tmp.path() + "/gui.conf");
+    EXPECT(settings.set("paper", "white").isEmpty());
+    EXPECT(settings.set("show_grid", "0").isEmpty());
+    EXPECT(!settings.set("bg_image", "missing.png").isEmpty());
+    EXPECT(settings.get("bg_image").isEmpty());
+    EXPECT(!settings.set("bg_image_opacity", "120").isEmpty());
+    EXPECT(!settings.set("bg_image_width", "-5").isEmpty());
+    EXPECT(!settings.set("bg_image_x", "left").isEmpty());
+    EXPECT(settings.set("bg_image", "pic.png").isEmpty()); /* relative to gui.conf */
+    EXPECT(settings.filePath("bg_image") == tmp.path() + "/pic.png");
+    EXPECT(settings.set("bg_image_x", "20").isEmpty());
+    EXPECT(settings.set("bg_image_y", "10").isEmpty());
+    EXPECT(settings.set("bg_image_width", "80").isEmpty());
+    EXPECT(settings.set("bg_image_opacity", "100").isEmpty());
+
+    Theme theme = Theme::load("light");
+    Document doc;
+    doc.loadLibraries(false, {}, {}, argv0);
+    EXPECT(doc.openText("[FIDOCAD]\nLI 30 20 90 20 0\n"));
+    const QByteArray fcd = doc.fcd();
+    Canvas c(&doc, &settings, &theme);
+    c.resize(800, 600);
+    c.show();
+    c.fit();
+    QTest::qWait(20);
+    auto at = [&](double x, double y) {
+        return c.grab().toImage().pixelColor(c.toPixel(QPointF(x, y)).toPoint());
+    };
+    EXPECT(c.backgroundError().isEmpty());
+    EXPECT(c.backgroundRect() == QRectF(20, 10, 80, 40)); /* height keeps the aspect */
+    EXPECT(QRectF(c.rect()).contains(c.toPixel(QPointF(20, 10)))); /* fit shows it all */
+    EXPECT(QRectF(c.rect()).contains(c.toPixel(QPointF(100, 50))));
+    EXPECT(at(60, 40) == QColor(Qt::red));
+    EXPECT(at(60, 20) != QColor(Qt::red)); /* ink on top of the picture */
+    EXPECT(at(104, 30) == QColor(Qt::white));
+    c.zoomBy(2, c.toPixel(QPointF(60, 35)));
+    EXPECT(at(60, 40) == QColor(Qt::red));
+    EXPECT(at(60, 20) != QColor(Qt::red));
+
+    EXPECT(settings.set("bg_image_opacity", "50").isEmpty());
+    c.refresh();
+    EXPECT(at(60, 40).red() == 255 && std::abs(at(60, 40).green() - 128) <= 3);
+
+    QTest::keyClick(&c, Qt::Key_H);
+    EXPECT(!settings.getBool("show_bg_image"));
+    EXPECT(c.backgroundRect().isEmpty());
+    EXPECT(at(60, 40) == QColor(Qt::white));
+    QTest::keyClick(&c, Qt::Key_H);
+    EXPECT(at(60, 40) != QColor(Qt::white));
+
+    /* never part of the drawing: not in the .fcd, not in the agent's render */
+    EXPECT(doc.fcd() == fcd);
+    QString err;
+    EXPECT(doc.saveAs(tmp.path() + "/traced.fcd", &err));
+    EXPECT(!readAll(tmp.path() + "/traced.fcd").contains("IMG"));
+    QImage agent = c.renderImage(200, 100);
+    bool any_red = false;
+    for (int y = 0; y < agent.height(); y++)
+        for (int x = 0; x < agent.width(); x++) {
+            QColor k = agent.pixelColor(x, y);
+            if (k.red() > 200 && k.green() < 200) any_red = true;
+        }
+    EXPECT(!any_red);
+
+    EXPECT(settings.set("bg_image", "").isEmpty());
+    c.refresh();
+    EXPECT(c.backgroundRect().isEmpty());
+    EXPECT(at(60, 40) == QColor(Qt::white));
+}
+
 static void test_touchpad_gestures(const char *argv0) {
     QTemporaryDir tmp;
     Settings settings(tmp.path() + "/gui.conf");
@@ -388,6 +464,7 @@ int main(int argc, char **argv) {
     test_label_handles(argv[0]);
     test_grouped_handles(argv[0]);
     test_touchpad_gestures(argv[0]);
+    test_background_image(argv[0]);
     test_session_feedback(app, argv[0]);
     QTemporaryDir tmp;
     QString fcd = tmp.path() + "/t.fcd";

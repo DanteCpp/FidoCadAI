@@ -910,7 +910,7 @@ int fc_render_rgb(const FcDrawing *d, const FcLib *lib, const FcView *v, uint8_t
     r.scale = v->scale;
     r.tex = v->tex;
     r.dash_phase = 0;
-    fill_bg(&r, v->bg);
+    if (!v->keep_bg) fill_bg(&r, v->bg);
     if (v->grid > 0 && v->grid * v->scale >= 4) {
         double step = v->grid * v->scale;
         int big = v->grid_major > 0 ? v->grid_major : 0;
