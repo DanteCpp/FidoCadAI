@@ -58,7 +58,7 @@ private:
     void docChanged();
     void updateTitle();
     void updateInfo(const QString &s);
-    bool save(const QString &what = QString());
+    bool save();
     void done(const QString &note);
     /* Live feedback: user edits and selection changes reach the agent as a
      * debounced `change` event; agent commands and disk reloads do not. */

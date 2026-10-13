@@ -462,24 +462,18 @@ void MainWindow::docChanged() {
     updateTitle();
 }
 
-bool MainWindow::save(const QString &what) {
-    QString label = what.isEmpty() ? QString() : what + " ";
+bool MainWindow::save() {
+    QString err;
     if (doc_->path().isEmpty()) {
         QString p = QFileDialog::getSaveFileName(this, "Save drawing", QString(), "FidoCad (*.fcd)");
         if (p.isEmpty()) return false;
-        QString err;
         if (!doc_->saveAs(p, &err)) {
-            report(label + "save failed: " + err);
+            report("save failed: " + err);
             return false;
         }
-        watchFile();
-    } else {
-        QString err;
-        bool ok = doc_->save(&err);
-        if (!ok) {
-            report(label + "save failed: " + err);
-            return false;
-        }
+    } else if (!doc_->save(&err)) {
+        report("save failed: " + err);
+        return false;
     }
     watchFile();
     updateTitle();

@@ -22,8 +22,6 @@ public:
     /* Returns an error message, empty on success. */
     QString set(const QString &key, const QString &value);
     QStringList keys() const;
-    QString describe(const QString &key) const;
-    QString dump(bool with_help) const;
 
 private:
     QString path_;

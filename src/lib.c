@@ -90,11 +90,6 @@ static FcMacro *lib_upsert(FcLib *lib, const char *key) {
     return m;
 }
 
-static int is_blankish(const char *s) {
-    size_t n = fc_strlen(s);
-    return n <= 1;
-}
-
 int fc_lib_load_text(FcLib *lib, const char *text, size_t len, const char *prefix) {
     const char *p, *end;
     char *line = NULL;
@@ -140,8 +135,7 @@ int fc_lib_load_text(FcLib *lib, const char *text, size_t len, const char *prefi
             while (z > a && (z[-1] == ' ' || z[-1] == '\t')) *--z = 0;
             s = a;
         }
-        if (is_blankish(s)) continue;
-        if (s[0] == ']' && s[1] == 0) continue;
+        if (fc_strlen(s) <= 1) continue; /* blank lines, a lone ']' */
 
         if (s[0] == '{') {
             char *q = s + 1;

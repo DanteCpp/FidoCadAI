@@ -40,12 +40,9 @@ void fc_prim_init(FcPrim *p);
 void fc_label_default(FcLabel *l, double x, double y, int layer);
 void fc_json_escape(FcBuf *b, const char *s);
 void fc_emit_prim(FcBuf *b, const FcPrim *p, int extensions);
-void fc_fmt_coord(char *buf, size_t cap, double v);
 
 uint32_t fc_hash(const char *s);
-const char *fc_layer_default_name(int i);
-uint32_t fc_layer_default_rgb(int i);
-float fc_layer_default_alpha(int i);
+const FcLayer *fc_default_layer(int i); /* FidoCadJ's layer i (0 when out of range) */
 
 void fc_xform_point(FcPoint *pt, int orient, int mirror, double ox, double oy);
 void fc_xform_label(FcLabel *l, int orient, int mirror, double ox, double oy);
@@ -116,7 +113,6 @@ int fc_style_context(FcBuf *b);
 
 int fc_ttf_init(void);
 int fc_ttf_ready(void);
-void fc_ttf_shutdown(void);
 int fc_ttf_resolve(int family, int bold, int italic, int *fake_italic);
 float fc_ttf_ascent(int slot, float px_size);
 /* shift_x/shift_y: sub-pixel origin in [0,1), quantized to FC_TTF_SUBPIX steps */

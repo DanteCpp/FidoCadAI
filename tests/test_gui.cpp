@@ -919,7 +919,7 @@ int main(int argc, char **argv) {
     EXPECT(settings.get("snap") == "0");
     EXPECT(settings.set("snap", "on").isEmpty());
     EXPECT(!settings.set("window_size", "200%").isEmpty());
-    EXPECT(settings.dump(false).contains("statusbar"));
+    EXPECT(settings.keys().contains("statusbar"));
 
     /* Ctrl+Return is Done: saves the drawing and reports it */
     QTest::keyClick(c, Qt::Key_Return, Qt::ControlModifier);

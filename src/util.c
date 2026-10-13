@@ -11,32 +11,17 @@ struct FcArenaBlock {
     char data[];
 };
 
-static const char *const k_layer_names[FC_MAX_LAYERS] = {
-    "Circuit",        "Bottom copper", "Top copper", "Silkscreen",
-    "Other 1",        "Other 2",       "Other 3",    "Other 4",
-    "Other 5",        "Other 6",       "Other 7",    "Other 8",
-    "Other 9",        "Other 10",      "Other 11",   "Other 12"};
+static const FcLayer k_layers[FC_MAX_LAYERS] = {
+    {"Circuit", 0x000000, 1.00f, 0},  {"Bottom copper", 0x000080, 1.00f, 0},
+    {"Top copper", 0xFF0000, 1.00f, 0}, {"Silkscreen", 0x008080, 1.00f, 0},
+    {"Other 1", 0xFFC800, 1.00f, 0},  {"Other 2", 0x7FFF00, 1.00f, 0},
+    {"Other 3", 0x00FFFF, 1.00f, 0},  {"Other 4", 0x008000, 1.00f, 0},
+    {"Other 5", 0x9ACD32, 1.00f, 0},  {"Other 6", 0xFF1493, 1.00f, 0},
+    {"Other 7", 0xB59B0C, 1.00f, 0},  {"Other 8", 0x0180FF, 1.00f, 0},
+    {"Other 9", 0xE1E1E1, 0.95f, 0},  {"Other 10", 0xA2A2A2, 0.90f, 0},
+    {"Other 11", 0x5F5F5F, 0.90f, 0}, {"Other 12", 0x000000, 1.00f, 0}};
 
-static const uint32_t k_layer_rgb[FC_MAX_LAYERS] = {
-    0x000000, 0x000080, 0xFF0000, 0x008080, 0xFFC800, 0x7FFF00, 0x00FFFF, 0x008000,
-    0x9ACD32, 0xFF1493, 0xB59B0C, 0x0180FF, 0xE1E1E1, 0xA2A2A2, 0x5F5F5F, 0x000000};
-
-static const float k_layer_alpha[FC_MAX_LAYERS] = {
-    1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f,
-    1.00f, 1.00f, 1.00f, 1.00f, 0.95f, 0.90f, 0.90f, 1.00f};
-
-const char *fc_layer_default_name(int i) {
-    if (i < 0 || i >= FC_MAX_LAYERS) return "Circuit";
-    return k_layer_names[i];
-}
-uint32_t fc_layer_default_rgb(int i) {
-    if (i < 0 || i >= FC_MAX_LAYERS) return 0;
-    return k_layer_rgb[i];
-}
-float fc_layer_default_alpha(int i) {
-    if (i < 0 || i >= FC_MAX_LAYERS) return 1.0f;
-    return k_layer_alpha[i];
-}
+const FcLayer *fc_default_layer(int i) { return &k_layers[fc_clamp_layer(i)]; }
 
 size_t fc_strlen(const char *s) { return s ? strlen(s) : 0; }
 
@@ -289,8 +274,6 @@ void fc_fmt_num(char *buf, size_t cap, double v) {
     memcpy(buf, tmp, (size_t)n + 1);
 }
 
-void fc_fmt_coord(char *buf, size_t cap, double v) { fc_fmt_num(buf, cap, v); }
-
 int fc_read_file(const char *path, char **out, size_t *len) {
     FILE *fp;
     if (!path || fc_streq(path, "-")) {
@@ -356,15 +339,7 @@ void fc_config_init(FcConfig *c) {
     c->img_alpha = 1;
 }
 
-void fc_layers_init(FcLayer layers[FC_MAX_LAYERS]) {
-    int i;
-    for (i = 0; i < FC_MAX_LAYERS; i++) {
-        snprintf(layers[i].name, sizeof layers[i].name, "%s", k_layer_names[i]);
-        layers[i].rgb = k_layer_rgb[i];
-        layers[i].alpha = k_layer_alpha[i];
-        layers[i].modified = 0;
-    }
-}
+void fc_layers_init(FcLayer layers[FC_MAX_LAYERS]) { memcpy(layers, k_layers, sizeof k_layers); }
 
 void fc_drawing_init(FcDrawing *d) {
     memset(d, 0, sizeof *d);

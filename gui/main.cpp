@@ -3,7 +3,7 @@
  * Usually the agent runs it in the background with a session directory and
  * then talks to the window through `fcai session ...`:
  *
- *   fcai-gui sketch.fcd --session-dir /tmp/dac.session -m "what to look at" &
+ *   fcai-gui sketch.fcd --session-dir /tmp/dac.session &
  *   fcai session wait /tmp/dac.session     # the user edited or selected something
  *   fcai session push /tmp/dac.session new.fcd
  *

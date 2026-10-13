@@ -17,8 +17,6 @@ double luma(uint32_t rgb) {
 
 Theme builtin(bool dark) {
     Theme t;
-    t.dark = dark;
-    t.source = "built-in";
     if (dark) { /* Tokyo Night, Omarchy's default */
         t.bg = QColor("#1a1b26");
         t.bg_dark = QColor("#13141c");
@@ -26,11 +24,7 @@ Theme builtin(bool dark) {
         t.fg = QColor("#a9b1d6");
         t.fg_dim = QColor("#565f89");
         t.accent = QColor("#7aa2f7");
-        t.selection = QColor("#292e42");
         t.muted = QColor("#414868");
-        t.red = QColor("#f7768e");
-        t.green = QColor("#9ece6a");
-        t.yellow = QColor("#e0af68");
     } else {
         t.bg = QColor("#f5f5f7");
         t.bg_dark = QColor("#e8e8ec");
@@ -38,11 +32,7 @@ Theme builtin(bool dark) {
         t.fg = QColor("#2e3440");
         t.fg_dim = QColor("#7b8394");
         t.accent = QColor("#2e6fd8");
-        t.selection = QColor("#d7e3fa");
         t.muted = QColor("#c5c9d3");
-        t.red = QColor("#c93c3c");
-        t.green = QColor("#3f8f3f");
-        t.yellow = QColor("#b07d10");
     }
     return t;
 }
@@ -100,13 +90,7 @@ Theme Theme::load(const QString &mode) {
     pick(t.fg, "foreground");
     pick(t.fg_dim, "dark_foreground");
     pick(t.accent, "accent");
-    pick(t.selection, "selection");
     pick(t.muted, "muted");
-    pick(t.red, "red");
-    pick(t.green, "green");
-    pick(t.yellow, "yellow");
-    t.dark = t.bg.lightnessF() < 0.5;
-    t.source = path;
     return t;
 }
 
@@ -138,30 +122,27 @@ void Theme::apply(QApplication &app, const QString &font, int font_size) const {
     /* Flat, borderless look like the Omarchy shell: square corners, accent on focus. */
     app.setStyleSheet(QString(R"(
         QMainWindow, QWidget#chrome { background: %1; }
-        QToolBar { background: %1; border: none; border-bottom: 1px solid %4; padding: 4px; spacing: 2px; }
         QToolButton { color: %2; background: transparent; border: 1px solid transparent; padding: 2px 6px; }
         QToolButton:hover { border-color: %4; }
         QToolButton:checked { color: %1; background: %3; }
-        QToolButton#done { color: %1; background: %6; font-weight: bold; padding: 3px 14px; }
-        QToolButton#done:hover { background: %3; }
         QStatusBar { background: %1; color: %5; border-top: 1px solid %4; }
         QSplitter::handle { background: %4; }
-        QLineEdit, QPlainTextEdit, QTextBrowser, QTreeWidget, QComboBox {
-            background: %7; color: %2; border: 1px solid %4; selection-background-color: %3;
+        QLineEdit, QTreeWidget, QComboBox {
+            background: %6; color: %2; border: 1px solid %4; selection-background-color: %3;
             selection-color: %1; padding: 3px; }
-        QLineEdit:focus, QPlainTextEdit:focus { border-color: %3; }
-        QComboBox QAbstractItemView { background: %7; color: %2; border: 1px solid %4; }
+        QLineEdit:focus { border-color: %3; }
+        QComboBox QAbstractItemView { background: %6; color: %2; border: 1px solid %4; }
         QTreeWidget::item:selected { background: %3; color: %1; }
         QHeaderView::section { background: %1; color: %5; border: none; }
         QLabel#dim { color: %5; }
-        QLabel#preview { background: %7; border: 1px solid %4; }
+        QLabel#preview { background: %6; border: 1px solid %4; }
         QScrollBar:vertical { background: %1; width: 8px; }
         QScrollBar::handle:vertical { background: %4; min-height: 24px; }
         QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
-        QPushButton { background: %8; color: %2; border: 1px solid %4; padding: 4px 12px; }
+        QPushButton { background: %7; color: %2; border: 1px solid %4; padding: 4px 12px; }
         QPushButton:hover { border-color: %3; }
         QDialog { background: %1; }
     )")
                           .arg(bg.name(), fg.name(), accent.name(), muted.name(), fg_dim.name(),
-                               green.name(), bg_dark.name(), bg_light.name()));
+                               bg_dark.name(), bg_light.name()));
 }

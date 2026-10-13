@@ -135,7 +135,7 @@ static void emit_config(FcBuf *b, const FcDrawing *d) {
         if (!d->layers[i].modified) continue;
         fc_fmt_num(n, 32, d->layers[i].alpha);
         fc_buf_printf(b, "FJC L %d %u %s\n", i, (unsigned)d->layers[i].rgb, n);
-        if (!fc_streq(d->layers[i].name, fc_layer_default_name(i)))
+        if (!fc_streq(d->layers[i].name, fc_default_layer(i)->name))
             fc_buf_printf(b, "FJC N %d %s\n", i, d->layers[i].name);
     }
     if (!nearly(d->cfg.line_width, 0.5)) {

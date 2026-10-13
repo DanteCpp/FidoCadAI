@@ -368,12 +368,7 @@ static int edit_drawing(const Opt *o, FcDrawing *d) {
         FcLayer *l;
         if (o->layer < 0 || (!o->reset && !o->has_color && o->alpha < 0 && !o->name)) return FC_ERR_ARG;
         l = &d->layers[o->layer];
-        if (o->reset) {
-            snprintf(l->name, sizeof l->name, "%s", fc_layer_default_name(o->layer));
-            l->rgb = fc_layer_default_rgb(o->layer);
-            l->alpha = fc_layer_default_alpha(o->layer);
-            l->modified = 0;
-        }
+        if (o->reset) *l = *fc_default_layer(o->layer);
         if (o->has_color) l->rgb = o->color;
         if (o->alpha >= 0) l->alpha = (float)o->alpha;
         if (o->name) {
@@ -1112,7 +1107,7 @@ static int cmd_skill(int argc, char **argv) {
 }
 
 /* `fcai gui ...` hands off to fcai-gui, looked up next to this binary first. */
-static int exec_gui(const char *argv0, int argc, char **argv) {
+static int exec_gui(const char *argv0, char **argv) {
     char path[4096];
     const char *slash = strrchr(argv0, '/');
     argv[0] = "fcai-gui";
@@ -1123,7 +1118,6 @@ static int exec_gui(const char *argv0, int argc, char **argv) {
     }
     execvp("fcai-gui", argv);
     fprintf(stderr, "fcai: cannot run fcai-gui (build it with `make gui`)\n");
-    (void)argc;
     return 127;
 }
 
@@ -1134,7 +1128,7 @@ int main(int argc, char **argv) {
     const Command *cmd;
     int i, rc;
 
-    if (argc > 1 && fc_streq(argv[1], "gui")) return exec_gui(argv[0], argc - 1, argv + 1);
+    if (argc > 1 && fc_streq(argv[1], "gui")) return exec_gui(argv[0], argv + 1);
     if (argc > 1 && fc_streq(argv[1], "session")) return cmd_session(argc - 1, argv + 1);
     if (argc > 1 && fc_streq(argv[1], "skill")) return cmd_skill(argc - 2, argv + 2);
     if (argc > 1 && fc_streq(argv[1], "style")) return fc_cmd_style(argc - 2, argv + 2);

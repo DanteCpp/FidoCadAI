@@ -280,8 +280,7 @@ char *fc_prim_fcd(const FcPrim *p) {
     FcBuf b;
     fc_buf_init(&b);
     fc_emit_prim(&b, p, 1);
-    if (!b.p) fc_buf_puts(&b, "");
-    return fc_buf_steal(&b);
+    return fc_buf_steal(&b); /* "" for a degenerate primitive */
 }
 
 static int anchor(const FcPrim *p, FcPoint *out) {

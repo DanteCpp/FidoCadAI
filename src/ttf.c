@@ -35,7 +35,6 @@ typedef struct {
 #define CACHE_N 2048
 static CacheEnt cache[CACHE_N];
 static int cache_count;
-static void cache_flush(void);
 
 static int load_face(Face *f, const char *path) {
     char *buf = NULL;
@@ -106,25 +105,6 @@ int fc_ttf_init(void) {
 }
 
 int fc_ttf_ready(void) { return faces[0].loaded || faces[4].loaded || faces[8].loaded; }
-
-void fc_ttf_shutdown(void) {
-    int i;
-    for (i = 0; i < N_FACE; i++) {
-        if (faces[i].loaded && faces[i].data) {
-            /* Regular may alias another style; skip double-free by zeroing data */
-            int j;
-            unsigned char *d = faces[i].data;
-            free(d);
-            for (j = 0; j < N_FACE; j++)
-                if (faces[j].data == d) {
-                    faces[j].data = NULL;
-                    faces[j].loaded = 0;
-                }
-        }
-    }
-    cache_flush();
-    ttf_inited = 0;
-}
 
 int fc_ttf_resolve(int family, int bold, int italic, int *fake_italic) {
     int base, style, slot;

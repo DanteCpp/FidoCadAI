@@ -8,9 +8,7 @@ class QApplication;
 /* Colours for the chrome. "omarchy" reads the current Omarchy theme's
  * colors.toml, so the editor follows `omarchy theme set`. */
 struct Theme {
-    QColor bg, bg_dark, bg_light, fg, fg_dim, accent, selection, muted, red, green, yellow;
-    bool dark = true;
-    QString source; /* file the colours came from, or "built-in" */
+    QColor bg, bg_dark, bg_light, fg, fg_dim, accent, muted;
 
     static Theme load(const QString &mode);
     /* Paper is dark when its luma is below one half. On dark paper, near-black

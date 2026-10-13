@@ -13,7 +13,7 @@ struct Knob {
     const char *key, *def, *help;
 };
 
-/* Order matters: this is what get_settings/fcai session get print. */
+/* Order matters: it is the order of the "Known:" list in errors and of gui.conf. */
 const Knob kKnobs[] = {
     {"grid", "5", "snap/grid step in FidoCad units"},
     {"snap", "1", "snap clicks to the grid (0/1)"},
@@ -133,19 +133,3 @@ QStringList Settings::keys() const {
     return out;
 }
 
-QString Settings::describe(const QString &key) const {
-    for (const Knob &k : kKnobs)
-        if (key == k.key) return k.help;
-    return QString();
-}
-
-QString Settings::dump(bool with_help) const {
-    QString out;
-    for (const Knob &k : kKnobs) {
-        out += QString("%1 = %2").arg(k.key, values_.value(k.key));
-        if (with_help) out += QString("    # %1").arg(k.help);
-        out += "\n";
-    }
-    out += QString("(file: %1)\n").arg(path_);
-    return out;
-}

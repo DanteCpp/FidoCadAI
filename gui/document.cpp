@@ -154,8 +154,6 @@ bool Document::reloadFromDisk(QString *err) {
     return true;
 }
 
-void Document::setBaseline() { original_ = fcd(); }
-
 QByteArray Document::fcd() const { return emitted(d_); }
 
 QByteArray Document::canonical(const QByteArray &text) {
@@ -171,18 +169,6 @@ QString Document::primFcd(int i) const {
     if (i < 0 || i >= d_.nprims) return QString();
     return takeString(fc_prim_fcd(&d_.prims[i])).trimmed();
 }
-
-QString Document::listing() const {
-    QString out;
-    for (int i = 0; i < d_.nprims; i++) {
-        QString t = primFcd(i);
-        if (t.isEmpty()) continue;
-        out += QString("[%1] %2\n").arg(i).arg(t.replace("\n", "\n    "));
-    }
-    return out.isEmpty() ? "(empty drawing)\n" : out;
-}
-
-QString Document::context() const { return takeString(fc_context(&d_, lib_)); }
 
 QString Document::diff(bool json) const {
     FcDrawing base;

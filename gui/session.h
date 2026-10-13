@@ -23,7 +23,6 @@ public:
     bool start();
     void send(const QJsonObject &event);
     void pollNow();
-    QString dir() const { return dir_; }
     QString error() const { return err_; }
 
     std::function<void(const QJsonObject &)> onCommand;

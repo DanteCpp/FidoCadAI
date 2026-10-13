@@ -177,7 +177,6 @@ typedef struct FcMacro {
     const char *lib_name;
     const char *prefix;
     const char *body;
-    int nprims_hint;
 } FcMacro;
 
 typedef struct FcLib FcLib;

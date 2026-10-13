@@ -35,8 +35,6 @@ public:
     QString path() const { return path_; }
     bool modified() const { return fcd() != saved_; }
     QByteArray savedFcd() const { return saved_; }
-    bool changedSinceOpen() const { return fcd() != original_; }
-    void setBaseline(); /* what fc_diff compares against */
 
     /* read */
     const FcDrawing &drawing() const { return d_; }
@@ -44,10 +42,7 @@ public:
     QByteArray fcd() const;
     static QByteArray canonical(const QByteArray &fcd); /* as fcai would write it */
     QString primFcd(int i) const;
-    QString listing() const; /* numbered primitives, for chat tools */
-    QString context() const;
     QString diff(bool json) const;
-    QString diffJson() const { return diff(true); }
     QRectF boundsAll() const;
     QRectF boundsOf(const QList<int> &idx) const;
     int hit(double x, double y, double tol) const;
