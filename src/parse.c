@@ -1,12 +1,13 @@
 #include "internal.h"
 
+/* A primitive may be followed by FCJ, and a labelled FCJ by two TY lines
+ * (name, then value); pend holds the primitive until nothing more can attach. */
+typedef enum { IDLE, AFTER_PRIM, NAME_NEXT, VALUE_NEXT } ParseState;
+
 typedef struct {
     FcDrawing *d;
-    FcPrim pend;
-    int has_pend;
-    int expect_fcj;
-    int labels_left;
-    int labels_seen; /* slot of the next label: 0 = name, 1 = value */
+    FcPrim pend; /* valid when state != IDLE */
+    ParseState state;
     int line;
 } ParseCtx;
 
@@ -90,14 +91,7 @@ static int parse_label(FcDrawing *d, FcLabel *l, const char **tok, int ntok) {
 
 static int parse_te(FcDrawing *d, FcLabel *l, const char **tok, int ntok) {
     if (ntok < 4) return 0;
-    l->p.x = tok_coord(tok[1]);
-    l->p.y = tok_coord(tok[2]);
-    l->size_y = 4;
-    l->size_x = 3;
-    l->rotation = 0;
-    l->style = 0;
-    l->layer = 0;
-    l->font = "*";
+    fc_label_default(l, tok_coord(tok[1]), tok_coord(tok[2]), 0);
     l->text = join_rest(&d->arena, tok, ntok, 3);
     return 1;
 }
@@ -183,13 +177,10 @@ static int parse_primitive(FcDrawing *d, FcPrim *p, const char **tok, int ntok, 
 
 static void commit(ParseCtx *cx) {
     FcPrim *dst;
-    if (!cx->has_pend) return;
+    if (cx->state == IDLE) return;
+    cx->state = IDLE;
     dst = fc_drawing_push(cx->d);
-    if (!dst) return;
-    *dst = cx->pend;
-    cx->has_pend = 0;
-    cx->expect_fcj = 0;
-    cx->labels_left = 0;
+    if (dst) *dst = cx->pend;
 }
 
 static double fcj_width(ParseCtx *cx, const char *s) {
@@ -204,11 +195,8 @@ static double fcj_width(ParseCtx *cx, const char *s) {
 static void apply_fcj(ParseCtx *cx, const char **tok, int ntok) {
     FcPrim *p = &cx->pend;
     int text_flag = 0;
-    if (!cx->has_pend) return;
-    cx->expect_fcj = 0;
     if (fc_kind_caps(p->kind) & FC_KIND_LABELS) {
-        cx->labels_left = 2;
-        cx->labels_seen = 0;
+        cx->state = NAME_NEXT;
         return;
     }
     /* The optional stroke width sits between the dash style and the text flag:
@@ -229,27 +217,24 @@ static void apply_fcj(ParseCtx *cx, const char **tok, int ntok) {
         text_flag = tok_int(tok[ntok >= 4 ? 3 : 2], 0);
         p->has_ext = 1;
     }
-    if (text_flag) {
-        cx->labels_left = 2;
-        cx->labels_seen = 0;
-    }
+    if (text_flag) cx->state = NAME_NEXT;
+    else commit(cx); /* no labels follow */
 }
 
 static void attach_label(ParseCtx *cx, const FcLabel *l) {
-    /* The first TY line is the name slot, the second the value slot. An empty
-     * text is an absent label, like FidoCadJS (name/value '' is no label). */
-    int slot = cx->labels_seen++;
+    /* An empty text is an absent label, like FidoCadJS (name/value '' is no label). */
+    int value = cx->state == VALUE_NEXT;
     if (l->text && l->text[0]) {
-        if (slot == 0) {
-            cx->pend.name = *l;
-            cx->pend.has_name = 1;
-        } else {
+        if (value) {
             cx->pend.value = *l;
             cx->pend.has_value = 1;
+        } else {
+            cx->pend.name = *l;
+            cx->pend.has_name = 1;
         }
     }
-    if (cx->labels_left > 0) cx->labels_left--;
-    if (cx->labels_left == 0) commit(cx);
+    if (value) commit(cx);
+    else cx->state = VALUE_NEXT;
 }
 
 static void apply_fjc(ParseCtx *cx, const char **tok, int ntok) {
@@ -312,93 +297,56 @@ static int tokenize(char *line, const char **tok, int max, int *truncated) {
 
 static void handle_line(ParseCtx *cx, const char **tok, int ntok) {
     FcKind kind;
-    int filled = 0;
-    int is_ty, is_te, is_fcj, is_fjc, is_prim;
+    FcLabel lab;
+    int filled, is_ty, is_te, is_fcj;
 
     if (ntok == 0) return;
     is_ty = fc_streq(tok[0], "TY");
     is_te = fc_streq(tok[0], "TE");
     is_fcj = fc_streq(tok[0], "FCJ");
-    is_fjc = fc_streq(tok[0], "FJC");
-    is_prim = fc_code_kind(tok[0], &kind, &filled) && !is_ty && !is_te;
 
-    if (cx->has_pend && cx->expect_fcj) {
-        if (is_fcj) {
-            apply_fcj(cx, tok, ntok);
-            return;
-        }
-        /* Like FidoCadJS ParserActions: labels on SA/PL/PA/MC are introduced by
-         * an explicit bare `FCJ` line. A `TY` directly after the primitive is
-         * standalone text, not its name/value. */
-        cx->expect_fcj = 0;
-    }
-
-    if (cx->has_pend && cx->labels_left > 0) {
-        if (is_ty) {
-            FcLabel lab;
-            memset(&lab, 0, sizeof lab);
-            if (parse_label(cx->d, &lab, tok, ntok)) attach_label(cx, &lab);
-            else {
-                fc_drawing_diag(cx->d, cx->line, FC_DIAG_WARN, "malformed TY label");
-                commit(cx);
-            }
-            return;
-        }
-        commit(cx);
-    }
-
-    if (cx->has_pend) commit(cx);
-
-    if (is_fcj) {
-        /* stray FCJ */
+    /* Like FidoCadJS ParserActions: labels on SA/PL/PA/MC are introduced by an
+     * explicit bare `FCJ` line. A `TY` directly after the primitive is
+     * standalone text, not its name/value. */
+    if (cx->state == AFTER_PRIM && is_fcj) {
+        apply_fcj(cx, tok, ntok);
         return;
     }
-    if (is_fjc) {
+    if ((cx->state == NAME_NEXT || cx->state == VALUE_NEXT) && is_ty) {
+        if (parse_label(cx->d, &lab, tok, ntok)) {
+            attach_label(cx, &lab);
+        } else {
+            fc_drawing_diag(cx->d, cx->line, FC_DIAG_WARN, "malformed TY label");
+            commit(cx);
+        }
+        return;
+    }
+    commit(cx);
+
+    if (is_fcj) return; /* stray FCJ */
+    if (fc_streq(tok[0], "FJC")) {
         apply_fjc(cx, tok, ntok);
         return;
     }
-    if (is_ty) {
+    if (is_ty || is_te) {
         FcPrim *dst;
-        FcLabel lab;
-        memset(&lab, 0, sizeof lab);
-        if (!parse_label(cx->d, &lab, tok, ntok)) {
-            fc_drawing_diag(cx->d, cx->line, FC_DIAG_WARN, "malformed TY");
-            return;
-        }
-        dst = fc_drawing_push(cx->d);
-        if (!dst) return;
-        dst->kind = FC_TEXT;
-        dst->layer = lab.layer;
-        dst->src_line = cx->line;
-        dst->u.text = lab;
-        return;
-    }
-    if (is_te) {
-        FcPrim *dst;
-        FcLabel lab;
-        memset(&lab, 0, sizeof lab);
-        if (!parse_te(cx->d, &lab, tok, ntok)) {
-            fc_drawing_diag(cx->d, cx->line, FC_DIAG_WARN, "malformed TE");
-            return;
-        }
-        dst = fc_drawing_push(cx->d);
-        if (!dst) return;
-        dst->kind = FC_TEXT;
-        dst->layer = lab.layer;
-        dst->src_line = cx->line;
-        dst->u.text = lab;
-        return;
-    }
-    if (is_prim) {
-        FcPrim tmp;
-        if (!parse_primitive(cx->d, &tmp, tok, ntok, cx->line)) {
+        if (!(is_ty ? parse_label(cx->d, &lab, tok, ntok) : parse_te(cx->d, &lab, tok, ntok))) {
             fc_drawing_diag(cx->d, cx->line, FC_DIAG_WARN, "malformed %s", tok[0]);
             return;
         }
-        cx->pend = tmp;
-        cx->has_pend = 1;
-        cx->expect_fcj = 1;
-        cx->labels_left = 0;
+        dst = fc_drawing_push(cx->d);
+        if (!dst) return;
+        dst->kind = FC_TEXT;
+        dst->layer = lab.layer;
+        dst->src_line = cx->line;
+        dst->u.text = lab;
+        return;
+    }
+    if (fc_code_kind(tok[0], &kind, &filled)) {
+        if (parse_primitive(cx->d, &cx->pend, tok, ntok, cx->line))
+            cx->state = AFTER_PRIM;
+        else
+            fc_drawing_diag(cx->d, cx->line, FC_DIAG_WARN, "malformed %s", tok[0]);
         return;
     }
     /* unknown command — ignore ([FIDOCAD], comments, …) */
