@@ -8,6 +8,12 @@ description: Draw, edit, validate and render FidoCad (.fcd) schematics, PCB layo
 Use `fcai` to inspect, edit and render `.fcd` drawings and `.fcl` libraries;
 use its live GUI to work with the user.
 
+**Show work as soon as FCD code is available.** Unless the user requests a
+headless workflow, publish the first drawable increment immediately, even a
+single symbol or wire, and keep updating the same GUI while building the rest.
+An incomplete circuit is expected work in progress. Do not build, render and
+refine an entire draft in isolation before displaying it.
+
 ## User drawing preferences
 
 Read `fcai style show --json` at the start of drawing work and again before
@@ -57,9 +63,13 @@ Unless the user explicitly asks for a headless workflow:
    fcai gui sketch.fcd --session-dir /tmp/sketch.session &
    ```
 
-3. Once the window is open, build or edit the drawing in meaningful increments.
-   Use the feedback workflow below to push each update and check the GUI state.
-   Keep the GUI open so the user sees progress from the first drawing edit.
+3. As soon as the first drawable FCD code exists, push it using the guarded
+   feedback workflow below. An empty window alone is not visible drawing
+   progress: do not wait for a complete circuit, wiring, labels or tidy layout.
+4. Continue in small increments, pushing each addition or correction before
+   starting the next round of design or inspection. Keep the GUI open and
+   read user edits between increments. Say briefly in chat that the drawing
+   is in progress; do not wait for approval to continue.
 
 Disk edits reload live **only when the GUI has no unsaved edits**. Otherwise
 the GUI keeps the user's version; the warning appears in the optional bottom
@@ -75,7 +85,7 @@ the user never has to press anything to send it. Ctrl+Return saves and closes.
 fcai session status /tmp/sketch.session              # pending events/changes; no consumption
 fcai session wait /tmp/sketch.session --timeout 1    # consume one event
 fcai session get /tmp/sketch.session --wait          # current GUI state as JSON
-fcai session push /tmp/sketch.session /tmp/new.fcd --wait
+fcai session push /tmp/sketch.session /tmp/new.fcd --base /tmp/base.fcd --wait
 fcai session save /tmp/sketch.session --wait         # persist GUI document
 fcai session reload-libs /tmp/sketch.session --wait  # updated .fcl files, same window
 fcai session set /tmp/sketch.session grid 10         # settings live
@@ -97,7 +107,9 @@ what the user did on the canvas: read it before acting on each user turn.
 2. Run `session get DIR --wait`. Its JSON contains the actual `file`, `fcd`,
    `selection`, `modified` and `disk_changed`. Save `fcd` as a base snapshot
    and make the requested edits in a separate draft, preserving GUI changes.
-3. Validate and inspect the draft, then push it with a precondition:
+3. Push the current drawable increment immediately with a precondition; it
+   need not be a finished circuit. Use complete FCD records, but do not delay
+   display for linting, rendering or layout refinement:
 
    ```bash
    fcai session push /tmp/sketch.session /tmp/new.fcd --base /tmp/base.fcd --wait
@@ -110,6 +122,9 @@ what the user did on the canvas: read it before acting on each user turn.
    Push replaces GUI memory; `save` persists it to the drawing's path. Avoid
    writing the draft over that path before the guarded push, since a disk
    reload could change the GUI and invalidate the base.
+4. Inspect and validate the visible work, then publish corrections in further
+   increments using fresh GUI snapshots. Continue until the requested work is
+   complete and the checks below are done.
 
 `--wait` on get/push/save/reload/reload-libs returns the matching reply,
 without consuming queued user events. This requires the updated CLI and GUI
@@ -389,7 +404,9 @@ The GUI reads `$XDG_CONFIG_HOME/fidocad/gui.conf`; change values live with
 
 ## Verifying your work
 
-Before presenting the first draft and after layout changes:
+Run these checks on the visible draft and after layout changes, and finish
+them before reporting the drawing complete. They are not a gate for showing
+work in progress; publish drawable increments first, then inspect and correct:
 
 ```bash
 fcai validate d.fcd                  # syntax/round-trip, not electrical correctness

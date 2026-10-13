@@ -34,7 +34,7 @@ A FidoCad drawing is plain, human-readable text. Its simple commands make it pos
 
 I chose C over Rust because of its long history and the large body of established code available for language models to learn from. I wanted the implementation to be straightforward for agents to read and extend, as well as fast to run. The core and command-line tool are lean C11 programs with no external dependencies beyond the C standard library. The drawing window uses Qt6.
 
-The agent works through the command-line tool, `fcai`, while you see the result in `fcai-gui`. It draws, renders, inspects and corrects. Keeping that cycle quick lets it check its work visually as the drawing develops.
+The agent works through the command-line tool, `fcai`, while you see the result in `fcai-gui`. It shows the first symbols or wires as soon as they are available, then builds, checks and refines the circuit in the open window. You can follow and steer the drawing while it is still in progress.
 
 The language model interprets your requests and makes the design decisions, so results depend on the model you use. The tools let it inspect the drawing's syntax, wire geometry and appearance; those checks do not establish that a circuit will work electrically.
 
