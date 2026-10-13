@@ -635,7 +635,8 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
     press_px_ = e->position();
     press_lg_ = toLogical(e->position());
     QPointF s = snap(press_lg_);
-    cursor_lg_ = s;
+    has_cursor_ = true;
+    cursor_lg_ = lineEnd(s, e->modifiers());
 
     if (e->button() == Qt::MiddleButton) {
         op_ = Panning;
@@ -741,6 +742,11 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
 }
 
 void Canvas::mouseReleaseEvent(QMouseEvent *e) {
+    /* A release carries its own position; platforms may coalesce the final
+     * move or deliver no move at all during a short drag. Apply it before
+     * ending the operation and its undo transaction. */
+    if (op_ == Moving || op_ == Resizing || op_ == Panning || op_ == RulerArmed)
+        mouseMoveEvent(e);
     QPointF lg = toLogical(e->position());
     if (op_ == RulerArmed) {
         op_ = None;
@@ -824,11 +830,15 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
 }
 
 void Canvas::mouseDoubleClickEvent(QMouseEvent *e) {
-    if (tool_ == Line) {
-        finishLine();
+    /* Qt replaces the second press with a double-click event. Drawing tools
+     * must consume that position too, otherwise fast clicks drop a vertex or
+     * component. Only Select uses the double-click for properties. */
+    if (e->button() != Qt::LeftButton || tool_ != Select) {
+        mousePressEvent(e);
+        if (e->button() == Qt::LeftButton && tool_ == Line)
+            finishLine();
         return;
     }
-    if (tool_ != Select) return;
     QPointF lg = toLogical(e->position());
     int h = doc_->hit(lg.x(), lg.y(), 5.0 / scale_);
     if (h < 0) return;

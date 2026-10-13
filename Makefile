@@ -57,9 +57,16 @@ build/gui/test_gui.o: tests/test_gui.cpp $(GUI_HDR) | build/gui
 build/test_gui: $(OBJ) $(filter-out build/gui/main.o,$(GUI_OBJ)) build/gui/test_gui.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(QT_LIBS) $(shell pkg-config --libs Qt6Test) $(LDLIBS)
 
+build/gui/test_ui.o: tests/test_ui.cpp $(GUI_HDR) | build/gui
+	$(CXX) $(CXXFLAGS) -fPIC $(CPPFLAGS) $(QT_CFLAGS) $(shell pkg-config --cflags Qt6Test) -c $< -o $@
+
+build/test_ui: $(OBJ) $(filter-out build/gui/main.o,$(GUI_OBJ)) build/gui/test_ui.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(QT_LIBS) $(shell pkg-config --libs Qt6Test) $(LDLIBS)
+
 # LeakSanitizer flags fontconfig/pango caches owned by Qt, not by us.
-test-gui: build/test_gui build/fcai-gui build/fcai
+test-gui: build/test_gui build/test_ui build/fcai-gui build/fcai
 	QT_QPA_PLATFORM=offscreen ASAN_OPTIONS=detect_leaks=0 ./build/test_gui
+	QT_QPA_PLATFORM=offscreen ASAN_OPTIONS=detect_leaks=0 ./build/test_ui
 
 build:
 	mkdir -p build
