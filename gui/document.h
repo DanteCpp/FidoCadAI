@@ -20,10 +20,10 @@ public:
     Document(const Document &) = delete;
     Document &operator=(const Document &) = delete;
 
-    /* libraries */
-    void loadLibraries(bool stdlib, const QStringList &libs, const QStringList &libdirs,
-                       const char *argv0);
-    bool reloadLibraries(QString *err = nullptr);
+    /* libraries, in fc_lib_load_all order; on failure the previous set stays */
+    bool loadLibraries(bool stdlib, const QStringList &libs, const QStringList &libdirs,
+                       QString *err = nullptr, QStringList *warnings = nullptr);
+    bool reloadLibraries(QString *err = nullptr, QStringList *warnings = nullptr);
     const FcLib *lib() const { return lib_; }
 
     /* file */
@@ -98,5 +98,4 @@ private:
     int grid_ = 5;
     bool stdlib_ = true;
     QStringList libs_, libdirs_;
-    QByteArray argv0_;
 };

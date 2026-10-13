@@ -246,13 +246,38 @@ static void test_fmt_num(void) {
     EXPECT(strcmp(b, "0.35") == 0);
 }
 
+typedef struct {
+    int warnings, errors;
+} Reports;
+
+static void count_report(void *ctx, int error, const char *msg) {
+    Reports *r = (Reports *)ctx;
+    (void)msg;
+    if (error) r->errors++;
+    else r->warnings++;
+}
+
+/* fcai and fcai-gui share one search order and one failure policy: a missing
+ * directory only warns, an unreadable library file fails the load. */
+static void test_lib_load_all(void) {
+    const char *dirs[] = {"tests/no-such-dir"};
+    const char *files[] = {"tests/no-such-lib.fcl"};
+    Reports r = {0, 0};
+    FcLib *lib = fc_lib_new();
+    EXPECT(fc_lib_load_all(lib, 1, dirs, 1, NULL, NULL, 0, count_report, &r) == FC_OK);
+    EXPECT(r.warnings == 1 && r.errors == 0);
+    EXPECT(fc_lib_find(lib, "080") != NULL);
+    EXPECT(fc_lib_load_all(lib, 0, NULL, 0, files, NULL, 1, count_report, &r) == FC_ERR_IO);
+    EXPECT(r.errors == 1);
+    fc_lib_free(lib);
+}
+
 static void test_stdlib_and_expand(void) {
     FcLib *lib = fc_lib_new();
     FcDrawing d, exp;
     int rc;
     EXPECT(lib != NULL);
-    rc = fc_lib_load_stdlib(lib, "build/test_core");
-    if (rc != FC_OK) rc = fc_lib_load_stdlib(lib, NULL);
+    rc = fc_lib_load_stdlib(lib);
     EXPECT(rc == FC_OK);
     EXPECT(fc_lib_find(lib, "080") != NULL);
     EXPECT(fc_lib_find(lib, "220") != NULL);
@@ -919,6 +944,7 @@ int main(int argc, char **argv) {
     test_fjc_layer();
     test_fmt_num();
     test_stdlib_and_expand();
+    test_lib_load_all();
     test_render_png();
     test_json_and_describe();
     test_tex();

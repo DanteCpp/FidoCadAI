@@ -33,6 +33,7 @@ void fc_buf_printf(FcBuf *b, const char *fmt, ...);
 char *fc_buf_steal(FcBuf *b);
 
 int fc_streq(const char *a, const char *b);
+int fc_parse_bool(const char *v); /* 0, false, no, off and "" are false */
 size_t fc_strlen(const char *s);
 void fc_tolower_buf(char *s);
 int fc_kind_uses_fcj(FcKind k);

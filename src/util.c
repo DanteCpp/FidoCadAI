@@ -224,6 +224,16 @@ int fc_parse_double(const char *s, double *out) {
     return 1;
 }
 
+int fc_parse_bool(const char *v) {
+    return !(fc_streq(v, "0") || fc_streq(v, "false") || fc_streq(v, "no") ||
+             fc_streq(v, "off") || fc_streq(v, ""));
+}
+
+int fc_env_flag(const char *name, int def) {
+    const char *v = getenv(name);
+    return v ? fc_parse_bool(v) : def;
+}
+
 double fc_clamp_coord(double v) {
     if (v < FC_MIN_COORD) return FC_MIN_COORD;
     if (v > FC_MAX_COORD) return FC_MAX_COORD;

@@ -119,6 +119,7 @@ struct StepInfo {
 int main(int argc, char **argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
+    fc_set_argv0(argv[0]);
 
     QDir().mkpath("docs/images");
     QDir().mkpath("/tmp/fcai_frames");
@@ -132,7 +133,7 @@ int main(int argc, char **argv) {
         settings.set("statusbar", "1");
         Theme theme = Theme::load("dark");
         Document doc;
-        doc.loadLibraries(true, {}, {}, argv[0]);
+        doc.loadLibraries(true, {}, {});
         QString err;
         if (doc.open("playground/diff-pair/pmos_diffpair_130nm.fcd", &err)) {
             MainWindow win(&doc, &settings, &theme, &app, "");
@@ -150,7 +151,7 @@ int main(int argc, char **argv) {
         settings.set("statusbar", "1");
         Theme theme = Theme::load("dark");
         Document doc;
-        doc.loadLibraries(true, {}, {}, argv[0]);
+        doc.loadLibraries(true, {}, {});
         QString err;
         if (doc.open("playground/buck-boost/buck_boost.fcd", &err)) {
             MainWindow win(&doc, &settings, &theme, &app, "");
@@ -168,7 +169,7 @@ int main(int argc, char **argv) {
         settings.set("statusbar", "1");
         Theme theme = Theme::load("dark");
         Document doc;
-        doc.loadLibraries(true, {}, {}, argv[0]);
+        doc.loadLibraries(true, {}, {});
         QString err;
         if (doc.open("playground/buck-boost/buck_boost_pcb.fcd", &err)) {
             MainWindow win(&doc, &settings, &theme, &app, "");
@@ -186,7 +187,7 @@ int main(int argc, char **argv) {
         settings.set("statusbar", "1");
         Theme theme = Theme::load("dark");
         Document doc;
-        doc.loadLibraries(true, {}, {}, argv[0]);
+        doc.loadLibraries(true, {}, {});
         QString err;
         if (doc.open("playground/vco-adc/vco_adc.fcd", &err)) {
             MainWindow win(&doc, &settings, &theme, &app, "");
@@ -204,7 +205,7 @@ int main(int argc, char **argv) {
         settings.set("statusbar", "1");
         Theme theme = Theme::load("dark");
         Document doc;
-        doc.loadLibraries(true, {}, {}, argv[0]);
+        doc.loadLibraries(true, {}, {});
         QString err;
         if (doc.open("playground/cap-adc/cap_adc.fcd", &err)) {
             MainWindow win(&doc, &settings, &theme, &app, "");
@@ -223,7 +224,7 @@ int main(int argc, char **argv) {
         settings.set("statusbar", "1");
         Theme theme = Theme::load("dark");
         Document doc;
-        doc.loadLibraries(true, {}, {}, argv[0]);
+        doc.loadLibraries(true, {}, {});
         QString err;
         if (doc.open("playground/buck-boost/buck_boost.fcd", &err)) {
             MainWindow win(&doc, &settings, &theme, &app, "");
@@ -243,7 +244,7 @@ int main(int argc, char **argv) {
         settings.set("theme", "light");
         Theme theme = Theme::load("light");
         Document doc;
-        doc.loadLibraries(true, {}, {}, argv[0]);
+        doc.loadLibraries(true, {}, {});
         QString err;
         if (doc.open("playground/buck-boost/buck_boost.fcd", &err)) {
             MainWindow win(&doc, &settings, &theme, &app, "");
@@ -726,7 +727,7 @@ int main(int argc, char **argv) {
             settings.set("statusbar", "1");
             Theme theme = Theme::load("dark");
             Document doc;
-            doc.loadLibraries(true, {}, {}, argv[0]);
+            doc.loadLibraries(true, {}, {});
             QString err;
             QTemporaryDir tmpDir;
             QString tmpFcd = tmpDir.path() + "/step.fcd";
@@ -778,7 +779,7 @@ int main(int argc, char **argv) {
         settings.set("statusbar", "1");
         Theme theme = Theme::load("dark");
         Document doc;
-        doc.loadLibraries(true, {}, {}, argv[0]);
+        doc.loadLibraries(true, {}, {});
         QString err;
         if (doc.open("playground/diff-pair/pmos_diffpair_130nm.fcd", &err)) {
             MainWindow win(&doc, &settings, &theme, &app, "");

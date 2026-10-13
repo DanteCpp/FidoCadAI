@@ -84,15 +84,22 @@ int main(int argc, char **argv) {
                     noStdOpt, configOpt, shotOpt});
     cli.process(app);
 
-    QByteArray stdlib_env = qgetenv("FIDO_NO_STDLIB");
+    fc_set_argv0(argv[0]);
     Settings settings(cli.value(configOpt));
     settings.load();
     Theme theme = Theme::load(settings.get("theme"));
     theme.apply(app, settings.get("font"), settings.getInt("font_size"));
 
     Document doc;
-    doc.loadLibraries(!cli.isSet(noStdOpt) && stdlib_env.isEmpty(), cli.values(libOpt),
-                      cli.values(libDirOpt), argv[0]);
+    QString lib_err;
+    QStringList lib_warnings;
+    bool libs_ok = doc.loadLibraries(!cli.isSet(noStdOpt) && !fc_env_flag("FIDO_NO_STDLIB", 0),
+                                     cli.values(libOpt), cli.values(libDirOpt), &lib_err, &lib_warnings);
+    for (const QString &w : lib_warnings) fprintf(stderr, "fcai-gui: warning: %s\n", qPrintable(w));
+    if (!libs_ok) {
+        fprintf(stderr, "fcai-gui: %s\n", qPrintable(lib_err));
+        return 1;
+    }
 
     QString file = cli.positionalArguments().value(0);
     bool from_stdin = file == "-";

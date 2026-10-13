@@ -265,12 +265,25 @@ int fc_lib_load_file(FcLib *lib, const char *path, const char *prefix);
 int fc_lib_load_dir(FcLib *lib, const char *dir);
 /* argv0 helps locate share/ when the OS cannot report the executable path */
 void fc_set_argv0(const char *argv0);
-int fc_lib_load_stdlib(FcLib *lib, const char *argv0);
+int fc_lib_load_stdlib(FcLib *lib);
 /* Directory for the user's own macros: $FIDO_USER_LIB_DIR, else
    $FCAI_HOME/lib, else ~/.fcai/lib. Old Documents/FidoLib libraries are loaded
    first for compatibility when neither override is set; new definitions win. */
 int fc_user_lib_dir(char *out, size_t cap);
-int fc_lib_load_user_dir(FcLib *lib); /* silent no-op when the directory is absent */
+/* Every library source, in the order fcai and fcai-gui both use: the bundled
+ * standard library (when stdlib is set), the user's directory, $FIDO_LIB_DIR,
+ * then dirs[] and files[] (files[i] takes prefixes[i], or a prefix from its
+ * name when prefixes or that entry is NULL). A missing standard library or a
+ * directory without libraries is a warning; a library file that cannot be read
+ * is an error and makes the call return FC_ERR_IO. Each problem is passed to
+ * report (which may be NULL) as one message. */
+typedef void (*FcLibReport)(void *ctx, int error, const char *msg);
+int fc_lib_load_all(FcLib *lib, int stdlib, const char *const *dirs, int ndirs,
+                    const char *const *files, const char *const *prefixes, int nfiles,
+                    FcLibReport report, void *ctx);
+/* Boolean environment variable: def when unset; 0, false, no, off and the empty
+ * string are false, anything else is true. */
+int fc_env_flag(const char *name, int def);
 const FcMacro *fc_lib_find(const FcLib *lib, const char *key);
 int fc_lib_count(const FcLib *lib);
 const FcMacro *fc_lib_at(const FcLib *lib, int i);

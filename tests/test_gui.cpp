@@ -69,7 +69,7 @@ static QByteArray cli(const QStringList &args, int expected = 0) {
     return p.readAllStandardOutput();
 }
 
-static void test_session_feedback(QApplication &app, const char *argv0) {
+static void test_session_feedback(QApplication &app) {
     QTemporaryDir tmp;
     QString path = tmp.path() + "/d.fcd", libpath = tmp.path() + "/parts.fcl";
     QString dir = tmp.path() + "/session";
@@ -84,7 +84,7 @@ static void test_session_feedback(QApplication &app, const char *argv0) {
     Settings settings(tmp.path() + "/gui.conf");
     Theme theme = Theme::load("dark");
     Document doc;
-    doc.loadLibraries(false, {libpath}, {}, argv0);
+    EXPECT(doc.loadLibraries(false, {libpath}, {}));
     QString err;
     EXPECT(doc.open(path, &err));
     MainWindow win(&doc, &settings, &theme, &app, dir);
@@ -214,12 +214,26 @@ static void test_session_feedback(QApplication &app, const char *argv0) {
     EXPECT(!QFile::exists(archived + "/.events.pos"));
 }
 
-static void test_label_handles(const char *argv0) {
+/* Library problems are handled like the CLI: an empty --lib-dir only warns
+ * (the standard library still loads), an unreadable --lib fails and keeps the
+ * libraries already loaded. */
+static void test_library_errors() {
+    QTemporaryDir tmp;
+    Document doc;
+    QString err;
+    QStringList warnings;
+    EXPECT(doc.loadLibraries(true, {}, {tmp.path()}, &err, &warnings));
+    EXPECT(warnings.size() == 1 && fc_lib_count(doc.lib()) > 100);
+    EXPECT(!doc.loadLibraries(true, {tmp.path() + "/missing.fcl"}, {}, &err));
+    EXPECT(err.contains("missing.fcl") && fc_lib_count(doc.lib()) > 100);
+}
+
+static void test_label_handles() {
     QTemporaryDir tmp;
     Settings settings(tmp.path() + "/gui.conf");
     Theme theme = Theme::load("dark");
     Document doc;
-    doc.loadLibraries(true, {}, {}, argv0);
+    EXPECT(doc.loadLibraries(true, {}, {}));
     EXPECT(doc.openText("MC 100 100 1 1 080\nFCJ\n"
                         "TY 115 90 4 3 0 0 0 * R1\n"
                         "TY 115 110 4 3 0 0 0 * 10k\n"
@@ -281,12 +295,12 @@ static void test_label_handles(const char *argv0) {
     EXPECT(reopened.handle(0, 2) == QPointF(145, 125));
 }
 
-static void test_grouped_handles(const char *argv0) {
+static void test_grouped_handles() {
     QTemporaryDir tmp;
     Settings settings(tmp.path() + "/gui.conf");
     Theme theme = Theme::load("dark");
     Document doc;
-    doc.loadLibraries(true, {}, {}, argv0);
+    EXPECT(doc.loadLibraries(true, {}, {}));
     EXPECT(doc.openText("MC 60 100 0 0 080\nFCJ\n"
                         "TY 80 50 4 3 0 0 0 * R1\n"
                         "TY 80 65 4 3 0 0 0 * 10k\n"
@@ -366,12 +380,12 @@ static void test_grouped_handles(const char *argv0) {
 }
 
 /* touchpad: pinch zooms about the fingers, two-finger scroll / swipe pans */
-static void test_touchpad_gestures(const char *argv0) {
+static void test_touchpad_gestures() {
     QTemporaryDir tmp;
     Settings settings(tmp.path() + "/gui.conf");
     Theme theme = Theme::load("dark");
     Document doc;
-    doc.loadLibraries(true, {}, {}, argv0);
+    EXPECT(doc.loadLibraries(true, {}, {}));
     EXPECT(doc.openText("LI 10 10 90 60 0\n"));
     Canvas canvas(&doc, &settings, &theme);
     Canvas *c = &canvas;
@@ -408,10 +422,12 @@ static void test_touchpad_gestures(const char *argv0) {
 int main(int argc, char **argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
-    test_label_handles(argv[0]);
-    test_grouped_handles(argv[0]);
-    test_touchpad_gestures(argv[0]);
-    test_session_feedback(app, argv[0]);
+    fc_set_argv0(argv[0]);
+    test_library_errors();
+    test_label_handles();
+    test_grouped_handles();
+    test_touchpad_gestures();
+    test_session_feedback(app);
     QTemporaryDir tmp;
     QString fcd = tmp.path() + "/t.fcd";
     {
@@ -422,7 +438,7 @@ int main(int argc, char **argv) {
     Settings settings(tmp.path() + "/gui.conf");
     Theme theme = Theme::load("dark");
     Document doc;
-    doc.loadLibraries(true, {}, {}, argv[0]);
+    EXPECT(doc.loadLibraries(true, {}, {}));
     QString err;
     EXPECT(doc.open(fcd, &err));
     QString session_dir = tmp.path() + "/session";

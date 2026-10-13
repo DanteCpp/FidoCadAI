@@ -362,7 +362,8 @@ int fc_user_lib_dir(char *out, size_t cap) {
     return 1;
 }
 
-int fc_lib_load_user_dir(FcLib *lib) {
+/* Silent no-op when the directory is absent. */
+static int load_user_dir(FcLib *lib) {
     const char *override = getenv("FIDO_USER_LIB_DIR");
     const char *root = getenv("FCAI_HOME");
     char dir[4096], legacy[1024];
@@ -403,11 +404,35 @@ static int try_stdlib_dir(FcLib *lib, const char *dir) {
 
 static int try_stdlib_cb(void *ctx, const char *dir) { return try_stdlib_dir((FcLib *)ctx, dir); }
 
-int fc_lib_load_stdlib(FcLib *lib, const char *argv0) {
+int fc_lib_load_stdlib(FcLib *lib) {
     const char *env = getenv("FIDO_STDLIB_DIR");
     if (env && try_stdlib_dir(lib, env)) return FC_OK;
-    fc_set_argv0(argv0);
     return fc_find_data("lib", try_stdlib_cb, lib) ? FC_OK : FC_ERR_IO;
+}
+
+int fc_lib_load_all(FcLib *lib, int stdlib, const char *const *dirs, int ndirs,
+                    const char *const *files, const char *const *prefixes, int nfiles,
+                    FcLibReport report, void *ctx) {
+    const char *extra = getenv("FIDO_LIB_DIR");
+    char msg[1100];
+    int i, rc = FC_OK;
+    if (stdlib && fc_lib_load_stdlib(lib) != FC_OK && report)
+        report(ctx, 0, "standard libraries not found");
+    load_user_dir(lib);
+    if (extra && *extra) fc_lib_load_dir(lib, extra);
+    for (i = 0; i < ndirs; i++) {
+        if (fc_lib_load_dir(lib, dirs[i]) == FC_OK || !report) continue;
+        snprintf(msg, sizeof msg, "cannot load lib dir %s", dirs[i]);
+        report(ctx, 0, msg);
+    }
+    for (i = 0; i < nfiles; i++) {
+        if (fc_lib_load_file(lib, files[i], prefixes ? prefixes[i] : NULL) == FC_OK) continue;
+        rc = FC_ERR_IO;
+        if (!report) continue;
+        snprintf(msg, sizeof msg, "cannot load library %s", files[i]);
+        report(ctx, 1, msg);
+    }
+    return rc;
 }
 
 /* Appends a deep copy of src (strings and point arrays go into dst's arena). */

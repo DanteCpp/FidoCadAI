@@ -38,34 +38,40 @@ Document::~Document() {
     fc_lib_free(lib_);
 }
 
-void Document::loadLibraries(bool stdlib, const QStringList &libs, const QStringList &libdirs,
-                             const char *argv0) {
+bool Document::loadLibraries(bool stdlib, const QStringList &libs, const QStringList &libdirs,
+                             QString *err, QStringList *warnings) {
     stdlib_ = stdlib;
     libs_ = libs;
     libdirs_ = libdirs;
-    argv0_ = argv0;
-    reloadLibraries();
+    return reloadLibraries(err, warnings);
 }
 
-bool Document::reloadLibraries(QString *err) {
+bool Document::reloadLibraries(QString *err, QStringList *warnings) {
+    struct Report {
+        QStringList errors, warnings;
+    } report;
+    QList<QByteArray> dirs8, files8;
+    std::vector<const char *> dirs, files;
+    for (const QString &d : libdirs_) dirs8 << d.toUtf8();
+    for (const QString &f : libs_) files8 << f.toUtf8();
+    for (const QByteArray &d : dirs8) dirs.push_back(d.constData());
+    for (const QByteArray &f : files8) files.push_back(f.constData());
     FcLib *next = fc_lib_new();
-    QString failure;
-    if (!next) { if (err) *err = "out of memory loading libraries"; return false; }
-    if (stdlib_) fc_lib_load_stdlib(next, argv0_.constData());
-    fc_lib_load_user_dir(next);
-    QByteArray extra = qgetenv("FIDO_LIB_DIR");
-    if (!extra.isEmpty()) fc_lib_load_dir(next, extra.constData());
-    for (const QString &dir : libdirs_)
-        if (fc_lib_load_dir(next, dir.toUtf8().constData()) != FC_OK)
-            failure = "cannot load library directory " + dir;
-    for (const QString &l : libs_) {
-        QByteArray path = l.toUtf8();
-        if (fc_lib_load_file(next, path.constData(), fc_lib_prefix_for_file(path.constData())) != FC_OK)
-            failure = "cannot load library " + l;
+    if (!next) {
+        if (err) *err = "out of memory loading libraries";
+        return false;
     }
-    if (!failure.isEmpty()) {
+    int rc = fc_lib_load_all(next, stdlib_, dirs.data(), (int)dirs.size(), files.data(), nullptr,
+                             (int)files.size(),
+                             [](void *ctx, int error, const char *msg) {
+                                 Report *r = static_cast<Report *>(ctx);
+                                 (error ? r->errors : r->warnings) << QString::fromUtf8(msg);
+                             },
+                             &report);
+    if (warnings) *warnings = report.warnings;
+    if (rc != FC_OK) {
         fc_lib_free(next);
-        if (err) *err = failure;
+        if (err) *err = report.errors.join("; ");
         return false;
     }
     fc_lib_free(lib_);
