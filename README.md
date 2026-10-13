@@ -20,7 +20,7 @@ Drawing a buck converter with Pi:
 
 ## Working with the drawing
 
-I come from chip design, so some keybindings and canvas navigation borrow from tools such as Cadence. The interface also draws on Omarchy, on macOS for trackpad navigation, and on FidoCadJ for ideas such as rulers and shortcuts for drawing primitives.
+I come from chip design, therefore I wanted the UI to feel a bit like Cadence Virtuoso, taking ideas such as space to fit to view. The interface also borrows ideas from Omarchy Linux, on macOS when it comes to human machine interaction using keybord and trackpad. FidoCadJ has aso been a gret influence for tools such as the rulers and bindings for drawing primitives, to name a few... 
 
 The interface is deliberately simple. The drawing fills the window, with tools available from the keyboard when you need them. You can move between conversation and direct editing without leaving the drawing or interrupting the session. The aim is to keep your attention on the idea you are working through.
 
