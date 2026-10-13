@@ -51,7 +51,7 @@ FidoCadAI is a set of tools; the language model does the thinking. The quality o
 
 ## Live in Action: Session with Pi
 
-Watch a **real interactive Pi session**, under **15 seconds**, drawing a simple **buck converter** in `fcai-gui`. Pi runs `ollama-cloud/deepseek-v4.1-flash` in **Ghostty** on machy workspace 6:
+Watch a **real interactive Pi session**, under **15 seconds**, drawing a simple **buck converter** in `fcai-gui`. Pi runs `deepseek-v4.1-flash`:
 
 ![Real Pi session: type a buck converter request, select COUT in the GUI, and ask Pi to change it from 220u to 470u](docs/images/pi_buck_selection.gif)
 
@@ -133,8 +133,8 @@ sudo scripts/install.sh install
 On Unix-like systems the installer registers the skill with your local agent harnesses. For any other agent, attach the output of `fcai skill` to its prompt.
 
 ```bash
-# With Pi (interactive terminal):
-pi --model deepseek-v4.1-flash "draw an inverting buck-boost converter"
+# With Pi:
+pi "draw an inverting buck-boost converter"
 
 # With Antigravity (AGY):
 agy "open fcai gui and sketch a CMOS bandgap reference circuit"
