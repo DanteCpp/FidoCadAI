@@ -421,7 +421,8 @@ scripts/install.sh status      # what is installed where
 scripts/install.sh uninstall
 ```
 
-`fcai skill install` (re)delivers this skill on its own: one canonical copy
+`fcai skill install` is the one installer (`make install` and
+`scripts/install.sh` call it) and (re)delivers this skill on its own: one canonical copy
 (the installed skill directory, or the Omarchy default-agents channel at
 `/usr/share/omarchy/default/agents/skills` when present) with symlinks into
 `~/.agents/skills` and the skills directory of every coding agent found on the
@@ -429,4 +430,5 @@ machine (`~/.claude/skills`, `~/.pi/agent/skills`, `~/.codex/skills`,
 `~/.gemini/skills`, `~/.config/opencode/skills`, …). `fcai skill install DIR`
 links it into a specific agent's skills directory. Symlinks keep a single
 skill on disk, so agents that scan several directories at once do not report
-a duplicate.
+a duplicate. `fcai skill status` lists where it is installed and
+`fcai skill uninstall` removes the links.

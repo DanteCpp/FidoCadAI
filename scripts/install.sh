@@ -519,26 +519,16 @@ do_skill() {
         warn "some skill directories could not be written"
     fi
     if [ "$(id -u)" -eq 0 ] && [ "$RUN_USER" != "root" ]; then
-        for rel in .agents/skills .config/agents/skills .pi/agent/skills .claude/skills \
-                   .codex/skills .gemini/skills .gemini/config/skills .config/opencode/skills \
-                   .config/crush/skills .config/zed/skills .cursor/skills; do
-            if [ -L "$RUN_HOME/$rel/fidocad" ] || [ -e "$RUN_HOME/$rel/fidocad" ]; then
-                chown -hR "$RUN_UID:$RUN_GID" "$RUN_HOME/$rel/fidocad"
-            fi
+        HOME="$RUN_HOME" "$PREFIX/bin/fcai" skill status | while IFS= read -r d; do
+            chown -hR "$RUN_UID:$RUN_GID" "$d"
         done
     fi
 }
 
+# Needs the installed fcai, so it runs before the prefix is removed.
 remove_skill() {
-    for rel in .agents/skills .config/agents/skills .pi/agent/skills .claude/skills \
-               .codex/skills .gemini/skills .gemini/config/skills .config/opencode/skills \
-               .config/crush/skills .config/zed/skills .cursor/skills; do
-        d="$RUN_HOME/$rel/fidocad"
-        if [ -L "$d" ] || [ -f "$d/SKILL.md" ]; then
-            rm -rf "$d"
-            log "removed skill $d"
-        fi
-    done
+    [ -x "$PREFIX/bin/fcai" ] || { warn "fcai not installed; skill links kept"; return 0; }
+    run env HOME="$RUN_HOME" "$PREFIX/bin/fcai" skill uninstall || warn "some skill links could not be removed"
 }
 
 # ---- git auto-update hook ----------------------------------------------
@@ -637,6 +627,9 @@ do_uninstall() {
             exit 1
         fi
     fi
+    if [ "$WITH_SKILL" -eq 1 ]; then
+        remove_skill
+    fi
     for b in fcai fcai-gui; do
         dst="$LINK_DIR/$b"
         if [ -L "$dst" ]; then
@@ -660,9 +653,6 @@ do_uninstall() {
     hook_disable
     remove_path_files
     remove_channel_link
-    if [ "$WITH_SKILL" -eq 1 ]; then
-        remove_skill
-    fi
     log "kept $(user_lib_dir) (your libraries)"
 }
 
@@ -719,13 +709,9 @@ do_status() {
         printf 'git hook: disabled\n'
     fi
     printf 'skill:\n'
-    for rel in .agents/skills .config/agents/skills .pi/agent/skills .claude/skills \
-               .codex/skills .gemini/skills .gemini/config/skills .config/opencode/skills \
-               .config/crush/skills .config/zed/skills .cursor/skills; do
-        if [ -f "$RUN_HOME/$rel/fidocad/SKILL.md" ]; then
-            printf '          %s\n' "$RUN_HOME/$rel/fidocad"
-        fi
-    done
+    if [ -x "$PREFIX/bin/fcai" ]; then
+        HOME="$RUN_HOME" "$PREFIX/bin/fcai" skill status | sed 's/^/          /'
+    fi
 }
 
 case $CMD in

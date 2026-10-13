@@ -113,7 +113,9 @@ test: build/test_core build/fcai
 	  mkdir -p $$d/fidocad && printf 'old\n' > $$d/fidocad/SKILL.md && \
 	  printf 'stale\n' > $$d/fidocad/stale.txt && \
 	  ./build/fcai skill install $$d >/dev/null && \
-	  test -L $$d/fidocad && test -f $$d/fidocad/SKILL.md && test ! -e $$d/fidocad/stale.txt; \
+	  test -L $$d/fidocad && test -f $$d/fidocad/SKILL.md && test ! -e $$d/fidocad/stale.txt && \
+	  FIDO_SKILL_DIRS=$$d ./build/fcai skill status | grep -qx "$$d/fidocad" && \
+	  ./build/fcai skill uninstall $$d >/dev/null && test ! -e $$d/fidocad; \
 	  rc=$$?; rm -rf $$d; exit $$rc
 	$(if $(and $(HAVE_QT),$(HAVE_QT_TEST)),$(MAKE) test-gui)
 
@@ -122,8 +124,8 @@ sanitize:
 	$(MAKE) CFLAGS="-std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -O1 -g -fsanitize=address,undefined" \
 		LDFLAGS="-fsanitize=address,undefined" test
 
-# The agent skill ships in DATADIR and is copied into each agent harness found in the
-# user's home (scripts/install-skill.sh). Staged installs (DESTDIR) never touch $HOME.
+# The agent skill ships in DATADIR; `fcai skill install` links it into the agents found
+# in the user's home. Staged installs (DESTDIR) never touch $HOME.
 install: all
 	install -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(DATADIR)/lib $(DESTDIR)$(DATADIR)/fonts $(DESTDIR)$(DATADIR)/skills
 	install -m 755 build/fcai $(DESTDIR)$(BINDIR)/fcai
@@ -133,11 +135,16 @@ install: all
 	rm -rf $(DESTDIR)$(DATADIR)/skills/fidocad
 	cp -R share/skills/fidocad $(DESTDIR)$(DATADIR)/skills/
 ifeq ($(DESTDIR),)
-	sh scripts/install-skill.sh share/skills/fidocad
+	$(MAKE) install-skill
 endif
 
+# Links the installed skill; under sudo, into the invoking user's home as that user.
 install-skill:
-	sh scripts/install-skill.sh share/skills/fidocad
+	@if [ "$$(id -u)" = 0 ] && [ -n "$${SUDO_USER:-}" ] && [ "$$SUDO_USER" != root ]; then \
+		sudo -u "$$SUDO_USER" -H env FIDO_SKILL_DIRS="$${FIDO_SKILL_DIRS:-}" "$(BINDIR)/fcai" skill install; \
+	else \
+		"$(BINDIR)/fcai" skill install; \
+	fi
 
 # System-wide install under the project's install script (Linux and macOS).
 system-install:

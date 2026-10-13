@@ -34,7 +34,8 @@ static const char *k_help =
     "  gui        Open the drawing editor (fcai-gui) for the user; edits reach\n"
     "             the agent live, Ctrl+Return ends the session\n"
     "  session    Talk to a running GUI (`session --help` lists commands)\n"
-    "  skill      Print the fidocad agent skill; `skill install [DIR...]` installs it\n"
+    "  skill      Print the fidocad agent skill; install, uninstall or locate it\n"
+    "             (`skill --help` lists commands)\n"
     "  style      Persistent drawing preferences (`style --help` lists commands)\n"
     "  help       This help\n"
     "  version    Print version\n"
@@ -804,11 +805,10 @@ static int try_skill_md(void *ctx, const char *dir) {
     return file_exists(sp->out);
 }
 
-static int find_skill_file(const char *argv0, char *out, size_t n) {
+static int find_skill_file(char *out, size_t n) {
     const char *env = getenv("FIDO_SKILL_DIR");
     char cand[4096];
     SkillPath sp;
-    (void)argv0;
     if (env && *env) {
         /* parent of fidocad/ (the installed share/fidocad/skills), or the skill
          * directory itself */
@@ -833,7 +833,7 @@ static int find_skill_file(const char *argv0, char *out, size_t n) {
    otherwise the skill directory next to the binary. Agent directories get
    symlinks to this directory — like the Omarchy default skills — so every
    agent sees one skill and pi deduplicates the entries by real path. */
-static int find_skill_install_dir(const char *argv0, char *out, size_t n) {
+static int find_skill_install_dir(char *out, size_t n) {
     const char *env = getenv("FIDO_SKILL_DIR");
     const char *omarchy = getenv("OMARCHY_PATH");
     char file[4096];
@@ -848,7 +848,7 @@ static int find_skill_install_dir(const char *argv0, char *out, size_t n) {
              (omarchy && *omarchy) ? omarchy : "/usr/share/omarchy");
     snprintf(file, sizeof file, "%s/SKILL.md", cand);
     if (file_exists(file)) { snprintf(out, n, "%s", cand); return 1; }
-    if (!find_skill_file(argv0, file, sizeof file)) return 0;
+    if (!find_skill_file(file, sizeof file)) return 0;
     for (k = fc_strlen(file); k > 0; k--) {
         if (file[k - 1] == '/') { dcut = k - 1; break; }
     }
@@ -960,68 +960,74 @@ static const struct {
     {".config/crush", "skills", 0},
     {".config/zed", "skills", 0},
     {".cursor", "skills", 0},
+    {".hermes/skills", "note-taking", 0}, /* Hermes files skills by category */
     {NULL, NULL, 0},
 };
 
-static int skill_install(const char *srcdir, int argc, char **argv) {
-    char targets[16][4096];
-    const char *dirs[16];
-    const char *home = getenv("HOME");
-    int nd = 0, i, rc = 0;
-
-    if (argc > 0) {
-        for (i = 0; i < argc && nd < 16; i++) dirs[nd++] = argv[i];
-    } else {
-        if (!home || !*home) {
-            fprintf(stderr, "fcai: HOME is not set; pass target directories\n");
-            return 1;
+/* Skills directories to act on: the ones given (or $FIDO_SKILL_DIRS, colon
+   separated), else the agents above; installing skips absent optional ones. */
+static int skill_dirs(int argc, char **argv, int installing, char dirs[][4096], int max) {
+    const char *home = getenv("HOME"), *list = getenv("FIDO_SKILL_DIRS");
+    int i, n = 0;
+    for (i = 0; i < argc && n < max; i++) snprintf(dirs[n++], 4096, "%s", argv[i]);
+    if (argc > 0) return n;
+    if (list && *list) {
+        while (*list && n < max) {
+            size_t len = strcspn(list, ":");
+            if (len) snprintf(dirs[n++], 4096, "%.*s", (int)len, list);
+            list += len + (list[len] == ':');
         }
-        for (i = 0; k_skill_agents[i].parent && nd < 16; i++) {
-            char parent[3072];
-            struct stat st;
-            size_t plen, slen;
-            snprintf(parent, sizeof parent, "%s/%s", home, k_skill_agents[i].parent);
-            if (!k_skill_agents[i].always && stat(parent, &st) != 0) continue;
-            plen = fc_strlen(parent);
-            slen = fc_strlen(k_skill_agents[i].skills);
-            if (plen + 1 + slen >= sizeof targets[nd]) continue;
-            memcpy(targets[nd], parent, plen);
-            targets[nd][plen] = '/';
-            memcpy(targets[nd] + plen + 1, k_skill_agents[i].skills, slen + 1);
-            dirs[nd] = targets[nd];
-            nd++;
-        }
+        return n;
     }
-
-    for (i = 0; i < nd; i++) {
-        char dst[4096];
+    if (!home || !*home) {
+        fprintf(stderr, "fcai: HOME is not set; pass target directories\n");
+        return -1;
+    }
+    for (i = 0; k_skill_agents[i].parent && n < max; i++) {
+        char parent[3072];
         struct stat st;
-        snprintf(dst, sizeof dst, "%s/fidocad", dirs[i]);
+        snprintf(parent, sizeof parent, "%s/%s", home, k_skill_agents[i].parent);
+        if (installing && !k_skill_agents[i].always && stat(parent, &st) != 0) continue;
+        snprintf(dirs[n++], 4096, "%s/%s", parent, k_skill_agents[i].skills);
+    }
+    return n;
+}
+
+/* dir/name into out; 0 when it does not fit. */
+static int path_join(char *out, size_t cap, const char *dir, const char *name) {
+    int n = snprintf(out, cap, "%s/%s", dir, name);
+    return n > 0 && (size_t)n < cap;
+}
+
+/* An entry fcai may replace or remove: a link (dangling or not) or a copy made
+   by an older installer, which holds SKILL.md. Anything else is left alone. */
+static int is_fidocad_skill(const char *dst, const struct stat *st) {
+    char skill[4200];
+    if (S_ISLNK(st->st_mode)) return 1;
+    return S_ISDIR(st->st_mode) && path_join(skill, sizeof skill, dst, "SKILL.md") &&
+           file_exists(skill);
+}
+
+static int skill_install(const char *srcdir, int argc, char **argv) {
+    char dirs[16][4096];
+    int nd = skill_dirs(argc, argv, 1, dirs, 16), i, rc = 0;
+    if (nd < 0) return 1;
+    for (i = 0; i < nd; i++) {
+        char dst[4200];
+        struct stat st;
+        if (!path_join(dst, sizeof dst, dirs[i], "fidocad")) continue;
         if (!mkdir_p(dirs[i])) {
             fprintf(stderr, "fcai: cannot create %s\n", dirs[i]);
             rc = 1;
             continue;
         }
         if (lstat(dst, &st) == 0) {
-            if (S_ISLNK(st.st_mode)) {
-                unlink(dst); /* stale or dangling link: replace it */
-            } else if (S_ISDIR(st.st_mode)) {
-                char skill[4096];
-                size_t dl = fc_strlen(dst);
-                if (dl + 10 > sizeof skill) { rc = 1; continue; }
-                memcpy(skill, dst, dl);
-                memcpy(skill + dl, "/SKILL.md", 10);
-                if (!file_exists(skill)) {
-                    fprintf(stderr, "fcai: %s is not a fidocad skill; leaving it\n", dst);
-                    rc = 1;
-                    continue;
-                }
-                rm_rf(dst); /* a copy made by an older fcai: replace with the link */
-            } else {
-                fprintf(stderr, "fcai: %s exists and is not a directory; leaving it\n", dst);
+            if (!is_fidocad_skill(dst, &st)) {
+                fprintf(stderr, "fcai: %s exists and is not a fidocad skill; leaving it\n", dst);
                 rc = 1;
                 continue;
             }
+            rm_rf(dst); /* a stale link, or a copy made by an older installer */
         }
         if (symlink(srcdir, dst) != 0) {
             fprintf(stderr, "fcai: cannot link %s -> %s\n", dst, srcdir);
@@ -1033,14 +1039,61 @@ static int skill_install(const char *srcdir, int argc, char **argv) {
     return rc;
 }
 
-static int cmd_skill(const char *argv0, int argc, char **argv) {
+/* uninstall removes what install made; status prints each working install. */
+static int skill_scan(int uninstall, int argc, char **argv) {
+    char dirs[16][4096];
+    int nd = skill_dirs(argc, argv, 0, dirs, 16), i, rc = 0;
+    if (nd < 0) return 1;
+    for (i = 0; i < nd; i++) {
+        char dst[4200], skill[4300];
+        struct stat st;
+        if (!path_join(dst, sizeof dst, dirs[i], "fidocad") ||
+            !path_join(skill, sizeof skill, dst, "SKILL.md"))
+            continue;
+        if (!uninstall) {
+            if (file_exists(skill)) printf("%s\n", dst);
+        } else if (lstat(dst, &st) == 0 && is_fidocad_skill(dst, &st)) {
+            if (rm_rf(dst) == 0) {
+                printf("removed %s\n", dst);
+            } else {
+                fprintf(stderr, "fcai: cannot remove %s\n", dst);
+                rc = 1;
+            }
+        }
+    }
+    return rc;
+}
+
+static int cmd_skill(int argc, char **argv) {
     char path[4096];
-    const char *sub = argc > 0 ? argv[0] : NULL;
-    if (!find_skill_file(argv0, path, sizeof path)) {
+    const char *sub = argc > 0 ? argv[0] : "show";
+    if (fc_streq(sub, "-h") || fc_streq(sub, "--help") || fc_streq(sub, "help")) {
+        fputs("usage: fcai skill [show|path]\n"
+              "       fcai skill install [DIR...]    symlinks the skill into each agent's\n"
+              "                                      skills dir (default: ~/.agents/skills,\n"
+              "                                      ~/.pi, ~/.claude, ~/.codex, ...)\n"
+              "       fcai skill uninstall [DIR...]  removes those links\n"
+              "       fcai skill status [DIR...]     lists where the skill is installed\n"
+              "FIDO_SKILL_DIRS (colon separated) replaces the default directories.\n",
+              stdout);
+        return 0;
+    }
+    if (fc_streq(sub, "uninstall")) return skill_scan(1, argc - 1, argv + 1);
+    if (fc_streq(sub, "status")) return skill_scan(0, argc - 1, argv + 1);
+    if (fc_streq(sub, "install")) {
+        char dir[4096];
+        if (!find_skill_install_dir(dir, sizeof dir)) {
+            fprintf(stderr, "fcai: fidocad skill not found (set FIDO_SKILL_DIR)\n");
+            return 1;
+        }
+        make_abs(dir, sizeof dir);
+        return skill_install(dir, argc - 1, argv + 1);
+    }
+    if (!find_skill_file(path, sizeof path)) {
         fprintf(stderr, "fcai: fidocad skill not found (set FIDO_SKILL_DIR)\n");
         return 1;
     }
-    if (!sub || fc_streq(sub, "show") || fc_streq(sub, "print")) {
+    if (fc_streq(sub, "show") || fc_streq(sub, "print")) {
         char *text = NULL;
         size_t len = 0;
         if (fc_read_file(path, &text, &len) != FC_OK) return 1;
@@ -1050,23 +1103,6 @@ static int cmd_skill(const char *argv0, int argc, char **argv) {
     }
     if (fc_streq(sub, "path")) {
         printf("%s\n", path);
-        return 0;
-    }
-    if (fc_streq(sub, "install")) {
-        char dir[4096];
-        if (!find_skill_install_dir(argv0, dir, sizeof dir)) {
-            fprintf(stderr, "fcai: fidocad skill not found (set FIDO_SKILL_DIR)\n");
-            return 1;
-        }
-        make_abs(dir, sizeof dir);
-        return skill_install(dir, argc - 1, argv + 1);
-    }
-    if (fc_streq(sub, "-h") || fc_streq(sub, "--help") || fc_streq(sub, "help")) {
-        fputs("usage: fcai skill [show|path]\n"
-              "       fcai skill install [DIR...]   symlinks the skill into each agent's\n"
-              "                                     skills dir (default: ~/.agents/skills,\n"
-              "                                     ~/.pi, ~/.claude, ~/.codex, ...)\n",
-              stdout);
         return 0;
     }
     fprintf(stderr, "fcai: unknown skill command '%s'\n", sub);
@@ -1097,7 +1133,7 @@ int main(int argc, char **argv) {
 
     if (argc > 1 && fc_streq(argv[1], "gui")) return exec_gui(argv[0], argc - 1, argv + 1);
     if (argc > 1 && fc_streq(argv[1], "session")) return cmd_session(argc - 1, argv + 1);
-    if (argc > 1 && fc_streq(argv[1], "skill")) return cmd_skill(argv[0], argc - 2, argv + 2);
+    if (argc > 1 && fc_streq(argv[1], "skill")) return cmd_skill(argc - 2, argv + 2);
     if (argc > 1 && fc_streq(argv[1], "style")) return fc_cmd_style(argc - 2, argv + 2);
 
     opt_init(&o);
