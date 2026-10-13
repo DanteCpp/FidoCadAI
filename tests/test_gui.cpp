@@ -502,6 +502,11 @@ int main(int argc, char **argv) {
     QTest::mouseMove(c, px(80, 70));
     QTest::mouseRelease(c, Qt::LeftButton, {}, px(80, 70));
     EXPECT(doc.count() == 3 && doc.primFcd(2) == "RV 60 60 80 70 0");
+    /* a plain Shift-click is a click: the second corner finishes the box */
+    QTest::mouseClick(c, Qt::LeftButton, {}, px(60, 90));
+    QTest::mouseClick(c, Qt::LeftButton, Qt::ShiftModifier, px(80, 100));
+    EXPECT(doc.count() == 4 && doc.primFcd(3) == "RV 60 90 80 100 0");
+    doc.undo();
 
     /* place a resistor, rotate it, give it a name */
     c->setMacro("080");

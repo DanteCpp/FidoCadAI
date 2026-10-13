@@ -21,6 +21,19 @@ uint32_t toRgb(const QColor &c) { return (uint32_t)c.rgb() & 0xFFFFFFu; }
 
 QPointF pt(const FcPoint &p) { return QPointF(p.x, p.y); }
 
+QString toolName(Canvas::Tool t) {
+    switch (t) {
+    case Canvas::Select: return "select";
+    case Canvas::Line: return "line";
+    case Canvas::Rect: return "rectangle";
+    case Canvas::Oval: return "ellipse";
+    case Canvas::Dot: return "connection";
+    case Canvas::Text: return "text";
+    case Canvas::Macro: return "symbol";
+    }
+    return QString();
+}
+
 } // namespace
 
 Canvas::Canvas(Document *doc, Settings *settings, const Theme *theme, QWidget *parent)
@@ -30,19 +43,6 @@ Canvas::Canvas(Document *doc, Settings *settings, const Theme *theme, QWidget *p
     setAttribute(Qt::WA_OpaquePaintEvent);
     setMinimumSize(320, 240);
     sheet_ = new KeySheet(theme_, this);
-}
-
-QString Canvas::toolName(Tool t) {
-    switch (t) {
-    case Select: return "select";
-    case Line: return "line";
-    case Rect: return "rectangle";
-    case Oval: return "ellipse";
-    case Dot: return "connection";
-    case Text: return "text";
-    case Macro: return "symbol";
-    }
-    return QString();
 }
 
 int Canvas::grid() const {
@@ -86,7 +86,6 @@ void Canvas::setTool(Tool t) {
         if (onSelectionChanged) onSelectionChanged();
     }
     setCursor(t == Select ? Qt::ArrowCursor : Qt::CrossCursor);
-    if (onToolChanged) onToolChanged();
     status();
     update();
 }
@@ -203,22 +202,6 @@ void Canvas::renderCache() {
     dirty_ = false;
 }
 
-QImage Canvas::renderImage(int w, int h) const {
-    QImage img(w, h, QImage::Format_RGB888);
-    QRectF b = doc_->boundsAll();
-    if (doc_->count() == 0) b = QRectF(0, 0, 100, 100);
-    b.adjust(-5, -5, 5, 5);
-    FcView v;
-    memset(&v, 0, sizeof v);
-    v.scale = std::min(w / b.width(), h / b.height());
-    v.ox = w / 2.0 - b.center().x() * v.scale;
-    v.oy = h / 2.0 - b.center().y() * v.scale;
-    v.bg = 0xFFFFFF;
-    v.tex = settings_->getBool("tex");
-    fc_render_rgb(&doc_->drawing(), doc_->lib(), &v, img.bits(), w, h, (int)img.bytesPerLine());
-    return img;
-}
-
 /* Outline of an expanded drawing; with origins, only what those primitives became. */
 void Canvas::sketch(QPainter &p, const FcDrawing &flat, const QList<int> *origins) const {
     std::vector<char> keep;
@@ -298,6 +281,12 @@ double Canvas::rulerLength() const {
     return std::hypot(ruler_b_.x() - ruler_a_.x(), ruler_b_.y() - ruler_a_.y());
 }
 
+/* Degrees counter-clockwise from +x, as on paper (logical y grows downwards). */
+double Canvas::rulerAngle() const {
+    return std::atan2(-(ruler_b_.y() - ruler_a_.y()), ruler_b_.x() - ruler_a_.x()) * 180.0 /
+           3.14159265358979323846;
+}
+
 /* Measuring ruler, ported from FidoCadJS Ruler.ts: a green line with ticks,
  * plus a box with length in logical units, millimetres and degrees. Drawn in
  * widget space on top of the drawing. */
@@ -342,11 +331,7 @@ void Canvas::drawRuler(QPainter &p) const {
     QFontMetrics fm(f);
     QString t1 = QString::number(lg_len, 'f', 2);
     QString t2 = QString::number(lg_len * 0.127, 'f', 2) + " mm";
-    QString t3 = QString::number(std::atan2(-(ruler_b_.y() - ruler_a_.y()),
-                                            ruler_b_.x() - ruler_a_.x()) *
-                                     180.0 / 3.14159265358979323846,
-                                 'f', 2) +
-                 "°";
+    QString t3 = QString::number(rulerAngle(), 'f', 2) + "°";
     int bw = qMax(qMax(fm.horizontalAdvance(t1), fm.horizontalAdvance(t2)),
                   fm.horizontalAdvance(t3)) +
              8;
@@ -517,10 +502,7 @@ void Canvas::status() {
         s += QString(" · ruler %1 u  %2 mm  %3°")
                  .arg(QString::number(rulerLength(), 'f', 2))
                  .arg(QString::number(rulerLength() * 0.127, 'f', 2))
-                 .arg(QString::number(std::atan2(-(ruler_b_.y() - ruler_a_.y()),
-                                                 ruler_b_.x() - ruler_a_.x()) *
-                                      180.0 / 3.14159265358979323846,
-                                     'f', 2));
+                 .arg(QString::number(rulerAngle(), 'f', 2));
     s += QString(" · zoom %1%").arg((int)std::round(scale_ * 25));
     s += QString(" · <span style=\"color:%1\">layer %2</span>")
              .arg(layerColor(layer()).name(), QString::number(layer()));
@@ -575,6 +557,76 @@ void Canvas::place(QPointF a) {
     }
 }
 
+/* Shift locks the segment being drawn to horizontal or vertical. */
+QPointF Canvas::lineEnd(QPointF s, Qt::KeyboardModifiers mods) const {
+    if (tool_ != Line || !have_start_ || !(mods & Qt::ShiftModifier)) return s;
+    if (std::abs(s.x() - start_.x()) > std::abs(s.y() - start_.y())) s.setY(start_.y());
+    else s.setX(start_.x());
+    return s;
+}
+
+/* Click selection: with add (Ctrl/Shift) toggle the primitive under lg,
+ * otherwise select it, or clear on empty space. Returns it, or -1. */
+int Canvas::selectAt(QPointF lg, bool add) {
+    int h = doc_->hit(lg.x(), lg.y(), 5.0 / scale_);
+    if (h >= 0 && add) {
+        QList<int> s2 = sel_;
+        if (s2.contains(h)) s2.removeAll(h);
+        else s2 << h;
+        setSelection(s2);
+    } else if (h >= 0 && !sel_.contains(h)) {
+        setSelection({h});
+    } else if (h < 0 && !add) {
+        setSelection({});
+    }
+    return h;
+}
+
+void Canvas::addBox(QPointF a, QPointF b) {
+    bool filled = settings_->getBool("filled");
+    QString code = tool_ == Rect ? (filled ? "RP" : "RV") : (filled ? "EP" : "EV");
+    doc_->append(QString("%1 %2 %3 %4 %5 %6")
+                     .arg(code, num(a.x()), num(a.y()), num(b.x()), num(b.y()))
+                     .arg(layer()));
+}
+
+/* A plain left click with a drawing tool at the snapped point s. */
+void Canvas::toolClick(QPointF s, Qt::KeyboardModifiers mods) {
+    switch (tool_) {
+    case Select:
+        break;
+    case Line:
+        if (have_start_) {
+            QPointF b = lineEnd(s, mods);
+            if (b != start_)
+                doc_->append(QString("LI %1 %2 %3 %4 %5")
+                                 .arg(num(start_.x()), num(start_.y()), num(b.x()), num(b.y()))
+                                 .arg(layer()));
+            start_ = b;
+        } else {
+            start_ = s;
+            have_start_ = true;
+        }
+        break;
+    case Rect:
+    case Oval:
+        if (have_start_) {
+            if (s != start_) addBox(start_, s);
+            have_start_ = false;
+        } else {
+            start_ = s;
+            have_start_ = true;
+            op_ = Drawing; /* a drag finishes the box on release */
+        }
+        break;
+    case Dot:
+    case Text:
+    case Macro:
+        place(s);
+        break;
+    }
+}
+
 void Canvas::mousePressEvent(QMouseEvent *e) {
     if (form_) form_->apply(); /* clicking away keeps what was typed */
     /* a new press clears a measurement left on screen from a previous drag */
@@ -609,90 +661,41 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
     }
     if (e->button() != Qt::LeftButton) return;
 
-    switch (tool_) {
-    case Select: {
-        int hh = -1;
-        int hp = handleAt(press_px_, &hh);
-        if (hp >= 0) {
-            auto handle = qMakePair(hp, hh);
-            if (e->modifiers() & Qt::ControlModifier) {
-                if (selected_handles_.contains(handle)) selected_handles_.removeAll(handle);
-                else selected_handles_ << handle;
-                status();
-                update();
-                return;
-            }
-            if (!selected_handles_.contains(handle)) selected_handles_ = {handle};
-            snapshotHandles();
-            drag_prim_ = hp;
-            drag_handle_ = hh;
-            doc_->beginChange();
-            op_ = Resizing;
-            setCursor(Qt::SizeAllCursor);
+    if (tool_ != Select) {
+        toolClick(s, e->modifiers());
+        update();
+        return;
+    }
+    int hh = -1;
+    int hp = handleAt(press_px_, &hh);
+    if (hp >= 0) {
+        auto handle = qMakePair(hp, hh);
+        if (e->modifiers() & Qt::ControlModifier) {
+            if (selected_handles_.contains(handle)) selected_handles_.removeAll(handle);
+            else selected_handles_ << handle;
+            status();
+            update();
             return;
         }
-        int h = doc_->hit(press_lg_.x(), press_lg_.y(), 5.0 / scale_);
-        bool add = e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier);
-        if (h >= 0) {
-            selected_handles_.clear();
-            if (add) {
-                QList<int> s2 = sel_;
-                if (s2.contains(h)) s2.removeAll(h);
-                else s2 << h;
-                setSelection(s2);
-            } else if (!sel_.contains(h)) {
-                setSelection({h});
-            }
-            if (sel_.contains(h)) {
-                op_ = Moving;
-                moved_ = QPointF(0, 0);
-                doc_->beginChange();
-            }
-        } else {
-            if (!add) setSelection({});
-            op_ = Banding;
-        }
-        break;
+        if (!selected_handles_.contains(handle)) selected_handles_ = {handle};
+        snapshotHandles();
+        drag_prim_ = hp;
+        drag_handle_ = hh;
+        doc_->beginChange();
+        op_ = Resizing;
+        setCursor(Qt::SizeAllCursor);
+        return;
     }
-    case Line:
-        if (have_start_) {
-            QPointF b = s;
-            if (e->modifiers() & Qt::ShiftModifier) {
-                if (std::abs(b.x() - start_.x()) > std::abs(b.y() - start_.y())) b.setY(start_.y());
-                else b.setX(start_.x());
-            }
-            if (b != start_)
-                doc_->append(QString("LI %1 %2 %3 %4 %5")
-                                 .arg(num(start_.x()), num(start_.y()), num(b.x()), num(b.y()))
-                                 .arg(layer()));
-            start_ = b;
-        } else {
-            start_ = s;
-            have_start_ = true;
+    int h = selectAt(press_lg_, e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier));
+    if (h < 0) {
+        op_ = Banding;
+    } else {
+        selected_handles_.clear();
+        if (sel_.contains(h)) {
+            op_ = Moving;
+            moved_ = QPointF(0, 0);
+            doc_->beginChange();
         }
-        break;
-    case Rect:
-    case Oval:
-        if (have_start_) {
-            if (s != start_) {
-                QString code = tool_ == Rect ? (settings_->getBool("filled") ? "RP" : "RV")
-                                             : (settings_->getBool("filled") ? "EP" : "EV");
-                doc_->append(QString("%1 %2 %3 %4 %5 %6")
-                                 .arg(code, num(start_.x()), num(start_.y()), num(s.x()), num(s.y()))
-                                 .arg(layer()));
-            }
-            have_start_ = false;
-        } else {
-            start_ = s;
-            have_start_ = true;
-            op_ = Drawing;
-        }
-        break;
-    case Dot:
-    case Text:
-    case Macro:
-        place(s);
-        break;
     }
     update();
 }
@@ -700,11 +703,7 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
 void Canvas::mouseMoveEvent(QMouseEvent *e) {
     QPointF lg = toLogical(e->position());
     has_cursor_ = true;
-    QPointF s = snap(lg);
-    if (tool_ == Line && have_start_ && (e->modifiers() & Qt::ShiftModifier)) {
-        if (std::abs(s.x() - start_.x()) > std::abs(s.y() - start_.y())) s.setY(start_.y());
-        else s.setX(start_.x());
-    }
+    QPointF s = lineEnd(snap(lg), e->modifiers());
     cursor_lg_ = op_ == Banding ? lg : s;
 
     if (op_ == RulerArmed) {
@@ -727,12 +726,8 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
         cursor_lg_ = s;
         update();
     } else if (op_ == Panning) {
-        QPointF d = e->position() - press_px_;
-        if (!d.isNull()) auto_fit_ = false;
-        ox_ += d.x();
-        oy_ += d.y();
+        panBy(e->position() - press_px_);
         press_px_ = e->position();
-        dirty_ = true;
     } else if (op_ == Moving) {
         QPointF want = snap(lg) - snap(press_lg_);
         QPointF step = want - moved_;
@@ -761,41 +756,10 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
             return;
         }
         if (e->button() == Qt::LeftButton) {
-            /* plain Shift-click: do what the press would have done */
-            QPointF s = snap(lg);
-            bool add = e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier);
-            switch (tool_) {
-            case Select: {
-                int h = doc_->hit(lg.x(), lg.y(), 5.0 / scale_);
-                if (h >= 0) {
-                    if (add) {
-                        QList<int> s2 = sel_;
-                        if (s2.contains(h)) s2.removeAll(h);
-                        else s2 << h;
-                        setSelection(s2);
-                    } else if (!sel_.contains(h)) {
-                        setSelection({h});
-                    }
-                } else if (!add) {
-                    setSelection({});
-                }
-                break;
-            }
-            case Line:
-                start_ = s;
-                have_start_ = true;
-                break;
-            case Rect:
-            case Oval:
-                start_ = s;
-                have_start_ = true;
-                break;
-            case Dot:
-            case Text:
-            case Macro:
-                place(s);
-                break;
-            }
+            /* plain Shift-click: what a click does, without a drag to follow */
+            if (tool_ == Select) selectAt(lg, e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier));
+            else toolClick(snap(lg), e->modifiers());
+            op_ = None;
             update();
         }
         return;
@@ -852,11 +816,7 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
         /* dragged a rect/oval: finish on release; a plain click waits for the 2nd corner */
         QPointF s = snap(lg);
         if ((e->position() - press_px_).manhattanLength() > 6 && s != start_) {
-            QString code = tool_ == Rect ? (settings_->getBool("filled") ? "RP" : "RV")
-                                         : (settings_->getBool("filled") ? "EP" : "EV");
-            doc_->append(QString("%1 %2 %3 %4 %5 %6")
-                             .arg(code, num(start_.x()), num(start_.y()), num(s.x()), num(s.y()))
-                             .arg(layer()));
+            addBox(start_, s);
             have_start_ = false;
         }
     }
@@ -971,8 +931,6 @@ void Canvas::keyPressEvent(QKeyEvent *e) {
     }
     QWidget::keyPressEvent(e);
 }
-
-void Canvas::keyReleaseEvent(QKeyEvent *e) { QWidget::keyReleaseEvent(e); }
 
 void Canvas::rotateSelection() {
     if (tool_ == Macro) {

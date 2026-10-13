@@ -21,8 +21,6 @@ public:
     Tool tool() const { return tool_; }
     void setTool(Tool t);
     void setMacro(const QString &key); /* switches to the Macro tool */
-    QString macro() const { return macro_; }
-    static QString toolName(Tool t);
 
     QList<int> selection() const { return sel_; }
     void setSelection(const QList<int> &sel);
@@ -49,15 +47,14 @@ public:
     class KeySheet *keySheet() const { return sheet_; }
     bool rulerVisible() const { return ruler_active_; }
     double rulerLength() const; /* logical units, 0 when no measurement */
+    double rulerAngle() const;
     void cycleLayer(int step); /* [ and ]: layer for new elements, and the selection */
     void nudge(int dx, int dy);
 
-    QImage renderImage(int w, int h) const; /* whole drawing, for vision models */
     QPointF toPixel(QPointF lg) const;     /* logical -> widget coordinates */
     QColor paper() const;                  /* canvas background (palette preview uses it) */
 
     std::function<void()> onSelectionChanged;
-    std::function<void()> onToolChanged;
     std::function<void(const QString &)> onStatus;
     std::function<void()> onToggleBar;                     /* I: bottom bar */
     std::function<void(const QString &)> onSettingChanged; /* [ ] F G changed a setting */
@@ -72,7 +69,6 @@ protected:
     void wheelEvent(QWheelEvent *) override;
     bool event(QEvent *) override; /* touchpad pinch / pan gestures */
     void keyPressEvent(QKeyEvent *) override;
-    void keyReleaseEvent(QKeyEvent *) override;
     void leaveEvent(QEvent *) override;
 
 private:
@@ -86,6 +82,10 @@ private:
     void cancelOp();
     void status();
     void place(QPointF at);
+    QPointF lineEnd(QPointF s, Qt::KeyboardModifiers mods) const;
+    int selectAt(QPointF lg, bool add);
+    void addBox(QPointF a, QPointF b);
+    void toolClick(QPointF s, Qt::KeyboardModifiers mods);
     int handleAt(QPointF px, int *handle_out) const; /* selection control points */
     void snapshotHandles();
     void moveHandles(QPointF delta); /* one shared, bounded translation */
