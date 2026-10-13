@@ -3,6 +3,7 @@
  * Run with QT_QPA_PLATFORM=offscreen. */
 
 #include "../gui/document.h"
+#include "../gui/keysheet.h"
 #include "../gui/props.h"
 #include "../gui/session.h"
 #include "../gui/settings.h"
@@ -532,64 +533,69 @@ int main(int argc, char **argv) {
     QTest::keyClick(c, Qt::Key_Escape);
     EXPECT(c->tool() == Canvas::Select);
 
-    /* K opens the shortcut sheet; typing filters it (Omarchy-style search) */
+    /* K opens the shortcut sheet; typing filters it (Omarchy-style search).
+     * The open sheet has the focus and covers the canvas, so keys and pointer
+     * input go to it. */
+    KeySheet *sheet = c->keySheet();
     QTest::keyClick(c, Qt::Key_K);
-    EXPECT(c->cheatsheetVisible());
-    EXPECT(c->cheatsheetScroll() == 0);
-    QTest::keyClicks(c, "grid");
-    EXPECT(c->cheatsheetQuery() == "grid");
-    QTest::keyClick(c, Qt::Key_Backspace);
-    EXPECT(c->cheatsheetQuery() == "gri");
+    EXPECT(sheet->isVisible());
+    EXPECT(sheet->scroll() == 0);
+    QTest::keyClicks(sheet, "grid");
+    EXPECT(sheet->query() == "grid");
+    QTest::keyClick(sheet, Qt::Key_Backspace);
+    EXPECT(sheet->query() == "gri");
     /* the expanded sheet scrolls with the arrow keys and the wheel */
-    QTest::keyClick(c, Qt::Key_Escape);
+    QTest::keyClick(sheet, Qt::Key_Escape);
     QTest::keyClick(c, Qt::Key_K);
-    QTest::keyClick(c, Qt::Key_Down);
-    QTest::keyClick(c, Qt::Key_Down);
-    EXPECT(c->cheatsheetScroll() > 0);
-    QTest::keyClick(c, Qt::Key_Home);
-    EXPECT(c->cheatsheetScroll() == 0);
-    QTest::keyClick(c, Qt::Key_End);
-    EXPECT(c->cheatsheetScroll() > 0);
-    QTest::keyClick(c, Qt::Key_Escape);
-    EXPECT(!c->cheatsheetVisible());
+    QTest::keyClick(sheet, Qt::Key_Down);
+    QTest::keyClick(sheet, Qt::Key_Down);
+    EXPECT(sheet->scroll() > 0);
+    QTest::keyClick(sheet, Qt::Key_Home);
+    EXPECT(sheet->scroll() == 0);
+    QTest::keyClick(sheet, Qt::Key_End);
+    EXPECT(sheet->scroll() > 0);
+    QTest::keyClick(sheet, Qt::Key_Escape);
+    EXPECT(!sheet->isVisible());
     QTest::keyClick(c, Qt::Key_K);
-    EXPECT(c->cheatsheetVisible() && c->cheatsheetQuery().isEmpty() && c->cheatsheetScroll() == 0);
-    QTest::keyClick(c, Qt::Key_K);
-    EXPECT(!c->cheatsheetVisible());
+    EXPECT(sheet->isVisible() && sheet->query().isEmpty() && sheet->scroll() == 0);
+    QTest::keyClick(sheet, Qt::Key_K);
+    EXPECT(!sheet->isVisible());
 
     /* The sheet has a usable scrollbar and consumes pointer input. */
     QTest::keyClick(c, Qt::Key_K);
-    c->repaint();
-    auto *sheetBar = c->findChild<QScrollBar *>("cheatsheetScrollBar");
+    sheet->repaint();
+    auto *sheetBar = sheet->findChild<QScrollBar *>("cheatsheetScrollBar");
     EXPECT(sheetBar && sheetBar->isVisible() && sheetBar->maximum() > 0);
     if (sheetBar) {
         const QByteArray beforeSheet = doc.fcd();
         const QPointF beforeZoom = c->toPixel(QPointF(100, 100));
-        QTest::mouseClick(c, Qt::LeftButton, {}, c->rect().center());
-        QTest::mouseDClick(c, Qt::LeftButton, {}, c->rect().center());
-        EXPECT(c->cheatsheetVisible() && !c->editing());
-        QWheelEvent wheel(c->rect().center(), c->mapToGlobal(c->rect().center()),
+        QTest::mouseClick(sheet, Qt::LeftButton, {}, sheet->rect().center());
+        QTest::mouseDClick(sheet, Qt::LeftButton, {}, sheet->rect().center());
+        EXPECT(sheet->isVisible() && !c->editing());
+        /* a real click over the canvas is routed to the sheet on top of it */
+        QTest::mouseClick(win.windowHandle(), Qt::LeftButton, {}, c->mapTo(&win, c->rect().center()));
+        EXPECT(sheet->isVisible() && !c->editing() && c->selection().isEmpty());
+        QWheelEvent wheel(sheet->rect().center(), sheet->mapToGlobal(sheet->rect().center()),
                           QPoint(0, -35), QPoint(), Qt::NoButton, Qt::NoModifier,
                           Qt::ScrollUpdate, false);
-        QApplication::sendEvent(c, &wheel);
-        c->repaint();
-        EXPECT(c->cheatsheetScroll() == 35);
+        QApplication::sendEvent(sheet, &wheel);
+        sheet->repaint();
+        EXPECT(sheet->scroll() == 35);
         EXPECT(c->toPixel(QPointF(100, 100)) == beforeZoom);
-        QTest::keyClick(c, Qt::Key_Home);
-        c->repaint();
+        QTest::keyClick(sheet, Qt::Key_Home);
+        sheet->repaint();
         QTest::mouseClick(sheetBar, Qt::LeftButton, {}, QPoint(4, sheetBar->height() - 30));
-        c->repaint();
-        EXPECT(c->cheatsheetVisible() && c->cheatsheetScroll() > 0);
-        QTest::keyClick(c, Qt::Key_End);
-        c->repaint();
-        EXPECT(c->cheatsheetScroll() == sheetBar->maximum());
-        QTest::keyClicks(c, "grid");
-        c->repaint();
-        EXPECT(c->cheatsheetScroll() == 0 && !sheetBar->isVisible());
+        sheet->repaint();
+        EXPECT(sheet->isVisible() && sheet->scroll() > 0);
+        QTest::keyClick(sheet, Qt::Key_End);
+        sheet->repaint();
+        EXPECT(sheet->scroll() == sheetBar->maximum());
+        QTest::keyClicks(sheet, "grid");
+        sheet->repaint();
+        EXPECT(sheet->scroll() == 0 && !sheetBar->isVisible());
         EXPECT(doc.fcd() == beforeSheet);
     }
-    QTest::keyClick(c, Qt::Key_Escape);
-    c->repaint();
+    QTest::keyClick(sheet, Qt::Key_Escape);
     EXPECT(sheetBar && !sheetBar->isVisible());
 
     /* ruler: right-drag measures, the result stays until the next press */

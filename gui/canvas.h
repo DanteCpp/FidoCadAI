@@ -46,9 +46,7 @@ public:
     bool editing() const { return form_ != nullptr; }
     class InlineForm *form() const { return form_; }
     void toggleCheatsheet(); /* K: keybindings, type to search */
-    bool cheatsheetVisible() const { return cheats_; }
-    QString cheatsheetQuery() const { return cheats_query_; }
-    int cheatsheetScroll() const { return cheats_scroll_; }
+    class KeySheet *keySheet() const { return sheet_; }
     bool rulerVisible() const { return ruler_active_; }
     double rulerLength() const; /* logical units, 0 when no measurement */
     void cycleLayer(int step); /* [ and ]: layer for new elements, and the selection */
@@ -121,14 +119,8 @@ private:
     bool have_start_ = false; /* line/rect/oval anchor set */
     QPointF start_;
     class InlineForm *form_ = nullptr;
-    bool cheats_ = false;
-    QString cheats_query_;
-    int cheats_scroll_ = 0;
-    QRect cheats_box_;
-    class QScrollBar *cheats_bar_ = nullptr;
+    class KeySheet *sheet_;
     bool ruler_active_ = false, ruler_dragged_ = false;
     QPointF ruler_a_, ruler_b_; /* logical units */
-    void paintCard(class QPainter &p, const QList<QPair<QString, QString>> &rows,
-                   const QString *search, int *scroll);
     void flipSetting(const QString &key);
 };

@@ -1,5 +1,6 @@
 #include "gui/canvas.h"
 #include "gui/document.h"
+#include "gui/keysheet.h"
 #include "gui/settings.h"
 #include "gui/theme.h"
 #include "gui/window.h"
@@ -804,8 +805,8 @@ int main(int argc, char **argv) {
             QTest::qWait(150);
             win.grab().save("/tmp/fcai_gui_frames/frame_02.png");
 
-            // Frame 4: Close cheatsheet (Esc)
-            QTest::keyClick(win.canvas(), Qt::Key_Escape);
+            // Frame 4: Close cheatsheet (Esc), which has the focus while open
+            QTest::keyClick(win.canvas()->keySheet(), Qt::Key_Escape);
             QTest::qWait(100);
 
             // Frame 5: Ruler halfway

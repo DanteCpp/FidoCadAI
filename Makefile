@@ -32,7 +32,7 @@ HAVE_QT  := $(shell pkg-config --exists $(QT_PKGS) 2>/dev/null && echo 1)
 HAVE_QT_TEST := $(shell pkg-config --exists Qt6Test 2>/dev/null && echo 1)
 QT_CFLAGS = $(shell pkg-config --cflags $(QT_PKGS))
 QT_LIBS   = $(shell pkg-config --libs $(QT_PKGS))
-GUI_SRC  := gui/main.cpp gui/window.cpp gui/canvas.cpp gui/session.cpp gui/document.cpp gui/settings.cpp gui/theme.cpp gui/props.cpp
+GUI_SRC  := gui/main.cpp gui/window.cpp gui/canvas.cpp gui/session.cpp gui/document.cpp gui/settings.cpp gui/theme.cpp gui/props.cpp gui/keysheet.cpp
 GUI_OBJ  := $(patsubst gui/%.cpp,build/gui/%.o,$(GUI_SRC))
 GUI_HDR  := $(wildcard gui/*.h) include/fidocad.h
 

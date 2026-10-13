@@ -1,4 +1,5 @@
 #include "canvas.h"
+#include "keysheet.h"
 #include "props.h"
 
 #include <QApplication>
@@ -9,8 +10,6 @@
 #include <QNativeGestureEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QScrollBar>
-#include <QSignalBlocker>
 #include <QWheelEvent>
 #include <cmath>
 #include <cstring>
@@ -30,14 +29,7 @@ Canvas::Canvas(Document *doc, Settings *settings, const Theme *theme, QWidget *p
     setFocusPolicy(Qt::StrongFocus);
     setAttribute(Qt::WA_OpaquePaintEvent);
     setMinimumSize(320, 240);
-    cheats_bar_ = new QScrollBar(Qt::Vertical, this);
-    cheats_bar_->setObjectName("cheatsheetScrollBar");
-    cheats_bar_->setFocusPolicy(Qt::NoFocus);
-    cheats_bar_->hide();
-    connect(cheats_bar_, &QScrollBar::valueChanged, this, [this](int value) {
-        cheats_scroll_ = value;
-        update();
-    });
+    sheet_ = new KeySheet(theme_, this);
 }
 
 QString Canvas::toolName(Tool t) {
@@ -457,98 +449,11 @@ void Canvas::paintEvent(QPaintEvent *) {
         p.drawRect(r.normalized());
     }
     if (ruler_active_) drawRuler(p);
-    if (cheats_) {
-        QList<QPair<QString, QString>> rows = {
-            {"session", ""},
-            {"Ctrl+Return", "done: save and close"},
-            {"I", "show or hide the bottom info bar"},
-            {"K", "this sheet — type to search, Esc closes"},
-            {"tools", ""},
-            {"S", "select and move"},
-            {"L", "line"},
-            {"B", "rectangle"},
-            {"E", "ellipse"},
-            {"J", "connection dot"},
-            {"T", "text"},
-            {"Ctrl+B", "symbol library: click a macro, then click the canvas"},
-            {"Esc", "finish the operation / back to select / clear selection"},
-            {"right-click", "finish a line, or cancel the active tool"},
-            {"middle-drag", "pan the view"},
-            {"edit", ""},
-            {"drag handle", "reshape selection or move its name/value independently"},
-            {"Ctrl+click handle", "toggle handles, then drag one to move them together"},
-            {"box-select handles", "enclose name/value handles without enclosing a whole element"},
-            {"P", "properties of the selected element"},
-            {"F2", "properties of the selected element"},
-            {"double-click", "properties of the element under the cursor"},
-            {"R", "rotate the selection 90° clockwise"},
-            {"M", "mirror the selection horizontally"},
-            {"arrow keys", "nudge the selection by one grid step"},
-            {"Del", "delete the selection"},
-            {"Backspace", "delete the selection"},
-            {"Ctrl+C", "copy"},
-            {"Ctrl+X", "cut"},
-            {"Ctrl+V", "paste — follows the cursor, click to place"},
-            {"Ctrl+D", "duplicate"},
-            {"Ctrl+A", "select all"},
-            {"Ctrl+Z", "undo"},
-            {"Ctrl+Shift+Z", "redo"},
-            {"Ctrl+Y", "redo"},
-            {"[", "previous layer (also moves the selection)"},
-            {"]", "next layer (also moves the selection)"},
-            {"F", "filled rectangles and ellipses"},
-            {"G", "grid dots on/off"},
-            {"Shift+G", "snap to grid on/off"},
-            {"view", ""},
-            {"wheel", "zoom"},
-            {"two-finger drag", "pan the view (touchpad)"},
-            {"pinch", "zoom at the fingers (touchpad)"},
-            {"+ / =", "zoom in"},
-            {"-", "zoom out"},
-            {"0 / Space", "fit the drawing in the window"},
-            {"right-drag", "ruler: length, mm and angle"},
-            {"Shift+drag", "ruler — works from any tool"},
-            {"Ctrl+S", "save"},
-            {"Ctrl+W", "close the window"},
-        };
-        QList<QPair<QString, QString>> shown;
-        QString q = cheats_query_.trimmed().toLower();
-        if (q.isEmpty()) {
-            shown = rows;
-        } else {
-            QPair<QString, QString> head;
-            QList<QPair<QString, QString>> items;
-            auto hit = [&q](const QPair<QString, QString> &r) {
-                return r.first.toLower().contains(q) || r.second.toLower().contains(q);
-            };
-            auto flush = [&] {
-                bool headMatch = !head.first.isEmpty() && head.first.toLower().contains(q);
-                bool any = false;
-                for (const auto &it : items)
-                    if (headMatch || hit(it)) any = true;
-                if (!any) return;
-                if (!head.first.isEmpty()) shown << head;
-                for (const auto &it : items)
-                    if (headMatch || hit(it)) shown << it;
-            };
-            for (const auto &r : rows) {
-                if (r.second.isEmpty()) {
-                    flush();
-                    head = r;
-                    items.clear();
-                } else {
-                    items << r;
-                }
-            }
-            flush();
-        }
-        paintCard(p, shown, &cheats_query_, &cheats_scroll_);
-    }
-    if (!cheats_) cheats_bar_->hide();
 }
 
 void Canvas::resizeEvent(QResizeEvent *) {
     if (auto_fit_) fit();
+    sheet_->setGeometry(rect());
     dirty_ = true;
 }
 
@@ -672,12 +577,6 @@ void Canvas::place(QPointF a) {
 
 void Canvas::mousePressEvent(QMouseEvent *e) {
     if (form_) form_->apply(); /* clicking away keeps what was typed */
-    if (cheats_) {
-        if (!cheats_box_.contains(e->position().toPoint())) toggleCheatsheet();
-        setFocus();
-        update();
-        return;
-    }
     /* a new press clears a measurement left on screen from a previous drag */
     if (ruler_active_) ruler_active_ = false;
     setFocus();
@@ -799,7 +698,6 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
 }
 
 void Canvas::mouseMoveEvent(QMouseEvent *e) {
-    if (cheats_) return;
     QPointF lg = toLogical(e->position());
     has_cursor_ = true;
     QPointF s = snap(lg);
@@ -848,7 +746,6 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
 }
 
 void Canvas::mouseReleaseEvent(QMouseEvent *e) {
-    if (cheats_) return;
     QPointF lg = toLogical(e->position());
     if (op_ == RulerArmed) {
         op_ = None;
@@ -967,7 +864,6 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
 }
 
 void Canvas::mouseDoubleClickEvent(QMouseEvent *e) {
-    if (cheats_) return;
     if (tool_ == Line) {
         finishLine();
         return;
@@ -981,12 +877,6 @@ void Canvas::mouseDoubleClickEvent(QMouseEvent *e) {
 }
 
 void Canvas::wheelEvent(QWheelEvent *e) {
-    if (cheats_) {
-        int d = e->pixelDelta().isNull() ? e->angleDelta().y() / 2 : e->pixelDelta().y();
-        cheats_scroll_ = qBound(0, cheats_scroll_ - d, cheats_bar_->maximum());
-        update();
-        return;
-    }
     QPoint pd = e->pixelDelta();
     if (!pd.isNull() && !(e->modifiers() & Qt::ControlModifier)) {
         /* touchpad two-finger scroll pans */
@@ -1003,7 +893,6 @@ bool Canvas::event(QEvent *e) {
     /* Wayland (zwp_pointer_gestures), X11 XInput 2.4 and macOS deliver
        touchpad pinch as native gestures; value() is the incremental scale */
     auto *g = static_cast<QNativeGestureEvent *>(e);
-    if (cheats_) return true;
     switch (g->gestureType()) {
     case Qt::ZoomNativeGesture:
         if (g->value() > -1.0) zoomBy(1.0 + g->value(), g->position());
@@ -1029,42 +918,6 @@ void Canvas::leaveEvent(QEvent *) {
 /* ---------- keyboard-level actions (bound as QActions by the window) ---------- */
 
 void Canvas::keyPressEvent(QKeyEvent *e) {
-    if (cheats_) {
-        if (e->key() == Qt::Key_K || e->key() == Qt::Key_Escape || e->key() == Qt::Key_Return ||
-            e->key() == Qt::Key_Enter) {
-            if (e->key() == Qt::Key_K) {
-                toggleCheatsheet();
-            } else {
-                cheats_ = false;
-                update();
-            }
-            return;
-        }
-        if (e->key() == Qt::Key_Backspace) {
-            cheats_query_.chop(1);
-            cheats_scroll_ = 0;
-            update();
-            return;
-        }
-        switch (e->key()) {
-        case Qt::Key_Down: cheats_scroll_ += 24; update(); return;
-        case Qt::Key_Up: cheats_scroll_ -= 24; update(); return;
-        case Qt::Key_PageDown: cheats_scroll_ += qMax(24, height() * 2 / 3); update(); return;
-        case Qt::Key_PageUp: cheats_scroll_ -= qMax(24, height() * 2 / 3); update(); return;
-        case Qt::Key_Home: cheats_scroll_ = 0; update(); return;
-        case Qt::Key_End: cheats_scroll_ = 1 << 30; update(); return;
-        case Qt::Key_Left:
-        case Qt::Key_Right: return; /* no nudging while the sheet is open */
-        default: break;
-        }
-        if (!e->text().isEmpty() && e->text().at(0).isPrint()) {
-            cheats_query_ += e->text();
-            cheats_scroll_ = 0;
-            update();
-            return;
-        }
-        return;
-    }
     const auto mods = e->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
     if (!mods) {
         bool shift = e->modifiers() & Qt::ShiftModifier;
@@ -1216,116 +1069,6 @@ void Canvas::flipSetting(const QString &key) {
 }
 
 void Canvas::toggleCheatsheet() {
-    cheats_ = !cheats_;
-    if (cheats_) {
-        cheats_query_.clear();
-        cheats_scroll_ = 0;
-    }
-    if (!cheats_) cheats_bar_->hide();
-    update();
-}
-
-void Canvas::paintCard(QPainter &p, const QList<QPair<QString, QString>> &rows,
-                       const QString *search, int *scroll) {
-    p.save();
-    QFont sheetFont = font();
-    sheetFont.setPointSizeF(qMax(14.0, sheetFont.pointSizeF() + 3.0));
-    p.setFont(sheetFont);
-    QFontMetrics fm(sheetFont);
-    const int pad = 20, gap = 24, rowPad = 12;
-    const int w = qMin(width() - 24, 1000);
-    const int h = qMin(height() - 24, 640);
-    const QRect box((width() - w) / 2, (height() - h) / 2, w, h);
-    cheats_box_ = box;
-    p.setPen(QPen(theme_->accent, 2));
-    p.setBrush(theme_->bg);
-    p.drawRect(box);
-
-    /* Fixed search header and footer, like Omarchy's keybinding launcher. */
-    const int headerH = fm.height() + 2 * rowPad;
-    const QRect header = box.adjusted(pad, 0, -pad, 0);
-    p.setPen(theme_->accent);
-    p.drawText(QRect(header.left(), header.top(), fm.horizontalAdvance(">"), headerH),
-               Qt::AlignVCenter, ">");
-    p.setPen(search && !search->isEmpty() ? theme_->fg : theme_->fg_dim);
-    const QString query = search && !search->isEmpty() ? *search + "|" : "Search keybindings…";
-    p.drawText(QRect(header.left() + gap, header.top(), header.width() - gap, headerH),
-               Qt::AlignVCenter | Qt::AlignLeft,
-               fm.elidedText(query, Qt::ElideLeft, header.width() - gap));
-    p.setPen(theme_->muted);
-    p.drawLine(box.left(), box.top() + headerH, box.right(), box.top() + headerH);
-
-    const int footerH = fm.height() + rowPad;
-    const int viewTop = box.top() + headerH + 8;
-    const int viewH = qMax(1, h - headerH - footerH - 16);
-    const int contentW = w - 2 * pad - 12;
-    int keyW = 0;
-    for (const auto &r : rows)
-        if (!r.second.isEmpty()) keyW = qMax(keyW, fm.horizontalAdvance(r.first));
-    const bool stacked = contentW < keyW + gap + fm.horizontalAdvance("properties of element");
-    const int valueW = stacked ? contentW : contentW - keyW - gap;
-    QList<int> heights;
-    int contentH = 0;
-    for (const auto &r : rows) {
-        int rowH;
-        if (r.second.isEmpty()) {
-            rowH = fm.height() + rowPad;
-        } else {
-            const int textH = fm.boundingRect(QRect(0, 0, valueW, 10000),
-                                               Qt::TextWordWrap, r.second).height();
-            rowH = qMax(fm.height(), textH) + rowPad + (stacked ? fm.height() + 4 : 0);
-        }
-        heights << rowH;
-        contentH += rowH;
-    }
-    const int maxScroll = qMax(0, contentH - viewH);
-    const int sc = scroll ? qBound(0, *scroll, maxScroll) : 0;
-    if (scroll) *scroll = sc;
-    {
-        const QSignalBlocker blocked(cheats_bar_);
-        cheats_bar_->setRange(0, maxScroll);
-        cheats_bar_->setPageStep(viewH);
-        cheats_bar_->setSingleStep(fm.height() + rowPad);
-        cheats_bar_->setValue(sc);
-        cheats_bar_->setGeometry(box.right() - 13, viewTop, 8, viewH);
-        cheats_bar_->setVisible(maxScroll > 0);
-    }
-
-    p.save();
-    p.setClipRect(QRect(box.left() + pad, viewTop, contentW, viewH));
-    int cy = viewTop - sc;
-    for (int i = 0; i < rows.size(); ++i) {
-        const auto &r = rows[i];
-        if (r.second.isEmpty()) {
-            p.setPen(theme_->fg_dim);
-            p.drawText(QRect(box.left() + pad, cy, contentW, heights[i]),
-                       Qt::AlignVCenter | Qt::AlignLeft, r.first.toUpper());
-        } else {
-            p.setPen(theme_->accent);
-            p.drawText(QRect(box.left() + pad, cy + rowPad / 2, stacked ? contentW : keyW, fm.height()),
-                       Qt::AlignLeft | Qt::AlignTop, r.first);
-            p.setPen(theme_->fg);
-            const int vx = box.left() + pad + (stacked ? 0 : keyW + gap);
-            const int vy = cy + rowPad / 2 + (stacked ? fm.height() + 4 : 0);
-            p.drawText(QRect(vx, vy, valueW, heights[i] - (vy - cy)),
-                       Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, r.second);
-        }
-        cy += heights[i];
-    }
-    if (rows.isEmpty()) {
-        p.setPen(theme_->fg_dim);
-        p.drawText(QRect(box.left() + pad, viewTop, contentW, viewH),
-                   Qt::AlignCenter, "No matching keybindings");
-    }
-    p.restore();
-
-    const int footerY = box.bottom() - footerH;
-    p.setPen(theme_->muted);
-    p.drawLine(box.left(), footerY, box.right(), footerY);
-    p.setPen(theme_->fg_dim);
-    const QString hint = w < 620 ? "↑ ↓  Scroll   ·   Esc  Close"
-                                 : "↑ ↓ / PgUp PgDn  Scroll   ·   Esc  Close";
-    p.drawText(QRect(box.left() + pad, footerY, w - 2 * pad, footerH),
-               Qt::AlignVCenter | Qt::AlignLeft, fm.elidedText(hint, Qt::ElideRight, w - 2 * pad));
-    p.restore();
+    if (sheet_->isVisible()) sheet_->dismiss();
+    else sheet_->open();
 }
