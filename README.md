@@ -6,7 +6,9 @@ FidoCadAI gives you and your AI agent a shared drawing canvas. Ask for a circuit
 
 The conversation stays in your terminal. The drawing stays open beside it, and you can edit it by hand at any point.
 
-You can use FidoCadAI to draw schematics and design simple PCB layouts. I find it particularly useful as a companion for thinking through a circuit, an idea or a system. The drawing gives the conversation something concrete to work with: a way to explore an arrangement, question it and develop it further.
+I've used FidoCadJ since high school, through university, my PhD and the years since. It has been a blank page for thinking: somewhere to sketch circuits, systems and ideas of all kinds. FidoCadAI brings an agent into that way of working.
+
+You can use it to draw schematics and design simple PCB layouts, or as a companion for exploring an idea. The drawing gives the conversation something concrete to work with: a way to explore an arrangement, question it and develop it further.
 
 ## An example session
 
@@ -18,13 +20,13 @@ Drawing a buck converter with Pi:
 
 ## Working with the drawing
 
-I come from chip design, and the keyboard shortcuts borrow from Cadence and other editors I like. Language is the main way to ask for work, while direct editing lets you make a small adjustment where you see it. Both are part of the same session.
+I come from chip design, so some keybindings and canvas navigation borrow from tools such as Cadence. The interface also draws on Omarchy, on macOS for trackpad navigation, and on FidoCadJ for ideas such as rulers and shortcuts for drawing primitives.
 
 The interface is deliberately simple. The drawing fills the window, with tools available from the keyboard when you need them. You can move between conversation and direct editing without leaving the drawing or interrupting the session. The aim is to keep your attention on the idea you are working through.
 
 ![Working in the FidoCadAI drawing window](docs/images/gui_features.gif)
 
-FidoCadAI ships with a skill: written instructions that teach an agent how to use the tools. It also carries some of my own taste in schematic drawing. You can ask the agent to remember your drawing preferences for future sessions, or enable learning so it saves preferences from your explicit feedback.
+FidoCadAI ships with a skill: written instructions that teach an agent how to use the tools. It carries some of my own preferences in schematic drawing as a starting point. Memory and style learning are enabled by default: the agent learns from your feedback, remembers your preferences across sessions and applies them to later drawings. Over time, the drawings reflect more of your own style.
 
 ## Why it is built this way
 
