@@ -6,31 +6,33 @@ FidoCadAI gives you and your AI agent a shared drawing canvas. Ask for a circuit
 
 The conversation stays in your terminal. The drawing stays open beside it, and you can edit it by hand at any point.
 
+You can use FidoCadAI to draw schematics and design simple PCB layouts. I find it particularly useful as a companion for thinking through a circuit, an idea or a system. The drawing gives the conversation something concrete to work with: a way to explore an arrangement, question it and develop it further.
+
 ## An example session
 
-In this session, Pi draws a buck converter from the request “Draw a simple 15 V to 12 V buck converter.” The recording is shortened: agent responses are accelerated and waiting periods are removed.
+Drawing a buck converter with Pi:
 
-![Real Pi session: type a buck converter request, select COUT in the GUI, and ask Pi to change it from 220u to 470u](docs/images/pi_buck_selection.gif)
+![Pi drawing and editing a buck converter in FidoCadAI](docs/images/pi_buck_selection.gif)
 
-Once the circuit is drawn, click the output capacitor and ask, “Set this capacitor to 470u.” The selection tells the agent which component you mean. Pi changes its value from 220u to 470u and leaves it highlighted.
-
-The [drawing, symbol library and session details](playground/buck-demo/) are included. Component values are illustrative; this example demonstrates drawing and editing a circuit.
+[Drawing and symbol library](playground/buck-demo/)
 
 ## Working with the drawing
 
 I come from chip design, and the keyboard shortcuts borrow from Cadence and other editors I like. Language is the main way to ask for work, while direct editing lets you make a small adjustment where you see it. Both are part of the same session.
 
-The drawing window has no permanent toolbars or menus. You can bring up a symbol library or a searchable shortcut guide when you need one. Labels have their own handles, so you can move a component's name or value without moving the component. A ruler measures distances and angles on the canvas.
+The interface is deliberately simple. The drawing fills the window, with tools available from the keyboard when you need them. You can move between conversation and direct editing without leaving the drawing or interrupting the session. The aim is to keep your attention on the idea you are working through.
 
-![FidoCadAI GUI features: sidebar, keybindings cheatsheet, and ruler](docs/images/gui_features.gif)
+![Working in the FidoCadAI drawing window](docs/images/gui_features.gif)
 
 FidoCadAI ships with a skill: written instructions that teach an agent how to use the tools. It also carries some of my own taste in schematic drawing. You can ask the agent to remember your drawing preferences for future sessions, or enable learning so it saves preferences from your explicit feedback.
 
 ## Why it is built this way
 
-A FidoCad drawing is plain text. An agent can read and change it, and you can track those changes in Git. The format is small enough to explain in a few pages, leaving more of the agent's context available for the design itself. The drawings remain editable files that you can keep and share.
+A FidoCad drawing is plain, human-readable text. Its simple commands make it possible for a language model to infer how to draw from examples, even before reading the specification. The essentials of the drawing language fit on a single page, so explaining it takes little of the agent's context and leaves room for the design itself. You can also read the files yourself, track changes in Git and share drawings that remain editable.
 
-The agent works through a command-line tool, `fcai`, while you see the result in `fcai-gui`. It can draw, render the result, inspect it and make corrections. Keeping that cycle quick matters, so the core is written in C11 with only the C standard library as a dependency. The drawing window uses Qt6.
+I chose C over Rust because of its long history and the large body of established code available for language models to learn from. I wanted the implementation to be straightforward for agents to read and extend, as well as fast to run. The core and command-line tool are lean C11 programs with no external dependencies beyond the C standard library. The drawing window uses Qt6.
+
+The agent works through the command-line tool, `fcai`, while you see the result in `fcai-gui`. It draws, renders, inspects and corrects. Keeping that cycle quick lets it check its work visually as the drawing develops.
 
 The language model interprets your requests and makes the design decisions, so results depend on the model you use. The tools let it inspect the drawing's syntax, wire geometry and appearance; those checks do not establish that a circuit will work electrically.
 
