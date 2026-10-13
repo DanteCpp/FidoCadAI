@@ -6,7 +6,7 @@ FidoCadAI gives you and your AI agent a shared drawing canvas. Ask for a circuit
 
 The conversation stays in your terminal. The drawing stays open beside it, and you can edit it by hand at any point.
 
-I've used FidoCadJ since high school, through university, my PhD and the years since. It has been a blank page for thinking: somewhere to sketch circuits, systems and ideas of all kinds. FidoCadAI brings an agent into that way of working.
+I've used FidoCadJ since high school, through university, and the years since. It has been a blank page for thinking: somewhere to sketch circuits, systems and ideas of all kinds. FidoCadAI brings an agent into that way of working.
 
 You can use it to draw schematics and design simple PCB layouts, or as a companion for exploring an idea. The drawing gives the conversation something concrete to work with: a way to explore an arrangement, question it and develop it further.
 
