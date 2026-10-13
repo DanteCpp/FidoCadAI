@@ -72,7 +72,6 @@ typedef struct {
     FcTexOp *ops;
     int n, cap;
     float w, h, d;
-    int ok;
 } FcTexGeom;
 
 int fc_tex_split(const char *text, FcTexSeg *out, int maxn);

@@ -634,7 +634,7 @@ static void draw_math_run(Raster *r, const char *latex, int n, int display, floa
     buf[n] = 0;
     sx = em / 12.0f;
     sy = em / 12.0f;
-    if (!fc_tex_compile(buf, display, &g) || !g.ok) {
+    if (!fc_tex_compile(buf, display, &g)) {
         *pen += draw_cp_stroke(r, '$', *pen, sx, sy, 0, 0, 0, x0, y0, ca, sa, mirror, rgb, a);
         draw_plain_run(r, buf, n, pen, 0, sx, sy, 0, 0, 0, x0, y0, ca, sa, mirror, rgb, a, -1, 0,
                        0, 1);

@@ -369,6 +369,19 @@ static void test_tex(void) {
     w = h = d = 0;
     EXPECT(fc_tex_measure("-x", 0, &w, &h, &d) == 1);
     EXPECT(w < 1.5f); /* a leading sign stays unary, no space */
+    {
+        /* a typed symbol is the same table row as its command, and an
+         * unknown typed character does not swallow the rest of the formula */
+        FcTexGeom a, b;
+        fc_tex_compile("\\zeta", 0, &a);
+        fc_tex_compile("\xce\xb6", 0, &b);
+        EXPECT(a.n == 1 && b.n == 1 && a.ops[0].glyph == b.ops[0].glyph);
+        fc_tex_geom_free(&a);
+        fc_tex_geom_free(&b);
+        fc_tex_compile("a \xe2\x89\xa4 b \xe2\x9c\x93 c", 0, &a); /* a ≤ b ✓ c */
+        EXPECT(a.n == 5 && a.ops[3].glyph == '?' && a.ops[4].glyph == 'c');
+        fc_tex_geom_free(&a);
+    }
     fc_drawing_init(&dr);
     fc_parse(&dr,
              "[FIDOCAD]\n"

@@ -75,7 +75,7 @@ typedef struct Node {
 } Node;
 
 typedef struct {
-    const char *p;
+    const char *p, *end;
     FcArena *arena;
     int err;
     int display;
@@ -98,129 +98,133 @@ typedef enum {
 
 enum { ST_ROMAN = 1, ST_BOLD = 2, ST_ITAL = 4, ST_UP = 8 };
 
+/* One row per command. Symbols also carry the Unicode code point that types
+ * them directly (0 = none), so `\alpha` and a typed alpha are the same symbol. */
 typedef struct {
     const char *name;
     CmdKind kind;
     int glyph;
     float space;
     int style;
+    int cp;
 } Cmd;
 
 static const Cmd k_cmd[] = {
-    {"alpha", CMD_SYM, MG(MG_ALPHA), 0, 0},
-    {"beta", CMD_SYM, MG(MG_BETA), 0, 0},
-    {"gamma", CMD_SYM, MG(MG_GAMMA), 0, 0},
-    {"delta", CMD_SYM, MG(MG_DELTA), 0, 0},
-    {"epsilon", CMD_SYM, MG(MG_EPS), 0, 0},
-    {"varepsilon", CMD_SYM, MG(MG_EPS), 0, 0},
-    {"zeta", CMD_SYM, MG(MG_ZETA), 0, 0},
-    {"eta", CMD_SYM, MG(MG_ETA), 0, 0},
-    {"theta", CMD_SYM, MG(MG_THETA), 0, 0},
-    {"vartheta", CMD_SYM, MG(MG_THETA), 0, 0},
-    {"iota", CMD_SYM, MG(MG_IOTA), 0, 0},
-    {"kappa", CMD_SYM, MG(MG_KAPPA), 0, 0},
-    {"lambda", CMD_SYM, MG(MG_LAM), 0, 0},
-    {"mu", CMD_SYM, MG(MG_MU), 0, 0},
-    {"nu", CMD_SYM, MG(MG_NU), 0, 0},
-    {"xi", CMD_SYM, MG(MG_XI), 0, 0},
-    {"pi", CMD_SYM, MG(MG_PI), 0, 0},
-    {"varpi", CMD_SYM, MG(MG_PI), 0, 0},
-    {"rho", CMD_SYM, MG(MG_RHO), 0, 0},
-    {"sigma", CMD_SYM, MG(MG_SIGMA), 0, 0},
-    {"tau", CMD_SYM, MG(MG_TAU), 0, 0},
-    {"upsilon", CMD_SYM, MG(MG_UPS), 0, 0},
-    {"phi", CMD_SYM, MG(MG_PHI), 0, 0},
-    {"varphi", CMD_SYM, MG(MG_PHI), 0, 0},
-    {"chi", CMD_SYM, MG(MG_CHI), 0, 0},
-    {"psi", CMD_SYM, MG(MG_PSI), 0, 0},
-    {"omega", CMD_SYM, MG(MG_OMEGA), 0, 0},
-    {"Gamma", CMD_SYM, MG(MG_GAMMA_U), 0, 0},
-    {"Delta", CMD_SYM, MG(MG_DELTA_U), 0, 0},
-    {"Theta", CMD_SYM, MG(MG_THETA_U), 0, 0},
-    {"Lambda", CMD_SYM, MG(MG_LAM_U), 0, 0},
-    {"Xi", CMD_SYM, MG(MG_XI_U), 0, 0},
-    {"Pi", CMD_SYM, MG(MG_PI_U), 0, 0},
-    {"Sigma", CMD_SYM, MG(MG_SIGMA_U), 0, 0},
-    {"Phi", CMD_SYM, MG(MG_PHI_U), 0, 0},
-    {"Psi", CMD_SYM, MG(MG_PSI_U), 0, 0},
-    {"Omega", CMD_SYM, MG(MG_OMEGA_U), 0, 0},
-    {"ohm", CMD_SYM, MG(MG_OMEGA_U), 0, 0},
-    {"pm", CMD_SYM, MG(MG_PM), 0, 0},
-    {"mp", CMD_SYM, MG(MG_PM), 0, 0},
-    {"cdot", CMD_SYM, MG(MG_CDOT), 0, 0},
-    {"times", CMD_SYM, MG(MG_TIMES), 0, 0},
-    {"div", CMD_SYM, MG(MG_DIV), 0, 0},
-    {"circ", CMD_SYM, MG(MG_CIRC), 0, 0},
-    {"degree", CMD_SYM, MG(MG_DEGREE), 0, 0},
-    {"infty", CMD_SYM, MG(MG_INF), 0, 0},
-    {"inf", CMD_SYM, MG(MG_INF), 0, 0},
-    {"leq", CMD_SYM, MG(MG_LEQ), 0, 0},
-    {"le", CMD_SYM, MG(MG_LEQ), 0, 0},
-    {"geq", CMD_SYM, MG(MG_GEQ), 0, 0},
-    {"ge", CMD_SYM, MG(MG_GEQ), 0, 0},
-    {"neq", CMD_SYM, MG(MG_NEQ), 0, 0},
-    {"ne", CMD_SYM, MG(MG_NEQ), 0, 0},
-    {"approx", CMD_SYM, MG(MG_APPROX), 0, 0},
-    {"equiv", CMD_SYM, MG(MG_EQUIV), 0, 0},
-    {"partial", CMD_SYM, MG(MG_PARTIAL), 0, 0},
-    {"nabla", CMD_SYM, MG(MG_NABLA), 0, 0},
-    {"int", CMD_SYM, MG(MG_INT), 0, 0},
-    {"sum", CMD_SYM, MG(MG_SIGMA_U), 0, 0},
-    {"prod", CMD_SYM, MG(MG_PI_U), 0, 0},
-    {"ldots", CMD_SYM, MG(MG_ELLIPSIS), 0, 0},
-    {"dots", CMD_SYM, MG(MG_ELLIPSIS), 0, 0},
-    {"cdots", CMD_SYM, MG(MG_ELLIPSIS), 0, 0},
-    {"to", CMD_SYM, MG(MG_RARR), 0, 0},
-    {"rightarrow", CMD_SYM, MG(MG_RARR), 0, 0},
-    {"leftarrow", CMD_SYM, MG(MG_LARR), 0, 0},
-    {"prime", CMD_SYM, MG(MG_PRIME), 0, 0},
-    {"frac", CMD_FRAC, 0, 0, 0},
-    {"dfrac", CMD_FRAC, 0, 0, 0},
-    {"tfrac", CMD_FRAC, 0, 0, 0},
-    {"sqrt", CMD_SQRT, 0, 0, 0},
-    {"overline", CMD_OVER, 0, 0, 0},
-    {"bar", CMD_OVER, 0, 0, 0},
-    {"vec", CMD_OVER, 0, 0, 0},
-    {"hat", CMD_OVER, 0, 0, 0},
-    {"mathrm", CMD_STYLE, 0, 0, ST_ROMAN},
-    {"textrm", CMD_STYLE, 0, 0, ST_ROMAN},
-    {"rm", CMD_STYLE, 0, 0, ST_ROMAN},
-    {"text", CMD_STYLE, 0, 0, ST_ROMAN | ST_UP},
-    {"operatorname", CMD_STYLE, 0, 0, ST_ROMAN | ST_UP},
-    {"mathbf", CMD_STYLE, 0, 0, ST_BOLD},
-    {"textbf", CMD_STYLE, 0, 0, ST_BOLD},
-    {"bf", CMD_STYLE, 0, 0, ST_BOLD},
-    {"mathit", CMD_STYLE, 0, 0, ST_ITAL},
-    {"textit", CMD_STYLE, 0, 0, ST_ITAL},
-    {"it", CMD_STYLE, 0, 0, ST_ITAL},
-    {",", CMD_SPACE, 0, 0.17f, 0},
-    {":", CMD_SPACE, 0, 0.22f, 0},
-    {";", CMD_SPACE, 0, 0.28f, 0},
-    {"!", CMD_SPACE, 0, -0.17f, 0},
-    {"quad", CMD_SPACE, 0, 1.0f, 0},
-    {"qquad", CMD_SPACE, 0, 2.0f, 0},
-    {" ", CMD_SPACE, 0, 0.35f, 0},
-    {"sin", CMD_FUNC, 0, 0, 0},
-    {"cos", CMD_FUNC, 0, 0, 0},
-    {"tan", CMD_FUNC, 0, 0, 0},
-    {"log", CMD_FUNC, 0, 0, 0},
-    {"ln", CMD_FUNC, 0, 0, 0},
-    {"exp", CMD_FUNC, 0, 0, 0},
-    {"min", CMD_FUNC, 0, 0, 0},
-    {"max", CMD_FUNC, 0, 0, 0},
-    {"lim", CMD_FUNC, 0, 0, 0},
-    {"arg", CMD_FUNC, 0, 0, 0},
-    {"det", CMD_FUNC, 0, 0, 0},
-    {"left", CMD_LEFT, 0, 0, 0},
-    {"right", CMD_LEFT, 0, 0, 0},
-    {"big", CMD_LEFT, 0, 0, 0},
-    {"Big", CMD_LEFT, 0, 0, 0},
-    {"bigg", CMD_LEFT, 0, 0, 0},
-    {"Bigg", CMD_LEFT, 0, 0, 0},
-    {"displaystyle", CMD_SKIP, 0, 0, 0},
-    {"textstyle", CMD_SKIP, 0, 0, 0},
-    {"scriptstyle", CMD_SKIP, 0, 0, 0},
-    {NULL, CMD_SYM, 0, 0, 0}};
+    {"alpha", CMD_SYM, MG(MG_ALPHA), 0, 0, 0x3B1},
+    {"beta", CMD_SYM, MG(MG_BETA), 0, 0, 0x3B2},
+    {"gamma", CMD_SYM, MG(MG_GAMMA), 0, 0, 0x3B3},
+    {"delta", CMD_SYM, MG(MG_DELTA), 0, 0, 0x3B4},
+    {"epsilon", CMD_SYM, MG(MG_EPS), 0, 0, 0x3F5},
+    {"varepsilon", CMD_SYM, MG(MG_EPS), 0, 0, 0x3B5},
+    {"zeta", CMD_SYM, MG(MG_ZETA), 0, 0, 0x3B6},
+    {"eta", CMD_SYM, MG(MG_ETA), 0, 0, 0x3B7},
+    {"theta", CMD_SYM, MG(MG_THETA), 0, 0, 0x3B8},
+    {"vartheta", CMD_SYM, MG(MG_THETA), 0, 0, 0x3D1},
+    {"iota", CMD_SYM, MG(MG_IOTA), 0, 0, 0x3B9},
+    {"kappa", CMD_SYM, MG(MG_KAPPA), 0, 0, 0x3BA},
+    {"lambda", CMD_SYM, MG(MG_LAM), 0, 0, 0x3BB},
+    {"mu", CMD_SYM, MG(MG_MU), 0, 0, 0x3BC},
+    {"nu", CMD_SYM, MG(MG_NU), 0, 0, 0x3BD},
+    {"xi", CMD_SYM, MG(MG_XI), 0, 0, 0x3BE},
+    {"pi", CMD_SYM, MG(MG_PI), 0, 0, 0x3C0},
+    {"varpi", CMD_SYM, MG(MG_PI), 0, 0, 0x3D6},
+    {"rho", CMD_SYM, MG(MG_RHO), 0, 0, 0x3C1},
+    {"sigma", CMD_SYM, MG(MG_SIGMA), 0, 0, 0x3C3},
+    {"tau", CMD_SYM, MG(MG_TAU), 0, 0, 0x3C4},
+    {"upsilon", CMD_SYM, MG(MG_UPS), 0, 0, 0x3C5},
+    {"phi", CMD_SYM, MG(MG_PHI), 0, 0, 0x3D5},
+    {"varphi", CMD_SYM, MG(MG_PHI), 0, 0, 0x3C6},
+    {"chi", CMD_SYM, MG(MG_CHI), 0, 0, 0x3C7},
+    {"psi", CMD_SYM, MG(MG_PSI), 0, 0, 0x3C8},
+    {"omega", CMD_SYM, MG(MG_OMEGA), 0, 0, 0x3C9},
+    {"Gamma", CMD_SYM, MG(MG_GAMMA_U), 0, 0, 0x393},
+    {"Delta", CMD_SYM, MG(MG_DELTA_U), 0, 0, 0x394},
+    {"Theta", CMD_SYM, MG(MG_THETA_U), 0, 0, 0x398},
+    {"Lambda", CMD_SYM, MG(MG_LAM_U), 0, 0, 0x39B},
+    {"Xi", CMD_SYM, MG(MG_XI_U), 0, 0, 0x39E},
+    {"Pi", CMD_SYM, MG(MG_PI_U), 0, 0, 0x3A0},
+    {"Sigma", CMD_SYM, MG(MG_SIGMA_U), 0, 0, 0x3A3},
+    {"Phi", CMD_SYM, MG(MG_PHI_U), 0, 0, 0x3A6},
+    {"Psi", CMD_SYM, MG(MG_PSI_U), 0, 0, 0x3A8},
+    {"Omega", CMD_SYM, MG(MG_OMEGA_U), 0, 0, 0x3A9},
+    {"ohm", CMD_SYM, MG(MG_OMEGA_U), 0, 0, 0x2126},
+    {"pm", CMD_SYM, MG(MG_PM), 0, 0, 0xB1},
+    {"mp", CMD_SYM, MG(MG_PM), 0, 0, 0x2213},
+    {"cdot", CMD_SYM, MG(MG_CDOT), 0, 0, 0x22C5},
+    {"times", CMD_SYM, MG(MG_TIMES), 0, 0, 0xD7},
+    {"div", CMD_SYM, MG(MG_DIV), 0, 0, 0xF7},
+    {"circ", CMD_SYM, MG(MG_CIRC), 0, 0, 0x2218},
+    {"degree", CMD_SYM, MG(MG_DEGREE), 0, 0, 0xB0},
+    {"infty", CMD_SYM, MG(MG_INF), 0, 0, 0x221E},
+    {"inf", CMD_SYM, MG(MG_INF), 0, 0, 0},
+    {"leq", CMD_SYM, MG(MG_LEQ), 0, 0, 0x2264},
+    {"le", CMD_SYM, MG(MG_LEQ), 0, 0, 0},
+    {"geq", CMD_SYM, MG(MG_GEQ), 0, 0, 0x2265},
+    {"ge", CMD_SYM, MG(MG_GEQ), 0, 0, 0},
+    {"neq", CMD_SYM, MG(MG_NEQ), 0, 0, 0x2260},
+    {"ne", CMD_SYM, MG(MG_NEQ), 0, 0, 0},
+    {"approx", CMD_SYM, MG(MG_APPROX), 0, 0, 0x2248},
+    {"equiv", CMD_SYM, MG(MG_EQUIV), 0, 0, 0x2261},
+    {"partial", CMD_SYM, MG(MG_PARTIAL), 0, 0, 0x2202},
+    {"nabla", CMD_SYM, MG(MG_NABLA), 0, 0, 0x2207},
+    {"int", CMD_SYM, MG(MG_INT), 0, 0, 0x222B},
+    {"sum", CMD_SYM, MG(MG_SIGMA_U), 0, 0, 0x2211},
+    {"prod", CMD_SYM, MG(MG_PI_U), 0, 0, 0x220F},
+    {"ldots", CMD_SYM, MG(MG_ELLIPSIS), 0, 0, 0x2026},
+    {"dots", CMD_SYM, MG(MG_ELLIPSIS), 0, 0, 0},
+    {"cdots", CMD_SYM, MG(MG_ELLIPSIS), 0, 0, 0x22EF},
+    {"to", CMD_SYM, MG(MG_RARR), 0, 0, 0},
+    {"rightarrow", CMD_SYM, MG(MG_RARR), 0, 0, 0x2192},
+    {"leftarrow", CMD_SYM, MG(MG_LARR), 0, 0, 0x2190},
+    {"prime", CMD_SYM, MG(MG_PRIME), 0, 0, 0x2032},
+    {"surd", CMD_SYM, MG(MG_SQRT), 0, 0, 0x221A},
+    {"frac", CMD_FRAC, 0, 0, 0, 0},
+    {"dfrac", CMD_FRAC, 0, 0, 0, 0},
+    {"tfrac", CMD_FRAC, 0, 0, 0, 0},
+    {"sqrt", CMD_SQRT, 0, 0, 0, 0},
+    {"overline", CMD_OVER, 0, 0, 0, 0},
+    {"bar", CMD_OVER, 0, 0, 0, 0},
+    {"vec", CMD_OVER, 0, 0, 0, 0},
+    {"hat", CMD_OVER, 0, 0, 0, 0},
+    {"mathrm", CMD_STYLE, 0, 0, ST_ROMAN, 0},
+    {"textrm", CMD_STYLE, 0, 0, ST_ROMAN, 0},
+    {"rm", CMD_STYLE, 0, 0, ST_ROMAN, 0},
+    {"text", CMD_STYLE, 0, 0, ST_ROMAN | ST_UP, 0},
+    {"operatorname", CMD_STYLE, 0, 0, ST_ROMAN | ST_UP, 0},
+    {"mathbf", CMD_STYLE, 0, 0, ST_BOLD, 0},
+    {"textbf", CMD_STYLE, 0, 0, ST_BOLD, 0},
+    {"bf", CMD_STYLE, 0, 0, ST_BOLD, 0},
+    {"mathit", CMD_STYLE, 0, 0, ST_ITAL, 0},
+    {"textit", CMD_STYLE, 0, 0, ST_ITAL, 0},
+    {"it", CMD_STYLE, 0, 0, ST_ITAL, 0},
+    {",", CMD_SPACE, 0, 0.17f, 0, 0},
+    {":", CMD_SPACE, 0, 0.22f, 0, 0},
+    {";", CMD_SPACE, 0, 0.28f, 0, 0},
+    {"!", CMD_SPACE, 0, -0.17f, 0, 0},
+    {"quad", CMD_SPACE, 0, 1.0f, 0, 0},
+    {"qquad", CMD_SPACE, 0, 2.0f, 0, 0},
+    {" ", CMD_SPACE, 0, 0.35f, 0, 0},
+    {"sin", CMD_FUNC, 0, 0, 0, 0},
+    {"cos", CMD_FUNC, 0, 0, 0, 0},
+    {"tan", CMD_FUNC, 0, 0, 0, 0},
+    {"log", CMD_FUNC, 0, 0, 0, 0},
+    {"ln", CMD_FUNC, 0, 0, 0, 0},
+    {"exp", CMD_FUNC, 0, 0, 0, 0},
+    {"min", CMD_FUNC, 0, 0, 0, 0},
+    {"max", CMD_FUNC, 0, 0, 0, 0},
+    {"lim", CMD_FUNC, 0, 0, 0, 0},
+    {"arg", CMD_FUNC, 0, 0, 0, 0},
+    {"det", CMD_FUNC, 0, 0, 0, 0},
+    {"left", CMD_LEFT, 0, 0, 0, 0},
+    {"right", CMD_LEFT, 0, 0, 0, 0},
+    {"big", CMD_LEFT, 0, 0, 0, 0},
+    {"Big", CMD_LEFT, 0, 0, 0, 0},
+    {"bigg", CMD_LEFT, 0, 0, 0, 0},
+    {"Bigg", CMD_LEFT, 0, 0, 0, 0},
+    {"displaystyle", CMD_SKIP, 0, 0, 0, 0},
+    {"textstyle", CMD_SKIP, 0, 0, 0, 0},
+    {"scriptstyle", CMD_SKIP, 0, 0, 0, 0},
+    {NULL, CMD_SYM, 0, 0, 0, 0}};
 
 int fc_tex_has_math(const char *s) { return s && strchr(s, '$') != NULL; }
 
@@ -312,7 +316,6 @@ static const Cmd *find_cmd(const char *name) {
 
 static Node *parse_list(P *p, int stop);
 static Node *parse_nucleus(P *p);
-static Node *parse_item(P *p);
 
 static Node *parse_group(P *p) {
     skip_sp(p);
@@ -350,100 +353,12 @@ static Node *node_word(P *p, const char *w, int italic) {
     return list;
 }
 
+/* A typed character: the symbol with that code point, else a visible '?'. */
 static int utf8_sym(P *p) {
-    const unsigned char *s = (const unsigned char *)p->p;
-    unsigned int cp;
-    if (s[0] == 0xCE && s[1]) {
-        cp = ((s[0] & 0x1Fu) << 6) | (s[1] & 0x3Fu);
-        p->p += 2;
-        switch (cp) {
-        case 0x3B1:
-            return MG(MG_ALPHA);
-        case 0x3B2:
-            return MG(MG_BETA);
-        case 0x3B3:
-            return MG(MG_GAMMA);
-        case 0x3B4:
-            return MG(MG_DELTA);
-        case 0x3B5:
-            return MG(MG_EPS);
-        case 0x3B8:
-            return MG(MG_THETA);
-        case 0x3BB:
-            return MG(MG_LAM);
-        case 0x3BC:
-            return MG(MG_MU);
-        case 0x393:
-            return MG(MG_GAMMA_U);
-        case 0x394:
-            return MG(MG_DELTA_U);
-        case 0x398:
-            return MG(MG_THETA_U);
-        case 0x39B:
-            return MG(MG_LAM_U);
-        case 0x3A0:
-            return MG(MG_PI_U);
-        case 0x3A3:
-            return MG(MG_SIGMA_U);
-        case 0x3A6:
-            return MG(MG_PHI_U);
-        case 0x3A8:
-            return MG(MG_PSI_U);
-        case 0x3A9:
-            return MG(MG_OMEGA_U);
-        default:
-            return '?';
-        }
-    }
-    if (s[0] == 0xCF && s[1]) {
-        cp = ((s[0] & 0x1Fu) << 6) | (s[1] & 0x3Fu);
-        p->p += 2;
-        switch (cp) {
-        case 0x3C0:
-            return MG(MG_PI);
-        case 0x3C1:
-            return MG(MG_RHO);
-        case 0x3C3:
-            return MG(MG_SIGMA);
-        case 0x3C4:
-            return MG(MG_TAU);
-        case 0x3C6:
-            return MG(MG_PHI);
-        case 0x3C7:
-            return MG(MG_CHI);
-        case 0x3C8:
-            return MG(MG_PSI);
-        case 0x3C9:
-            return MG(MG_OMEGA);
-        default:
-            return '?';
-        }
-    }
-    if (s[0] == 0xC2 && s[1] == 0xB0) {
-        p->p += 2;
-        return MG(MG_DEGREE);
-    }
-    if (s[0] == 0xC2 && s[1] == 0xB1) {
-        p->p += 2;
-        return MG(MG_PM);
-    }
-    if (s[0] == 0xC3 && s[1] == 0x97) {
-        p->p += 2;
-        return MG(MG_TIMES);
-    }
-    if (s[0] == 0xE2 && s[1] == 0x88 && s[2] == 0x9E) {
-        p->p += 3;
-        return MG(MG_INF);
-    }
-    if (s[0] == 0xE2 && s[1] == 0x86 && s[2] == 0x92) {
-        p->p += 3;
-        return MG(MG_RARR);
-    }
-    if (s[0] == 0xE2 && s[1] == 0x88 && s[2] == 0x9A) {
-        p->p += 3;
-        return MG(MG_SQRT);
-    }
-    return 0;
+    int i, cp = fc_utf8_next(&p->p, p->end);
+    for (i = 0; k_cmd[i].name; i++)
+        if (k_cmd[i].kind == CMD_SYM && k_cmd[i].cp == cp) return k_cmd[i].glyph;
+    return '?';
 }
 
 static Node *parse_command(P *p) {
@@ -547,17 +462,14 @@ static Node *parse_nucleus(P *p) {
         return n;
     }
     if ((unsigned char)*p->p >= 0x80) {
+        Node *n;
         u = utf8_sym(p);
-        if (u) {
-            Node *n = node_new(p, N_SYM);
-            if (n) {
-                n->ch = u;
-                n->italic = 0;
-            }
-            return n;
+        n = node_new(p, N_SYM);
+        if (n) {
+            n->ch = u;
+            n->italic = 0;
         }
-        p->p++;
-        return NULL;
+        return n;
     }
     {
         Node *n = node_new(p, N_SYM);
@@ -713,8 +625,6 @@ static float glyph_w(int ch) {
     return 0.62f;
 }
 
-static Box measure(Node *n);
-
 static Box scale_box(Box b, float s) {
     b.w *= s;
     b.h *= s;
@@ -822,8 +732,6 @@ static void geom_push(FcTexGeom *g, int kind, float x, float y, float w, float h
     o->size = size;
 }
 
-static void emit(FcTexGeom *g, Node *n, float x, float y, float size);
-
 static void emit(FcTexGeom *g, Node *n, float x, float y, float size) {
     if (!n) return;
     switch (n->kind) {
@@ -898,6 +806,7 @@ int fc_tex_compile(const char *latex, int display, FcTexGeom *g) {
     fc_arena_init(&a, 8192);
     tmp = fc_arena_strndup(&a, latex, n);
     p.p = tmp;
+    p.end = tmp + n;
     p.arena = &a;
     p.err = 0;
     p.display = display;
@@ -913,7 +822,6 @@ int fc_tex_compile(const char *latex, int display, FcTexGeom *g) {
     g->w = b.w;
     g->h = b.h;
     g->d = b.d;
-    g->ok = 1;
     emit(g, root, 0, 0, 1);
     fc_arena_free(&a);
     return 1;
