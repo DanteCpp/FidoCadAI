@@ -97,10 +97,6 @@ int fc_exe_path(char *out, size_t cap) {
     return exe_from_argv0(out, cap);
 }
 
-int fc_stdin_is_tty(void) {
-    return isatty(STDIN_FILENO);
-}
-
 int fc_app_dir(char *out, size_t cap) {
     const char *root = getenv("FCAI_HOME");
     const char *home = getenv("HOME");

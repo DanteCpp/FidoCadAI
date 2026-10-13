@@ -53,4 +53,15 @@ grep -q '^FJC N 2 Top Cu$' "$task_tmp/layer.fcd"
 if "$fcai" edit layer "$task_tmp/line.fcd" --layer 2 --color red 2>/dev/null; then exit 1; fi
 if "$fcai" edit layer "$task_tmp/line.fcd" --layer 2 --alpha 1.5 2>/dev/null; then exit 1; fi
 if "$fcai" edit layer "$task_tmp/line.fcd" --layer 2 2>/dev/null; then exit 1; fi
+# Settings share one table: environment defaults, --config files, then flags.
+printf 'scale = 7\nbg = #102030\ntex = off\nunknown = 1\n' > "$task_tmp/fcai.conf"
+"$fcai" --config "$task_tmp/fcai.conf" config > "$task_tmp/config.txt"
+grep -qx 'scale = 7' "$task_tmp/config.txt"
+grep -qx 'bg = 102030' "$task_tmp/config.txt"
+grep -qx 'tex = 0' "$task_tmp/config.txt"
+FIDO_SCALE=4 FIDO_NO_STDLIB=1 "$fcai" config | grep -qx 'scale = 4'
+FIDO_NO_STDLIB=1 "$fcai" config | grep -qx 'stdlib = 0'
+FIDO_NO_STDLIB=0 "$fcai" config | grep -qx 'stdlib = 1'
+FIDO_SCALE=4 "$fcai" --scale 2 --no-tex config | grep -qx 'scale = 2'
+if "$fcai" config --out 2>/dev/null; then exit 1; fi
 printf 'CLI feedback tools passed\n'

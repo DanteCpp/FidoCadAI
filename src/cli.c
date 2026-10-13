@@ -94,28 +94,81 @@ typedef struct {
     const char *file;
     const char *file2;
     const char *out;
-    const char *config_path;
     int stdlib;
     int extensions;
     int json;
     int quiet;
     int verbose;
-    int scale, margin, max_w, max_h, grid, ppm, tex;
-    uint32_t bg;
+    FcRenderOpts ro; /* render settings, --crop included */
     char prefix[128];
     const char *libs[64], *lib_prefixes[64]; /* --lib, with the --prefix given before it */
     int nlibs;
     const char *libdirs[16];
     int nlibdirs;
-    int has_crop, has_at, has_box, index, layer, dash, orient, mirror;
-    FcRect crop, box;
+    int has_at, has_box, index, layer, dash, orient, mirror;
+    FcRect box;
     double x, y, tolerance, dx, dy, stroke, alpha;
     const char *action, *from, *name, *value, *text;
     int has_color, reset;
     uint32_t color;
 } Opt;
 
+/* Settings shared by flags, --config files and `fcai config`, with their
+ * environment defaults. A boolean takes --flag (or --no-flag when there is
+ * one), the others --flag VALUE; a value that does not parse is ignored. */
+typedef struct {
+    const char *key; /* config file key and `fcai config` name */
+    const char *flag, *no;
+    char type;       /* 'b' boolean, 'i' integer, 'c' RRGGBB colour, 's' string */
+    size_t off;      /* field in Opt */
+    const char *env; /* environment default, or NULL */
+    int env_off;     /* a true value of env turns the setting off */
+} Setting;
+
+static const Setting k_settings[] = {
+    {"stdlib", "--stdlib", "--no-stdlib", 'b', offsetof(Opt, stdlib), "FIDO_NO_STDLIB", 1},
+    {"extensions", "--extensions", "--no-extensions", 'b', offsetof(Opt, extensions), NULL, 0},
+    {"json", "--json", NULL, 'b', offsetof(Opt, json), "FIDO_JSON", 0},
+    {"verbose", "--verbose", NULL, 'b', offsetof(Opt, verbose), NULL, 0},
+    {"scale", "--scale", NULL, 'i', offsetof(Opt, ro.scale), "FIDO_SCALE", 0},
+    {"margin", "--margin", NULL, 'i', offsetof(Opt, ro.margin), "FIDO_MARGIN", 0},
+    {"width", "--width", NULL, 'i', offsetof(Opt, ro.max_w), NULL, 0},
+    {"height", "--height", NULL, 'i', offsetof(Opt, ro.max_h), NULL, 0},
+    {"grid", "--grid", NULL, 'b', offsetof(Opt, ro.grid), NULL, 0},
+    {"ppm", "--ppm", NULL, 'b', offsetof(Opt, ro.ppm), NULL, 0},
+    {"tex", "--tex", "--no-tex", 'b', offsetof(Opt, ro.tex), "FIDO_NO_TEX", 1},
+    {"bg", "--bg", NULL, 'c', offsetof(Opt, ro.bg), NULL, 0},
+    {"out", "--out", NULL, 's', offsetof(Opt, out), NULL, 0},
+};
+#define NSETTINGS ((int)(sizeof k_settings / sizeof k_settings[0]))
+
+static int parse_bg(const char *s, uint32_t *out) {
+    unsigned v = 0;
+    if (s[0] == '#') s++;
+    if (sscanf(s, "%x", &v) != 1) return 0;
+    *out = v & 0xFFFFFFu;
+    return 1;
+}
+
+static void set_value(Opt *o, const Setting *s, const char *v) {
+    void *f = (char *)o + s->off;
+    int n;
+    if (s->type == 'b') *(int *)f = fc_parse_bool(v);
+    else if (s->type == 'i') {
+        if (fc_parse_int(v, &n)) *(int *)f = n;
+    } else if (s->type == 'c') parse_bg(v, (uint32_t *)f);
+    else *(const char **)f = strdup(v);
+}
+
+static const Setting *flag_setting(const char *flag) {
+    int i;
+    for (i = 0; i < NSETTINGS; i++)
+        if (fc_streq(flag, k_settings[i].flag) || fc_streq(flag, k_settings[i].no)) return &k_settings[i];
+    return NULL;
+}
+
 static void opt_init(Opt *o) {
+    int i;
     memset(o, 0, sizeof *o);
     o->index = o->layer = o->dash = -1;
     o->tolerance = 2;
@@ -123,20 +176,13 @@ static void opt_init(Opt *o) {
     o->alpha = -1;
     o->stdlib = 1;
     o->extensions = 1;
-    o->margin = 12;
-    o->max_w = 1200;
-    o->max_h = 900;
-    o->bg = 0xFFFFFF;
-    o->tex = 1;
-    if (fc_env_flag("FIDO_NO_STDLIB", 0)) o->stdlib = 0;
-    if (fc_env_flag("FIDO_NO_TEX", 0)) o->tex = 0;
-    if (fc_env_flag("FIDO_JSON", 0)) o->json = 1;
-    {
-        const char *s = getenv("FIDO_SCALE");
-        int v;
-        if (s && fc_parse_int(s, &v)) o->scale = v;
-        s = getenv("FIDO_MARGIN");
-        if (s && fc_parse_int(s, &v)) o->margin = v;
+    fc_render_opts_init(&o->ro);
+    for (i = 0; i < NSETTINGS; i++) {
+        const Setting *st = &k_settings[i];
+        const char *v = st->env ? getenv(st->env) : NULL;
+        if (!v) continue;
+        if (st->env_off) *(int *)((char *)o + st->off) = !fc_parse_bool(v);
+        else set_value(o, st, v);
     }
 }
 
@@ -148,43 +194,14 @@ static char *trim(char *s) {
     return s;
 }
 
-static int parse_bg(const char *s, uint32_t *out) {
-    unsigned v = 0;
-    if (s[0] == '#') s++;
-    if (sscanf(s, "%x", &v) != 1) return 0;
-    *out = v & 0xFFFFFFu;
-    return 1;
-}
-
 static void apply_kv(Opt *o, const char *k, const char *v) {
-    int n;
-    if (fc_streq(k, "stdlib")) o->stdlib = fc_parse_bool(v);
-    else if (fc_streq(k, "extensions"))
-        o->extensions = fc_parse_bool(v);
-    else if (fc_streq(k, "verbose"))
-        o->verbose = fc_parse_bool(v);
-    else if (fc_streq(k, "json"))
-        o->json = fc_parse_bool(v);
-    else if (fc_streq(k, "grid"))
-        o->grid = fc_parse_bool(v);
-    else if (fc_streq(k, "ppm"))
-        o->ppm = fc_parse_bool(v);
-    else if (fc_streq(k, "tex"))
-        o->tex = fc_parse_bool(v);
-    else if (fc_streq(k, "scale") && fc_parse_int(v, &n))
-        o->scale = n;
-    else if (fc_streq(k, "margin") && fc_parse_int(v, &n))
-        o->margin = n;
-    else if (fc_streq(k, "width") && fc_parse_int(v, &n))
-        o->max_w = n;
-    else if (fc_streq(k, "height") && fc_parse_int(v, &n))
-        o->max_h = n;
-    else if (fc_streq(k, "bg"))
-        parse_bg(v, &o->bg);
-    else if (fc_streq(k, "lib_dir") && o->nlibdirs < 16)
-        o->libdirs[o->nlibdirs++] = strdup(v);
-    else if (fc_streq(k, "out"))
-        o->out = strdup(v);
+    int i;
+    for (i = 0; i < NSETTINGS; i++)
+        if (fc_streq(k, k_settings[i].key)) {
+            set_value(o, &k_settings[i], v);
+            return;
+        }
+    if (fc_streq(k, "lib_dir") && o->nlibdirs < 16) o->libdirs[o->nlibdirs++] = strdup(v);
 }
 
 static int load_config(Opt *o, const char *path) {
@@ -253,9 +270,17 @@ static int write_out(const Opt *o, const char *data, size_t n) {
     return fc_write_file(o->out ? o->out : "-", data, n);
 }
 
-static int cmd_lib(const Opt *o, FcLib *lib) {
+/* Writes s (malloc'd; NULL means out of memory) to the output and frees it. */
+static int put(const Opt *o, char *s) {
+    int rc = s ? write_out(o, s, strlen(s)) : FC_ERR_NOMEM;
+    free(s);
+    return rc;
+}
+
+static int cmd_lib(const Opt *o, FcDrawing *d, FcLib *lib) {
     FcBuf b;
     int i, n = fc_lib_count(lib);
+    (void)d;
     fc_buf_init(&b);
     if (o->json) {
         fc_buf_printf(&b, "{\"count\":%d,\"macros\":[", n);
@@ -281,11 +306,7 @@ static int cmd_lib(const Opt *o, FcLib *lib) {
                           m->long_name ? m->long_name : "");
         }
     }
-    {
-        int rc = write_out(o, b.p ? b.p : "", b.n);
-        fc_buf_free(&b);
-        return rc;
-    }
+    return put(o, fc_buf_steal(&b));
 }
 
 static const char *const k_env[] = {"FIDO_STDLIB_DIR", "FIDO_LIB_DIR", "FIDO_FONT_DIR",
@@ -293,29 +314,22 @@ static const char *const k_env[] = {"FIDO_STDLIB_DIR", "FIDO_LIB_DIR", "FIDO_FON
                                     "FIDO_MARGIN",     "FIDO_JSON",    "FCAI_HOME",
                                     "FIDO_USER_LIB_DIR", NULL};
 
-static int cmd_config(const Opt *o, const FcLib *lib) {
+static int cmd_config(const Opt *o, FcDrawing *d, FcLib *lib) {
     FcBuf b;
+    char path[4096];
     int i;
+    (void)d;
     fc_buf_init(&b);
     fc_buf_printf(&b, "version = %s\n", FC_VERSION);
-    fc_buf_printf(&b, "stdlib = %d\n", o->stdlib);
-    {
-        char ulib[1024];
-        if (fc_user_lib_dir(ulib, sizeof ulib)) fc_buf_printf(&b, "user_lib = %s\n", ulib);
-        if (fc_app_dir(ulib, sizeof ulib)) fc_buf_printf(&b, "style_profile = %s/style.md\n", ulib);
+    for (i = 0; i < NSETTINGS; i++) {
+        const Setting *st = &k_settings[i];
+        const char *f = (const char *)o + st->off;
+        if (st->type == 'c') fc_buf_printf(&b, "%s = %06X\n", st->key, (unsigned)*(const uint32_t *)f);
+        else if (st->type == 's') fc_buf_printf(&b, "%s = %s\n", st->key, *(const char *const *)f ? *(const char *const *)f : "-");
+        else fc_buf_printf(&b, "%s = %d\n", st->key, *(const int *)f);
     }
-    fc_buf_printf(&b, "extensions = %d\n", o->extensions);
-    fc_buf_printf(&b, "json = %d\n", o->json);
-    fc_buf_printf(&b, "verbose = %d\n", o->verbose);
-    fc_buf_printf(&b, "scale = %d\n", o->scale);
-    fc_buf_printf(&b, "margin = %d\n", o->margin);
-    fc_buf_printf(&b, "width = %d\n", o->max_w);
-    fc_buf_printf(&b, "height = %d\n", o->max_h);
-    fc_buf_printf(&b, "grid = %d\n", o->grid);
-    fc_buf_printf(&b, "ppm = %d\n", o->ppm);
-    fc_buf_printf(&b, "tex = %d\n", o->tex);
-    fc_buf_printf(&b, "bg = %06X\n", (unsigned)o->bg);
-    fc_buf_printf(&b, "out = %s\n", o->out ? o->out : "-");
+    if (fc_user_lib_dir(path, sizeof path)) fc_buf_printf(&b, "user_lib = %s\n", path);
+    if (fc_app_dir(path, sizeof path)) fc_buf_printf(&b, "style_profile = %s/style.md\n", path);
     fc_buf_printf(&b, "file = %s\n", o->file ? o->file : "-");
     for (i = 0; i < o->nlibdirs; i++) fc_buf_printf(&b, "lib_dir = %s\n", o->libdirs[i]);
     for (i = 0; i < o->nlibs; i++)
@@ -326,16 +340,9 @@ static int cmd_config(const Opt *o, const FcLib *lib) {
         if (v) fc_buf_printf(&b, "# env %s = %s\n", k_env[i], v);
     }
     fc_buf_printf(&b, "macros_loaded = %d\n", fc_lib_count(lib));
-    {
-        char exe[4096];
-        fc_buf_printf(&b, "# exe = %s\n", fc_exe_path(exe, sizeof exe) ? exe : "(unknown)");
-    }
+    fc_buf_printf(&b, "# exe = %s\n", fc_exe_path(path, sizeof path) ? path : "(unknown)");
     fc_buf_printf(&b, "# fonts = %s\n", fc_ttf_init() ? "ttf" : "stroke (no Liberation TTF found)");
-    {
-        int rc = write_out(o, b.p ? b.p : "", b.n);
-        fc_buf_free(&b);
-        return rc;
-    }
+    return put(o, fc_buf_steal(&b));
 }
 
 static int edit_drawing(const Opt *o, FcDrawing *d) {
@@ -395,7 +402,19 @@ static int edit_drawing(const Opt *o, FcDrawing *d) {
     return FC_OK;
 }
 
-static int query_drawing(const Opt *o, const FcDrawing *d, const FcLib *lib) {
+static int cmd_edit(const Opt *o, FcDrawing *d, FcLib *lib) {
+    char *s = NULL;
+    (void)lib;
+    if (edit_drawing(o, d) != FC_OK) {
+        fprintf(stderr, "fcai: invalid edit action, index, or fields\n");
+        return FC_ERR_ARG;
+    }
+    fc_emit(d, &s, o->extensions);
+    return put(o, s);
+}
+
+/* hit: the primitive at a point; find: the primitives touching a box. */
+static int cmd_query(const Opt *o, FcDrawing *d, FcLib *lib) {
     FcBuf b;
     int i, n = 0;
     fc_buf_init(&b);
@@ -422,14 +441,15 @@ static int query_drawing(const Opt *o, const FcDrawing *d, const FcLib *lib) {
         free(r);
         free(has);
     }
-    i = write_out(o, b.p, b.n); fc_buf_free(&b); return i;
+    return put(o, fc_buf_steal(&b));
 }
 
-static int cmd_macro(const Opt *o, FcLib *lib) {
+static int cmd_macro(const Opt *o, FcDrawing *unused, FcLib *lib) {
     FcDrawing d, expanded;
     FcPrim *p;
     char *json, key[512];
     int rc;
+    (void)unused;
     if (!o->file || strlen(o->file) >= sizeof key) return FC_ERR_ARG;
     snprintf(key, sizeof key, "%s", o->file); fc_tolower_buf(key);
     if (!fc_lib_find(lib, key)) { fprintf(stderr, "fcai: unknown macro %s\n", key); return FC_ERR_ARG; }
@@ -442,102 +462,72 @@ static int cmd_macro(const Opt *o, FcLib *lib) {
     p->u.macro.orient = o->orient; p->u.macro.mirror = o->mirror;
     fc_expand(&d, &expanded, lib);
     json = fc_to_json(&expanded, NULL);
-    rc = json ? write_out(o, json, strlen(json)) : FC_ERR_NOMEM;
-    free(json); fc_drawing_free(&d); fc_drawing_free(&expanded); return rc;
+    rc = put(o, json);
+    fc_drawing_free(&d); fc_drawing_free(&expanded); return rc;
 }
 
-static int run_on_drawing(const Opt *o, FcDrawing *d, FcLib *lib) {
-    const char *cmd = o->cmd[0] ? o->cmd : "context";
-    char *s = NULL;
-    int rc = FC_OK;
-    if (fc_streq(cmd, "edit")) {
-        rc = edit_drawing(o, d);
-        if (rc != FC_OK) { fprintf(stderr, "fcai: invalid edit action, index, or fields\n"); return rc; }
-        size_t n = fc_emit(d, &s, o->extensions);
-        rc = s ? write_out(o, s, n) : FC_ERR_NOMEM;
-        free(s); return rc;
-    }
-    if (fc_streq(cmd, "hit") || fc_streq(cmd, "find")) return query_drawing(o, d, lib);
-    if (fc_streq(cmd, "lint")) {
-        s = fc_lint(d, lib, o->json);
-        rc = s ? write_out(o, s, strlen(s)) : FC_ERR_NOMEM;
-        free(s); return rc;
-    }
-    check_macros(d, lib);
+static int cmd_lint(const Opt *o, FcDrawing *d, FcLib *lib) { return put(o, fc_lint(d, lib, o->json)); }
 
-    if (fc_streq(cmd, "context")) {
-        s = o->json ? fc_to_json(d, lib) : fc_context(d, lib);
-        if (s && !o->json) {
-            FcBuf b;
-            fc_buf_init(&b);
-            /* Keep fc_context and drawing JSON independent of user state. */
-            if (fc_style_context(&b) != FC_OK && !o->quiet)
-                fprintf(stderr, "fcai: warning: style profile unavailable; use `fcai style show`\n");
-            fc_buf_puts(&b, s);
-            rc = write_out(o, b.p ? b.p : "", b.n);
-            fc_buf_free(&b);
-        } else rc = s ? write_out(o, s, fc_strlen(s)) : FC_ERR_NOMEM;
-        free(s);
-        return rc;
-    }
-    if (fc_streq(cmd, "describe")) {
-        s = fc_describe(d, lib, o->verbose);
-        rc = s ? write_out(o, s, fc_strlen(s)) : FC_ERR_NOMEM;
-        free(s);
-        return rc;
-    }
-    if (fc_streq(cmd, "json") || fc_streq(cmd, "dump") || fc_streq(cmd, "parse")) {
-        s = fc_to_json(d, lib);
-        rc = s ? write_out(o, s, fc_strlen(s)) : FC_ERR_NOMEM;
-        free(s);
-        return rc;
-    }
-    if (fc_streq(cmd, "emit")) {
-        size_t n = fc_emit(d, &s, o->extensions);
-        rc = s ? write_out(o, s, n) : FC_ERR_NOMEM;
-        free(s);
-        return rc;
-    }
-    if (fc_streq(cmd, "validate")) {
-        int v = fc_validate(d, &s);
-        rc = s ? write_out(o, s, fc_strlen(s)) : FC_ERR_NOMEM;
-        free(s);
-        return v == FC_OK ? rc : 1;
-    }
-    if (fc_streq(cmd, "expand")) {
-        FcDrawing exp;
-        size_t n;
-        fc_drawing_init(&exp);
-        fc_expand(d, &exp, lib);
-        n = fc_emit(&exp, &s, o->extensions);
-        rc = s ? write_out(o, s, n) : FC_ERR_NOMEM;
-        free(s);
-        fc_drawing_free(&exp);
-        return rc;
-    }
-    if (fc_streq(cmd, "render")) {
-        FcRenderOpts ro;
-        fc_render_opts_init(&ro);
-        ro.has_crop = o->has_crop;
-        ro.crop = o->crop;
-        ro.scale = o->scale;
-        ro.margin = o->margin;
-        ro.max_w = o->max_w;
-        ro.max_h = o->max_h;
-        ro.grid = o->grid;
-        ro.bg = o->bg;
-        ro.ppm = o->ppm;
-        ro.tex = o->tex;
-        return fc_render_file(d, lib, &ro, o->out ? o->out : "-");
-    }
-    fprintf(stderr, "fcai: unknown command '%s'\n", cmd);
-    return FC_ERR_ARG;
-}
-
-static int cmd_diff(const Opt *o) {
-    FcDrawing a, b;
+static int cmd_context(const Opt *o, FcDrawing *d, FcLib *lib) {
+    FcBuf b;
     char *s;
+    check_macros(d, lib);
+    if (o->json) return put(o, fc_to_json(d, lib));
+    if (!(s = fc_context(d, lib))) return FC_ERR_NOMEM;
+    fc_buf_init(&b);
+    /* Keep fc_context and drawing JSON independent of user state. */
+    if (fc_style_context(&b) != FC_OK && !o->quiet)
+        fprintf(stderr, "fcai: warning: style profile unavailable; use `fcai style show`\n");
+    fc_buf_puts(&b, s);
+    free(s);
+    return put(o, fc_buf_steal(&b));
+}
+
+static int cmd_describe(const Opt *o, FcDrawing *d, FcLib *lib) {
+    check_macros(d, lib);
+    return put(o, fc_describe(d, lib, o->verbose));
+}
+
+static int cmd_json(const Opt *o, FcDrawing *d, FcLib *lib) {
+    check_macros(d, lib);
+    return put(o, fc_to_json(d, lib));
+}
+
+static int cmd_emit(const Opt *o, FcDrawing *d, FcLib *lib) {
+    char *s = NULL;
+    (void)lib;
+    fc_emit(d, &s, o->extensions);
+    return put(o, s);
+}
+
+static int cmd_validate(const Opt *o, FcDrawing *d, FcLib *lib) {
+    char *s = NULL;
+    int ok, rc;
+    check_macros(d, lib);
+    ok = fc_validate(d, &s) == FC_OK;
+    rc = put(o, s);
+    return ok ? rc : FC_ERR_ARG;
+}
+
+static int cmd_expand(const Opt *o, FcDrawing *d, FcLib *lib) {
+    FcDrawing exp;
+    char *s = NULL;
+    fc_drawing_init(&exp);
+    fc_expand(d, &exp, lib);
+    fc_emit(&exp, &s, o->extensions);
+    fc_drawing_free(&exp);
+    return put(o, s);
+}
+
+static int cmd_render(const Opt *o, FcDrawing *d, FcLib *lib) {
+    return fc_render_file(d, lib, &o->ro, o->out ? o->out : "-");
+}
+
+static int cmd_diff(const Opt *o, FcDrawing *unused, FcLib *lib) {
+    FcDrawing a, b;
     int rc;
+    (void)unused;
+    (void)lib;
     if (!o->file || !o->file2) {
         fprintf(stderr, "fcai: diff needs two files\n");
         return FC_ERR_ARG;
@@ -550,12 +540,33 @@ static int cmd_diff(const Opt *o) {
         fc_drawing_free(&b);
         return FC_ERR_IO;
     }
-    s = fc_diff(&a, &b, o->json);
-    rc = s ? write_out(o, s, fc_strlen(s)) : FC_ERR_NOMEM;
-    free(s);
+    rc = put(o, fc_diff(&a, &b, o->json));
     fc_drawing_free(&a);
     fc_drawing_free(&b);
     return rc;
+}
+
+/* The commands that main() dispatches after the options; the first is the default. */
+typedef struct {
+    const char *name;
+    int (*run)(const Opt *o, FcDrawing *d, FcLib *lib);
+    int drawing; /* reads a drawing from the file argument or stdin */
+} Command;
+
+static const Command k_commands[] = {
+    {"context", cmd_context, 1}, {"describe", cmd_describe, 1}, {"json", cmd_json, 1},
+    {"dump", cmd_json, 1},       {"parse", cmd_json, 1},        {"emit", cmd_emit, 1},
+    {"validate", cmd_validate, 1}, {"render", cmd_render, 1},   {"expand", cmd_expand, 1},
+    {"lint", cmd_lint, 1},       {"edit", cmd_edit, 1},         {"hit", cmd_query, 1},
+    {"find", cmd_query, 1},      {"lib", cmd_lib, 0},           {"config", cmd_config, 0},
+    {"diff", cmd_diff, 0},       {"macro", cmd_macro, 0},
+};
+
+static const Command *find_command(const char *name) {
+    size_t i;
+    for (i = 0; i < sizeof k_commands / sizeof k_commands[0]; i++)
+        if (fc_streq(name, k_commands[i].name)) return &k_commands[i];
+    return NULL;
 }
 
 /* ---- fcai session: talk to a running fcai-gui -------------------------- */
@@ -1120,6 +1131,7 @@ int main(int argc, char **argv) {
     Opt o;
     FcLib *lib;
     FcDrawing d;
+    const Command *cmd;
     int i, rc;
 
     if (argc > 1 && fc_streq(argv[1], "gui")) return exec_gui(argv[0], argc - 1, argv + 1);
@@ -1142,53 +1154,21 @@ int main(int argc, char **argv) {
             printf("%s\n", FC_VERSION);
             return 0;
         }
-        if (fc_streq(a, "--stdlib")) {
-            o.stdlib = 1;
-            continue;
-        }
-        if (fc_streq(a, "--no-stdlib")) {
-            o.stdlib = 0;
-            continue;
-        }
-        if (fc_streq(a, "--extensions")) {
-            o.extensions = 1;
-            continue;
-        }
-        if (fc_streq(a, "--no-extensions")) {
-            o.extensions = 0;
-            continue;
-        }
-        if (fc_streq(a, "--json")) {
-            o.json = 1;
-            continue;
-        }
         if (fc_streq(a, "-q") || fc_streq(a, "--quiet")) {
             o.quiet = 1;
             continue;
         }
-        if (fc_streq(a, "-v") || fc_streq(a, "--verbose")) {
-            o.verbose = 1;
-            continue;
-        }
-        if (fc_streq(a, "--grid")) {
-            o.grid = 1;
-            continue;
-        }
-        if (fc_streq(a, "--ppm")) {
-            o.ppm = 1;
-            continue;
-        }
-        if (fc_streq(a, "--tex")) {
-            o.tex = 1;
-            continue;
-        }
-        if (fc_streq(a, "--no-tex")) {
-            o.tex = 0;
-            continue;
-        }
-        if ((fc_streq(a, "-o") || fc_streq(a, "--out")) && i + 1 < argc) {
-            o.out = argv[++i];
-            continue;
+        {
+            /* -v and -o are short for --verbose and --out */
+            const Setting *st = flag_setting(fc_streq(a, "-v") ? "--verbose" : fc_streq(a, "-o") ? "--out" : a);
+            if (st && st->type == 'b') {
+                *(int *)((char *)&o + st->off) = !fc_streq(a, st->no);
+                continue;
+            }
+            if (st && i + 1 < argc) {
+                set_value(&o, st, argv[++i]);
+                continue;
+            }
         }
         if (fc_streq(a, "--lib") && i + 1 < argc) {
             add_lib(&o, argv[++i]);
@@ -1203,42 +1183,21 @@ int main(int argc, char **argv) {
             continue;
         }
         if (fc_streq(a, "--config") && i + 1 < argc) {
-            o.config_path = argv[++i];
-            if (load_config(&o, o.config_path) != FC_OK) {
-                fprintf(stderr, "fcai: cannot read config %s\n", o.config_path);
+            if (load_config(&o, argv[++i]) != FC_OK) {
+                fprintf(stderr, "fcai: cannot read config %s\n", argv[i]);
                 return 1;
             }
             continue;
         }
-        if (fc_streq(a, "--scale") && i + 1 < argc) {
-            fc_parse_int(argv[++i], &o.scale);
-            continue;
-        }
-        if (fc_streq(a, "--margin") && i + 1 < argc) {
-            fc_parse_int(argv[++i], &o.margin);
-            continue;
-        }
-        if (fc_streq(a, "--width") && i + 1 < argc) {
-            fc_parse_int(argv[++i], &o.max_w);
-            continue;
-        }
-        if (fc_streq(a, "--height") && i + 1 < argc) {
-            fc_parse_int(argv[++i], &o.max_h);
-            continue;
-        }
-        if (fc_streq(a, "--bg") && i + 1 < argc) {
-            parse_bg(argv[++i], &o.bg);
-            continue;
-        }
         if ((fc_streq(a, "--crop") || fc_streq(a, "--bbox")) && i + 4 < argc) {
-            FcRect *r = fc_streq(a, "--crop") ? &o.crop : &o.box;
+            FcRect *r = fc_streq(a, "--crop") ? &o.ro.crop : &o.box;
             if (!fc_parse_double(argv[++i], &r->min_x) || !fc_parse_double(argv[++i], &r->min_y) ||
                 !fc_parse_double(argv[++i], &r->max_x) || !fc_parse_double(argv[++i], &r->max_y) ||
                 !isfinite(r->min_x) || !isfinite(r->min_y) || !isfinite(r->max_x) || !isfinite(r->max_y) ||
                 r->min_x >= r->max_x || r->min_y >= r->max_y) {
                 fprintf(stderr, "fcai: expected increasing finite bounds\n"); return 1;
             }
-            if (fc_streq(a, "--crop")) o.has_crop = 1; else o.has_box = 1;
+            if (fc_streq(a, "--crop")) o.ro.has_crop = 1; else o.has_box = 1;
             continue;
         }
         if ((fc_streq(a, "--at") || fc_streq(a, "--by") || fc_streq(a, "--near")) && i + 2 < argc) {
@@ -1301,13 +1260,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "fcai: unknown option %s\n", a);
             return 1;
         }
-        if (!o.cmd[0] &&
-            (fc_streq(a, "context") || fc_streq(a, "describe") || fc_streq(a, "json") ||
-             fc_streq(a, "dump") || fc_streq(a, "parse") || fc_streq(a, "emit") ||
-             fc_streq(a, "validate") || fc_streq(a, "render") || fc_streq(a, "expand") ||
-             fc_streq(a, "lib") || fc_streq(a, "config") || fc_streq(a, "diff") ||
-             fc_streq(a, "macro") || fc_streq(a, "lint") || fc_streq(a, "edit") ||
-             fc_streq(a, "hit") || fc_streq(a, "find"))) {
+        if (!o.cmd[0] && find_command(a)) {
             snprintf(o.cmd, sizeof o.cmd, "%s", a);
             continue;
         }
@@ -1324,6 +1277,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    cmd = find_command(o.cmd[0] ? o.cmd : "context");
     lib = fc_lib_new();
     if (!lib) return 1;
     if (fc_lib_load_all(lib, o.stdlib, o.libdirs, o.nlibdirs, o.libs, o.lib_prefixes, o.nlibs,
@@ -1331,42 +1285,20 @@ int main(int argc, char **argv) {
         fc_lib_free(lib);
         return 1;
     }
-
-    if (fc_streq(o.cmd, "macro")) {
-        rc = cmd_macro(&o, lib); fc_lib_free(lib); return rc == FC_OK ? 0 : 1;
-    }
-    if (fc_streq(o.cmd, "lib")) {
-        rc = cmd_lib(&o, lib);
-        fc_lib_free(lib);
-        return rc == FC_OK ? 0 : 1;
-    }
-    if (fc_streq(o.cmd, "diff")) {
-        fc_lib_free(lib);
-        return cmd_diff(&o) == FC_OK ? 0 : 1;
-    }
-    if (fc_streq(o.cmd, "config")) {
-        rc = cmd_config(&o, lib);
-        fc_lib_free(lib);
-        return rc == FC_OK ? 0 : 1;
-    }
-
-    /* an omitted file at a terminal would block on stdin; "-" still reads it explicitly */
-    if (!o.file && fc_stdin_is_tty()) {
+    if (!cmd->drawing) {
+        rc = cmd->run(&o, NULL, lib);
+    } else if (!o.file && isatty(STDIN_FILENO)) {
+        /* an omitted file at a terminal would block on stdin; "-" still reads it explicitly */
         fputs(k_help, stderr);
         fc_lib_free(lib);
         return 2;
-    }
-
-    fc_drawing_init(&d);
-    rc = fc_parse_file(&d, o.file ? o.file : "-");
-    if (rc != FC_OK) {
-        fprintf(stderr, "fcai: failed to read %s\n", o.file ? o.file : "stdin");
+    } else {
+        fc_drawing_init(&d);
+        rc = fc_parse_file(&d, o.file ? o.file : "-");
+        if (rc != FC_OK) fprintf(stderr, "fcai: failed to read %s\n", o.file ? o.file : "stdin");
+        else rc = cmd->run(&o, &d, lib);
         fc_drawing_free(&d);
-        fc_lib_free(lib);
-        return 1;
     }
-    rc = run_on_drawing(&o, &d, lib);
-    fc_drawing_free(&d);
     fc_lib_free(lib);
     return rc == FC_OK ? 0 : 1;
 }

@@ -107,7 +107,6 @@ int fc_exe_path(char *out, size_t cap);
 #define FC_DATA_DIRS 7
 #define FC_DIR_MAX 4160
 int fc_data_dirs(const char *sub, char dirs[FC_DATA_DIRS][FC_DIR_MAX]);
-int fc_stdin_is_tty(void);
 /* User-owned application data: $FCAI_HOME, else ~/.fcai. */
 int fc_app_dir(char *out, size_t cap);
 

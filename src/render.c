@@ -952,9 +952,10 @@ int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opt
     fc_render_opts_init(&o);
     fc_ttf_init();
     if (opts) {
+        FcRenderOpts def = o;
         o = *opts;
-        if (o.max_w <= 0) o.max_w = 1200;
-        if (o.max_h <= 0) o.max_h = 900;
+        if (o.max_w <= 0) o.max_w = def.max_w;
+        if (o.max_h <= 0) o.max_h = def.max_h;
     }
     if (o.has_crop && (!isfinite(o.crop.min_x) || !isfinite(o.crop.min_y) ||
                        !isfinite(o.crop.max_x) || !isfinite(o.crop.max_y) ||
