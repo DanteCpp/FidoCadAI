@@ -114,7 +114,11 @@ MainWindow::MainWindow(Document *doc, Settings *settings, Theme *theme, QApplica
 
     doc_->setGrid(settings_->getInt("grid"));
     doc_->onChanged = [this] { docChanged(); };
-    canvas_->onSend = [this] { sendToAgent(QString()); };
+    live_ = new QTimer(this);
+    live_->setSingleShot(true);
+    live_->setInterval(300);
+    connect(live_, &QTimer::timeout, this, [this] { flushChange(); });
+    canvas_->onSelectionChanged = [this] { scheduleChange(false); };
     canvas_->onToggleBar = [this] { toggleBar(); };
     canvas_->onStatus = [this](const QString &s) { updateInfo(s); };
     canvas_->onSettingChanged = [this](const QString &k) { settingChanged(k); };
@@ -152,7 +156,11 @@ MainWindow::MainWindow(Document *doc, Settings *settings, Theme *theme, QApplica
             }
             if (!doc_->modified()) {
                 QString err;
-                if (doc_->reloadFromDisk(&err)) {
+                flushChange();
+                agent_ = true;
+                bool reloaded = doc_->reloadFromDisk(&err);
+                agent_ = false;
+                if (reloaded) {
                     disk_changed_ = false;
                     canvas_->fitIfOutside();
                     report("reloaded from disk");
@@ -465,6 +473,7 @@ void MainWindow::settingChanged(const QString &key) {
 
 void MainWindow::docChanged() {
     canvas_->docChanged();
+    scheduleChange(true);
     if (settings_->getBool("autosave") && !doc_->path().isEmpty()) save();
     updateTitle();
 }
@@ -506,6 +515,7 @@ QJsonObject MainWindow::stateEvent(const QString &event, const QString &note) {
     QJsonArray sel;
     for (int i : canvas_->selection()) sel << i;
     e["selection"] = sel;
+    previous_selection_ = canvas_->selection();
     QJsonDocument diff = QJsonDocument::fromJson(doc_->diff(true).toUtf8());
     e["diff"] = diff.isObject() ? diff.object() : QJsonObject();
     e["fcd"] = QString::fromUtf8(doc_->fcd());
@@ -520,25 +530,25 @@ QJsonObject MainWindow::stateEvent(const QString &event, const QString &note) {
     return e;
 }
 
-void MainWindow::sendToAgent(const QString &note) {
-    if (!session_) {
-        report("no agent session — start with --session-dir DIR");
-        return;
-    }
-    QString text = note.trimmed();
-    bool ok = true;
-    QString err;
-    if (!doc_->path().isEmpty()) {
-        ok = doc_->save(&err);
-        if (ok) disk_changed_ = false;
-        updateTitle();
-    }
-    session_->send(stateEvent("send", text));
-    canvas_->setFocus();
-    if (!ok)
-        report("sent to the agent, but saving failed: " + err);
-    else
-        report("drawing sent to the agent");
+void MainWindow::scheduleChange(bool drawing) {
+    if (!session_ || agent_) return;
+    (drawing ? live_drawing_ : live_selection_) = true;
+    live_->start();
+}
+
+void MainWindow::flushChange() {
+    if (!session_ || !(live_drawing_ || live_selection_)) return;
+    live_->stop();
+    live_drawing_ = live_selection_ = false;
+    bool drawing = doc_->fcd() != previous_event_;
+    bool selection = canvas_->selection() != previous_selection_;
+    if (!drawing && !selection) return; /* e.g. an edit undone before the debounce */
+    QJsonArray changes;
+    if (drawing) changes << "drawing";
+    if (selection) changes << "selection";
+    QJsonObject e = stateEvent("change", QString());
+    e["changes"] = changes;
+    session_->send(e);
 }
 
 void MainWindow::toggleBar() {
@@ -552,6 +562,8 @@ void MainWindow::applyCommand(const QJsonObject &c) {
     const QString cmd = c["cmd"].toString();
     QString error;
     bool reply = false;
+    flushChange(); /* the user's pending edits precede the agent's command */
+    agent_ = true;
     if (cmd == "push") {
         reply = true;
         if (!c["fcd"].isString()) error = "push requires fcd text";
@@ -603,6 +615,7 @@ void MainWindow::applyCommand(const QJsonObject &c) {
     } else if (cmd == "quit") {
         done(QString());
     }
+    agent_ = false;
     if (reply) {
         QJsonObject event = stateEvent(cmd == "get" ? "state" : "applied", QString());
         event["command"] = cmd;
@@ -649,6 +662,7 @@ void MainWindow::closeEvent(QCloseEvent *e) {
         }
     }
     if (!finishing_) note_ = QString();
+    flushChange();
     if (session_) session_->send(stateEvent("closed", note_));
     finishing_ = true;
     e->accept();

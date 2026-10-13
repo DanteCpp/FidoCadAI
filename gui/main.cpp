@@ -4,11 +4,11 @@
  * then talks to the window through `fcai session ...`:
  *
  *   fcai-gui sketch.fcd --session-dir /tmp/dac.session -m "what to look at" &
- *   fcai session wait /tmp/dac.session     # user sent something (Return)
+ *   fcai session wait /tmp/dac.session     # the user edited or selected something
  *   fcai session push /tmp/dac.session new.fcd
  *
- * Return sends (saves the drawing, writes an event) and keeps the window
- * open; Ctrl+Return ends the session and prints a report on stdout. */
+ * Every user edit and selection change is written as an event as it happens;
+ * Ctrl+Return ends the session and prints a report on stdout. */
 
 #include "document.h"
 #include "settings.h"
@@ -34,7 +34,7 @@ const char *kDescription =
     "\n"
     "The agent runs it (usually in the background with --session-dir DIR) and\n"
     "talks to the window through `fcai session` (see `fcai session --help`).\n"
-    "Return sends the drawing to the agent and keeps the window open; Ctrl+Return\n"
+    "The agent sees each edit and selection change as it happens; Ctrl+Return\n"
     "ends the session and prints the report.\n"
     "Exit status: 0 = done, 2 = window closed, 1 = error.\n"
     "\n"

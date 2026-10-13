@@ -31,8 +31,8 @@ static const char *k_help =
     "  edit move|rm|add|set|layer FILE  Structured edit; emit result to stdout/-o\n"
     "  config     Show effective settings\n"
     "  diff A B   Primitive-level changes from A to B (--json for ops)\n"
-    "  gui        Open the drawing editor (fcai-gui) for the user; Return sends\n"
-    "             edits to the agent, Ctrl+Return ends the session\n"
+    "  gui        Open the drawing editor (fcai-gui) for the user; edits reach\n"
+    "             the agent live, Ctrl+Return ends the session\n"
     "  session    Talk to a running GUI (`session --help` lists commands)\n"
     "  skill      Print the fidocad agent skill; `skill install [DIR...]` installs it\n"
     "  style      Persistent drawing preferences (`style --help` lists commands)\n"
@@ -676,7 +676,7 @@ static int session_wait(const char *dir, int timeout_s) {
 static int session_status(const char *dir) {
     char path[4096], *line = NULL;
     size_t cap = 0;
-    long pos = 0, pending = 0, sends = 0;
+    long pos = 0, pending = 0, changes = 0;
     ssize_t n;
     FILE *f;
     snprintf(path, sizeof path, "%s/.events.pos", dir);
@@ -691,11 +691,11 @@ static int session_status(const char *dir) {
         if (line[n - 1] != '\n') break;
         pending++;
         /* GUI events are compact JSON; FCD text quotes are escaped. */
-        if (strstr(line, "\"event\":\"send\"")) sends++;
+        if (strstr(line, "\"event\":\"change\"")) changes++;
     }
     free(line);
     fclose(f);
-    printf("{\"pending\":%ld,\"pending_sends\":%ld,\"read_offset\":%ld}\n", pending, sends, pos);
+    printf("{\"pending\":%ld,\"pending_changes\":%ld,\"read_offset\":%ld}\n", pending, changes, pos);
     return 0;
 }
 
@@ -733,7 +733,7 @@ static void session_usage(void) {
           "  save DIR                    save the current GUI drawing\n"
           "  reload DIR [--force]        reload disk (refuses unsaved GUI edits)\n"
           "  reload-libs DIR             reload libraries without restarting\n"
-          "  ack DIR [TEXT]              acknowledge the user's send\n"
+          "  ack DIR [TEXT]              acknowledge the user's changes\n"
           "  quit DIR                    ask the GUI to close (Done)\n"
           "  path FILE                   print the default session dir\n"
           "get/push/save/reload/reload-libs: --wait [--timeout SECS] prints a\n"

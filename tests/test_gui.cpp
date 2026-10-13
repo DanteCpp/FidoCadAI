@@ -92,16 +92,39 @@ static void test_session_feedback(QApplication &app, const char *argv0) {
     auto request = [&](const QString &cmd, const QStringList &extra = QStringList(), int code = 0) {
         return QJsonDocument::fromJson(cli(QStringList{"session", cmd, dir} + extra + QStringList{"--wait"}, code)).object();
     };
-    /* Pending user sends are neither lost nor mistaken for correlated replies. */
-    win.canvas()->onSend();
+    /* A user selection reaches the agent without any key press, and pending
+     * user changes are neither lost nor mistaken for correlated replies. */
+    win.canvas()->setSelection({0});
+    QTest::qWait(400);
     QJsonObject status = QJsonDocument::fromJson(cli({"session", "status", dir})).object();
-    EXPECT(status["pending_sends"].toInt() == 1);
+    EXPECT(status["pending_changes"].toInt() == 1);
     QJsonObject state = request("get");
     EXPECT(state["event"] == "state" && state["ok"].toBool());
     EXPECT(!state["id"].toString().isEmpty() && state["seq"].toInt() == 2);
     status = QJsonDocument::fromJson(cli({"session", "status", dir})).object();
-    EXPECT(status["pending_sends"].toInt() == 1 && status["pending"].toInt() == 2);
-    EXPECT(QJsonDocument::fromJson(cli({"session", "wait", dir, "--timeout", "1"})).object()["event"] == "send");
+    EXPECT(status["pending_changes"].toInt() == 1 && status["pending"].toInt() == 2);
+    auto nextChange = [&] { /* skip the state replies queued alongside */
+        QJsonObject e;
+        do e = QJsonDocument::fromJson(cli({"session", "wait", dir, "--timeout", "1"})).object();
+        while (e["event"] == "state");
+        return e;
+    };
+    QJsonObject change = nextChange();
+    EXPECT(change["event"] == "change" && change["changes"].toArray() == QJsonArray{"selection"});
+    EXPECT(change["selection"].toArray() == QJsonArray{0});
+    /* A pending edit is flushed before the agent's command is applied. */
+    doc.append("SA 0 0 0\n");
+    EXPECT(request("get")["seq"].toInt() == 4);
+    change = nextChange();
+    EXPECT(change["event"] == "change" && change["seq"].toInt() == 3);
+    EXPECT(change["changes"].toArray() == QJsonArray{"drawing"});
+    EXPECT(change["diff_prev"].toObject()["changes"].toInt() == 1);
+    doc.undo();
+    win.canvas()->setSelection({});
+    QTest::qWait(400);
+    change = nextChange();
+    EXPECT(change["changes"].toArray() == (QJsonArray{"drawing", "selection"}));
+    EXPECT(QJsonDocument::fromJson(cli({"session", "status", dir})).object()["pending"].toInt() == 0);
 
     /* Reload user libraries without changing FCD, selection, or undo history. */
     win.canvas()->setSelection({0});
@@ -165,7 +188,7 @@ static void test_session_feedback(QApplication &app, const char *argv0) {
     /* Complete JSON lines can exceed the old 128 KiB reader buffer. */
     QString large = tmp.path() + "/large";
     QDir().mkpath(large);
-    QJsonObject event{{"event", "send"}, {"fcd", QString(150000, 'x')}};
+    QJsonObject event{{"event", "change"}, {"fcd", QString(150000, 'x')}};
     QByteArray line = QJsonDocument(event).toJson(QJsonDocument::Compact) + '\n';
     write(large + "/events.jsonl", line);
     EXPECT(cli({"session", "wait", large, "--timeout", "1"}) == line);
@@ -575,25 +598,13 @@ int main(int argc, char **argv) {
     EXPECT(!win.barVisible());
     EXPECT(settings.get("statusbar") == "0");
 
-    /* Return on the canvas sends the drawing to the agent, GUI stays open */
-    QTest::keyClick(c, Qt::Key_Return);
-    QTest::qWait(20);
+    /* Return sends nothing: user edits already reach the agent live */
     {
-        QString ev = readAll(session_dir + "/events.jsonl");
-        EXPECT(ev.contains("\"event\":\"send\""));
-        EXPECT(ev.contains("\"fcd\""));
-        EXPECT(ev.contains("\"diff\""));
-        EXPECT(win.status() == "closed");
-    }
-
-    /* Return fires through onSend (hook swapped so nothing is saved) */
-    {
-        auto keep = c->onSend;
-        bool fired = false;
-        c->onSend = [&fired] { fired = true; };
+        QTest::qWait(400); /* let earlier live changes land first */
+        qint64 before = readAll(session_dir + "/events.jsonl").size();
         QTest::keyClick(c, Qt::Key_Return);
-        EXPECT(fired);
-        c->onSend = keep;
+        QTest::qWait(400);
+        EXPECT(readAll(session_dir + "/events.jsonl").size() == before);
         EXPECT(win.status() == "closed");
     }
 

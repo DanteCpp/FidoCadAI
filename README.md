@@ -1,87 +1,44 @@
 # FidoCadAI
 
-> **Draw circuits by talking to your agent.**  
-> Natural language in, a live canvas out. No buttons; the agent sees what you see and every edit you make.  
-> Fast, self-contained C11 engine built around the plain-text FidoCad format.
+Draw circuits by talking to your agent.
 
-[![Build & Test](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue.svg)]()
-[![Language](https://img.shields.io/badge/C11-zero--dependency-orange.svg)]()
-[![License](https://img.shields.io/badge/license-GPLv3-lightgrey.svg)]()
+FidoCadAI gives you and your AI agent a shared drawing canvas. Ask for a circuit, inspect the result, then answer on the canvas itself: select a component, move a label or adjust a wire. Your selections and edits are shared automatically, so the next request can refer to what you just touched.
 
----
+The conversation stays in your terminal. The drawing stays open beside it, and you can edit it by hand at any point.
 
-## A New Way to Work With a Machine
+## An example session
 
-I believe the recent progress in language models calls for a paradigm shift in human–machine interfaces. FidoCadAI is my take on that shift, applied to circuit design.
-
-You don't drive FidoCadAI through menus and toolbars. **You say what you want**, by typing or dictation, and your agent draws it. Then you look at the result and answer on the canvas itself:
-
-* **Natural language comes first.** Ask for a circuit, a change or a cleanup, in plain words.
-* **Inspect visually, give feedback by clicking.** The drawing updates live in `fcai-gui`. Select the wire you don't like, drag a label, add a note, press `Return`: the agent gets the drawing, your selection, your note and a diff of what you changed by hand.
-* **No buttons.** The window *is* the drawing: no toolbars, no menus, no chat pane. The conversation stays in your terminal and the canvas stays clean.
-* **The agent knows the canvas.** It reads what is drawn and what you touched, so "make *this* shorter" means what you meant.
-* **Keybindings are there when you want them.** Every tool has a single-key shortcut. The bindings borrow from Cadence (I come from chip design) and from other editors I like. They are the second way to work; language is the first.
-
-### Why the FidoCad language
-
-The FidoCad format suits this job well. A drawing is plain, human-readable ASCII text, and LLMs are built to read and write text. It also diffs and merges cleanly in git. The specification is small enough to describe in a few pages, so teaching it to an agent costs little context and leaves room for your actual design.
-
-### Why C
-
-The agent draws, renders, looks and corrects, over and over. Each pass has to be quick, so FidoCadAI is a compiled program that starts in milliseconds and renders almost instantly. That fast loop is what lets the agent check its own drawings visually.
-
-I chose C over Rust because C has a huge, mature body of code for LLMs to learn style from, which makes it a good language for agents to read and extend. Dependencies are kept to a minimum so the project stays self-contained: the core and the CLI need only a C compiler and libc.
-
-### The skill: how your agent learns FidoCadAI
-
-FidoCadAI ships with a **skill**: a predefined prompt, written in natural language, that you attach to your agent's context so it knows how to use the tools. On Unix-like systems the install script registers it with your agents automatically. You can also print it with `fcai skill` and paste it into any agent you like.
-
-The skill carries some of my own taste in schematic drawing. On top of that, FidoCadAI learns *yours*: during a session the agent distills your feedback into drawing preferences, stores them in `~/.fcai/style.md` and applies them next time. The more you use it, the more it draws the way you do.
-
-### A CLI made for agents
-
-`fcai` is how the agent talks to the drawing. It was designed for LLMs to use: compact text summaries, JSON on request, structured edits, primitive-level diffs, hit-testing and a session channel to the live GUI.
-
-### The model makes the difference
-
-FidoCadAI is a set of tools; the language model does the thinking. The quality of what you get depends mostly on the model behind your agent, and a frontier model such as Opus 5.5 or GPT 6.1 will give you far cleaner schematics than a weaker one.
-
----
-
-## Live in Action: Session with Pi
-
-Watch a **real interactive Pi session**, under **15 seconds**, drawing a simple **buck converter** in `fcai-gui`. Pi runs `deepseek-v4.1-flash`:
+In this session, Pi draws a buck converter from the request “Draw a simple 15 V to 12 V buck converter.” The recording is shortened: agent responses are accelerated and waiting periods are removed.
 
 ![Real Pi session: type a buck converter request, select COUT in the GUI, and ask Pi to change it from 220u to 470u](docs/images/pi_buck_selection.gif)
 
-1. **Type the Request:** *"Draw a simple 15 V to 12 V buck converter."* Each character is entered individually in the live agent.
-2. **Watch It Draw:** Pi builds the rails, switching MOSFET, freewheel diode, inductor, capacitors, and load in stages.
-3. **Select and Send:** Click **COUT** in the GUI and press **Return** to send the selected component to Pi.
-4. **Ask for a Change:** Type *"Set this capacitor to 470u."* Pi reads the selection, changes **COUT from 220u to 470u**, and saves it while keeping it highlighted.
+Once the circuit is drawn, click the output capacitor and ask, “Set this capacitor to 470u.” The selection tells the agent which component you mean. Pi changes its value from 220u to 470u and leaves it highlighted.
 
-Typing plays at its recorded speed; agent work is accelerated and waiting periods are cut. The [drawing and symbol library](playground/buck-demo/) are included. Component values are illustrative.
+The [drawing, symbol library and session details](playground/buck-demo/) are included. Component values are illustrative; this example demonstrates drawing and editing a circuit.
 
----
+## Working with the drawing
 
-## Interactive GUI: Zero Clutter, Pure Circuit
+I come from chip design, and the keyboard shortcuts borrow from Cadence and other editors I like. Language is the main way to ask for work, while direct editing lets you make a small adjustment where you see it. Both are part of the same session.
 
-`fcai-gui` is crafted to be distraction-free. The window **is** the drawing, with instant keyboard access to libraries, shortcuts, and precision measurement:
+The drawing window has no permanent toolbars or menus. You can bring up a symbol library or a searchable shortcut guide when you need one. Labels have their own handles, so you can move a component's name or value without moving the component. A ruler measures distances and angles on the canvas.
 
 ![FidoCadAI GUI features: sidebar, keybindings cheatsheet, and ruler](docs/images/gui_features.gif)
 
-* **Symbol Library Sidebar (`Ctrl+B`):** Search and browse standard and custom symbol libraries with instant macro preview.
-* **Keybindings Cheatsheet (`K`):** Searchable overlay covering every tool and shortcut (`Esc` closes).
-* **Precision Ruler (`Shift+drag` or `Right-drag`):** Live measurement line with ticks showing distance in logical units, millimeters, and angle.
-* **Smart Label Handles:** Component names and values have independent handles. Move labels anywhere without moving the symbol body.
-* **Single-Key Tools:** `S` select · `L` line · `B` rectangle · `E` ellipse · `J` connection dot · `T` text · `R` rotate · `M` mirror · `Space` fit-to-view · `Return` send to agent · `Ctrl+Return` save & finish.
-* **Desktop Integration:** Seamlessly follows your system dark/light theme, font, and window tiling.
+FidoCadAI ships with a skill: written instructions that teach an agent how to use the tools. It also carries some of my own taste in schematic drawing. You can ask the agent to remember your drawing preferences for future sessions, or enable learning so it saves preferences from your explicit feedback.
 
----
+## Why it is built this way
+
+A FidoCad drawing is plain text. An agent can read and change it, and you can track those changes in Git. The format is small enough to explain in a few pages, leaving more of the agent's context available for the design itself. The drawings remain editable files that you can keep and share.
+
+The agent works through a command-line tool, `fcai`, while you see the result in `fcai-gui`. It can draw, render the result, inspect it and make corrections. Keeping that cycle quick matters, so the core is written in C11 with only the C standard library as a dependency. The drawing window uses Qt6.
+
+The language model interprets your requests and makes the design decisions, so results depend on the model you use. The tools let it inspect the drawing's syntax, wire geometry and appearance; those checks do not establish that a circuit will work electrically.
 
 ## Examples
 
-Schematics, PCB layouts, home energy systems, and art drawn with `fcai`. Editable sources live in [`playground/`](playground/). Click an image to open the full-resolution render.
+These examples range from circuit details to a house energy system and a portrait. Each uses the same text-based drawing format. Editable sources live in [`playground/`](playground/); click an image to open the full-resolution render.
+
+The buck-boost pair shows a schematic and a PCB layout. The ADC drawings use repeated circuit elements and labels to describe more detailed structures.
 
 | **Buck-Boost Schematic** | **Buck-Boost PCB Layout** |
 |:---:|:---:|
@@ -95,7 +52,7 @@ Schematics, PCB layouts, home energy systems, and art drawn with `fcai`. Editabl
 
 **Solar + Storage House — Single-Line Drawing**
 
-Rooftop solar, battery accumulation, a hybrid inverter, grid metering, protected house circuits, and heat-pump heating. The energy manager coordinates PV surplus, battery limits, room temperature, and hot-water demand.
+This drawing brings electrical and thermal systems onto one canvas: rooftop solar, battery storage, a hybrid inverter, house circuits and heat-pump heating. Colours and line styles distinguish power, control signals and heat flow.
 
 [![Dark-mode fcai-gui screenshot of a house with solar PV, battery storage, hybrid inverter, heat pump, thermal storage, and energy management](docs/images/example_unifilar.png)](docs/images/example_unifilar.png?raw=true)
 
@@ -103,54 +60,21 @@ Rooftop solar, battery accumulation, a hybrid inverter, grid metering, protected
 
 **Enrico Fermi Portrait**
 
+The same lines used for circuits can also describe a face. This portrait is made of editable outlines and cross-hatching, with no embedded photograph.
+
 <p align="center">
   <a href="docs/images/example_enrico_fermi.png?raw=true"><img src="docs/images/example_enrico_fermi.png" width="480" alt="Enrico Fermi portrait in dark-mode fcai-gui, drawn with editable outlines and cross-hatching"></a>
 </p>
 
 [Editable artwork and reference photograph](playground/enrico-fermi/)
 
----
+## Try it
 
-## Quick Start
+FidoCadAI runs on Linux and macOS with a coding agent such as Pi, Codex or Claude Code. Give your agent this repository and ask it to install FidoCadAI, read the included skill and open a drawing. Building requires a C11 compiler, Make and Qt6 for the drawing window; the [installer](scripts/install.sh) and [agent instructions](share/skills/fidocad/SKILL.md) cover setup and use.
 
-### 1. Build & Install
+A first request can be as simple as “Draw an inverting buck-boost converter.” Once the drawing is open, select something you want to change and continue the conversation.
 
-```bash
-# Clone and build core CLI + GUI
-git clone https://github.com/DanteCpp/FidoCadAI.git
-cd FidoCadAI
-make
-
-# System-wide install (/opt/FidoCadAI, symlinks in /usr/local/bin, auto-registers AI skill)
-sudo scripts/install.sh install
-```
-
-> **Requirements:** C11 compiler (`clang` or `gcc`) and `make`.  
-> For the GUI (`fcai-gui`): Qt6 (`brew install qt` on macOS, `apt install qt6-base-dev` on Linux). Core CLI builds with zero dependencies.
-
-### 2. Pair with Your AI Agent
-
-On Unix-like systems the installer registers the skill with your local agent harnesses. For any other agent, attach the output of `fcai skill` to its prompt.
-
-```bash
-# With Pi:
-pi "draw an inverting buck-boost converter"
-
-# With Antigravity (AGY):
-agy "open fcai gui and sketch a CMOS bandgap reference circuit"
-
-# With OpenAI Codex:
-codex "draw a 130 nm PMOS differential pair with degeneration"
-
-# With Claude Code:
-claude "sketch a 2nd-order active low-pass filter in fcai"
-```
-
-The agent opens `fcai-gui`, builds the schematic in real time, and saves the verified `.fcd` drawing when you are done.
-
----
-
-## Credits & License
+## Credits and license
 
 * **Core & GUI:** Licensed under [GPLv3](LICENSE).
 * **Reference Projects:** [FidoCadJ](https://github.com/DarwinNE/FidoCadJ) (Java) by Davide Bucci and [FidoCadJS](https://github.com/DarwinNE/FidoCadJ) (TypeScript).

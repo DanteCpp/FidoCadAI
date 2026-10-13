@@ -67,11 +67,12 @@ bar and may be hidden. `session push` replaces the in-memory drawing, including
 unsaved edits, so read and preserve the current GUI state before pushing.
 Accepted updates automatically fit if they extend outside the canvas; updates
 that already fit keep the current view. Fitting follows window resizing and
-tiling until a manual pan or zoom; Space restores it. Return sends the user's
-drawing and edits while keeping the window open; Ctrl+Return saves and closes.
+tiling until a manual pan or zoom; Space restores it. Every user edit and
+selection change is written to the session as a `change` event as it happens;
+the user never has to press anything to send it. Ctrl+Return saves and closes.
 
 ```bash
-fcai session status /tmp/sketch.session              # pending events/sends; no consumption
+fcai session status /tmp/sketch.session              # pending events/changes; no consumption
 fcai session wait /tmp/sketch.session --timeout 1    # consume one event
 fcai session get /tmp/sketch.session --wait          # current GUI state as JSON
 fcai session push /tmp/sketch.session /tmp/new.fcd --wait
@@ -84,13 +85,15 @@ fcai session quit /tmp/sketch.session                # Done
 
 ### Apply feedback and confirm the live update
 
-**Chat feedback is an instruction to act now.** The user does not need to
-press Return as well. For either chat feedback or a GUI `send`:
+**Chat feedback is an instruction to act now.** The GUI has already told you
+what the user did on the canvas: read it before acting on each user turn.
 
-1. Check `session status`, consume pending events with short `wait` calls,
-   and acknowledge each `send`: describe the user's changes in chat and put
-   a one-liner in the bottom bar with `session ack`. Read `diff_prev` for the
-   change since the previous event; `diff` retains the existing baseline diff.
+1. Check `session status`, consume pending `change` events with short `wait`
+   calls, and take the newest `selection` as what "this", "that" or "here"
+   refers to. Read `diff_prev` for the user's edits since the previous event;
+   `diff` retains the existing baseline diff. When the user edited the
+   drawing, describe their changes in chat and optionally put a one-liner in
+   the bottom bar with `session ack`.
 2. Run `session get DIR --wait`. Its JSON contains the actual `file`, `fcd`,
    `selection`, `modified` and `disk_changed`. Save `fcd` as a base snapshot
    and make the requested edits in a separate draft, preserving GUI changes.
@@ -120,7 +123,7 @@ not a closed window; the command may still apply. Query state before retrying.
 
 | Event | Meaning |
 |-------|---------|
-| `send` | Return: user drawing, selection, note and diffs; acknowledge before editing |
+| `change` | Live, ~300 ms after a user edit or selection change: `changes` lists `drawing` and/or `selection`, plus the drawing, selection and diffs. Agent pushes and disk reloads do not produce it |
 | `state` | Reply to `get` |
 | `applied` | Reply to push/save/reload/reload-libs; check `ok` and any `error` |
 | `conflict` | Disk reload blocked by GUI edits; `fcd` is the GUI version, `disk_fcd` the disk version; reconcile both |
@@ -136,14 +139,16 @@ when a macro changes; it preserves selection, undo history and unsaved edits.
 Use one `session wait` reader per session. Use the built-in `--timeout`, not
 an external `timeout` command or a detached/background wait. Check events
 between drawing increments and on every user turn. While actively awaiting
-GUI feedback, use bounded foreground waits. Once the agent turn ends, Return
-only queues an event; it cannot wake an idle agent by itself.
+GUI feedback, use bounded foreground waits. Once the agent turn ends, events
+queue up until the next turn; they cannot wake an idle agent by themselves.
+Pending user changes are always written before the reply to your next
+command, so a `get` or `push` never hides an edit that came first.
 
 The window shows the drawing plus the user's optional bottom bar: report
 progress in your own chat, not inside the drawing.
 
-Without a session directory the GUI still works for a human (`Return` sends
-nothing, `Ctrl+Return`/close ends it), and `fcai gui` prints a report on exit:
+Without a session directory the GUI still works for a human
+(`Ctrl+Return`/close ends it), and `fcai gui` prints a report on exit:
 status, note, the primitive diff since opening and the final FCD.
 
 ## Inspecting and checking drawings
@@ -221,7 +226,7 @@ each label without moving its component. Box-select just the label handles
 then drag any selected handle or use arrow keys to move the group together.
 Ctrl+drag a box adds handles; groups can span multiple components.
 `Ctrl+B`: library → category → symbol, with live preview.
-Read each `send` diff before editing to preserve the user's changes.
+Read each `change` diff before editing to preserve the user's changes.
 
 ## Language quick reference
 

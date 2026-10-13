@@ -8,8 +8,8 @@ The prompts were entered one character at a time. Their typing is shown at
 recorded speed; agent responses are accelerated and waiting periods removed.
 
 Pi drew a compact asynchronous buck converter in the live GUI. The driver then
-clicked COUT and pressed Return. The GUI sent `selection: [27]` to Pi, followed
-by the typed request "Set this capacitor to 470u." Pi read that selection,
+selected COUT, and the GUI reported `selection: [27]` to Pi, followed by the
+typed request "Set this capacitor to 470u." Pi read that selection,
 changed only COUT's attached value from `220u` to `470u`, and saved the drawing.
 The selected component remained highlighted after the update.
 

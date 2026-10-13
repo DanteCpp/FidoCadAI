@@ -13,12 +13,13 @@ class QAction;
 class QFileSystemWatcher;
 class QLabel;
 class QLineEdit;
+class QTimer;
 class QTreeWidget;
 
 /* The window is the drawing plus an optional bottom bar (hidden by default,
- * toggled with I): canvas status on the left, a message line to the calling
- * agent on the right. There is no chat panel — the agent that launched the GUI
- * is the assistant, and the Session is the channel to it. */
+ * toggled with I): canvas status on the left, a keybindings hint on the
+ * right. There is no chat panel — the agent that launched the GUI is the
+ * assistant, and the Session is the channel to it. */
 class MainWindow : public QMainWindow {
 public:
     MainWindow(Document *doc, Settings *settings, Theme *theme, QApplication *app,
@@ -59,7 +60,10 @@ private:
     void updateInfo(const QString &s);
     bool save(const QString &what = QString());
     void done(const QString &note);
-    void sendToAgent(const QString &note); /* Return: save + tell the agent */
+    /* Live feedback: user edits and selection changes reach the agent as a
+     * debounced `change` event; agent commands and disk reloads do not. */
+    void scheduleChange(bool drawing);
+    void flushChange();
     void toggleBar();                      /* I */
     void report(const QString &text);      /* transient message in the bottom bar */
     void applyCommand(const QJsonObject &cmd);
@@ -84,5 +88,9 @@ private:
     bool saved_ok_ = false, finishing_ = false;
     bool disk_changed_ = false;
     QByteArray previous_event_;
+    QList<int> previous_selection_;
+    QTimer *live_ = nullptr;
+    bool agent_ = false; /* applying an agent command or a disk reload */
+    bool live_drawing_ = false, live_selection_ = false;
     QByteArray conflict_disk_;
 };

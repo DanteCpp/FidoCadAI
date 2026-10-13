@@ -480,8 +480,7 @@ void Canvas::paintEvent(QPaintEvent *) {
     if (ruler_active_) drawRuler(p);
     if (cheats_) {
         QList<QPair<QString, QString>> rows = {
-            {"send", ""},
-            {"Return", "send the drawing to the agent — the window stays open"},
+            {"session", ""},
             {"Ctrl+Return", "done: save and close"},
             {"I", "show or hide the bottom info bar"},
             {"K", "this sheet — type to search, Esc closes"},
@@ -1132,7 +1131,6 @@ void Canvas::keyPressEvent(QKeyEvent *e) {
     }
     if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) && !mods) {
         if (tool_ == Line && have_start_) finishLine();
-        else if (onSend) onSend();
         return;
     }
     int g = grid();

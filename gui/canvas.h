@@ -61,7 +61,6 @@ public:
     std::function<void()> onSelectionChanged;
     std::function<void()> onToolChanged;
     std::function<void(const QString &)> onStatus;
-    std::function<void()> onSend;                          /* Return: tell the agent */
     std::function<void()> onToggleBar;                     /* I: bottom bar */
     std::function<void(const QString &)> onSettingChanged; /* [ ] F G changed a setting */
 
