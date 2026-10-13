@@ -100,7 +100,7 @@ typedef struct {
     int quiet;
     int verbose;
     FcRenderOpts ro; /* render settings, --crop included */
-    char prefix[128];
+    const char *prefix;                      /* --prefix for the next --lib */
     const char *libs[64], *lib_prefixes[64]; /* --lib, with the --prefix given before it */
     int nlibs;
     const char *libdirs[16];
@@ -157,7 +157,7 @@ static void set_value(Opt *o, const Setting *s, const char *v) {
     else if (s->type == 'i') {
         if (fc_parse_int(v, &n)) *(int *)f = n;
     } else if (s->type == 'c') parse_bg(v, (uint32_t *)f);
-    else *(const char **)f = strdup(v);
+    else *(const char **)f = v; /* argv, or config text kept for the whole run */
 }
 
 static const Setting *flag_setting(const char *flag) {
@@ -201,14 +201,18 @@ static void apply_kv(Opt *o, const char *k, const char *v) {
             set_value(o, &k_settings[i], v);
             return;
         }
-    if (fc_streq(k, "lib_dir") && o->nlibdirs < 16) o->libdirs[o->nlibdirs++] = strdup(v);
+    if (fc_streq(k, "lib_dir") && o->nlibdirs < 16) o->libdirs[o->nlibdirs++] = v;
 }
 
+/* Settings point into the file text, so it is kept until the program ends. */
 static int load_config(Opt *o, const char *path) {
+    static char *kept[8];
+    static int nkept;
     char *text = NULL;
     size_t len = 0;
     char *p, *line;
-    if (fc_read_file(path, &text, &len) != FC_OK) return FC_ERR_IO;
+    if (nkept == 8 || fc_read_file(path, &text, &len) != FC_OK) return FC_ERR_IO;
+    kept[nkept++] = text;
     p = text;
     while (p && *p) {
         char *nl = strchr(p, '\n');
@@ -224,16 +228,15 @@ static int load_config(Opt *o, const char *path) {
         }
         p = nl ? nl + 1 : NULL;
     }
-    free(text);
     return FC_OK;
 }
 
 static void add_lib(Opt *o, const char *path) {
     if (o->nlibs >= 64) return;
     o->libs[o->nlibs] = path;
-    o->lib_prefixes[o->nlibs] = o->prefix[0] ? strdup(o->prefix) : NULL;
+    o->lib_prefixes[o->nlibs] = o->prefix;
     o->nlibs++;
-    o->prefix[0] = 0;
+    o->prefix = NULL;
 }
 
 static void lib_report(void *ctx, int error, const char *msg) {
@@ -1173,7 +1176,7 @@ int main(int argc, char **argv) {
             continue;
         }
         if (fc_streq(a, "--prefix") && i + 1 < argc) {
-            snprintf(o.prefix, sizeof o.prefix, "%s", argv[++i]);
+            o.prefix = argv[++i];
             continue;
         }
         if (fc_streq(a, "--config") && i + 1 < argc) {
