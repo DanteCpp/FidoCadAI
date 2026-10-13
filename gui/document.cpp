@@ -183,12 +183,6 @@ QString Document::diff(bool json) const {
     return out;
 }
 
-QRectF Document::bounds(int i) const {
-    FcRect r;
-    if (!fc_prim_bounds(&d_, lib_, i, &r)) return QRectF();
-    return toRect(r);
-}
-
 QRectF Document::boundsAll() const {
     FcRect r;
     if (!fc_bounds(&d_, lib_, &r)) return QRectF();
@@ -196,10 +190,14 @@ QRectF Document::boundsAll() const {
 }
 
 QRectF Document::boundsOf(const QList<int> &idx) const {
-    FcRect u = {0, 0, 0, 0}, r;
+    std::vector<FcRect> box(d_.nprims);
+    std::vector<int> has(d_.nprims);
+    FcRect u = {0, 0, 0, 0};
     bool any = false;
+    fc_prims_bounds(&d_, lib_, box.data(), has.data());
     for (int i : idx) {
-        if (!fc_prim_bounds(&d_, lib_, i, &r)) continue;
+        if (i < 0 || i >= d_.nprims || !has[i]) continue;
+        const FcRect &r = box[i];
         if (!any) u = r;
         u.min_x = std::min(u.min_x, r.min_x);
         u.min_y = std::min(u.min_y, r.min_y);
@@ -215,10 +213,13 @@ int Document::hit(double x, double y, double tol) const { return fc_hit_test(&d_
 QList<int> Document::inRect(const QRectF &r) const {
     QList<int> out;
     QRectF n = r.normalized();
-    FcRect b;
+    std::vector<FcRect> box(d_.nprims);
+    std::vector<int> has(d_.nprims);
+    fc_prims_bounds(&d_, lib_, box.data(), has.data());
     for (int i = 0; i < d_.nprims; i++) {
-        if (!fc_prim_bounds(&d_, lib_, i, &b)) continue;
-        if (b.min_x >= n.left() && b.max_x <= n.right() && b.min_y >= n.top() && b.max_y <= n.bottom())
+        const FcRect &b = box[i];
+        if (has[i] && b.min_x >= n.left() && b.max_x <= n.right() && b.min_y >= n.top() &&
+            b.max_y <= n.bottom())
             out << i;
     }
     return out;

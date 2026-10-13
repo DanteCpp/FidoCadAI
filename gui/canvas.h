@@ -91,8 +91,7 @@ private:
     int handleAt(QPointF px, int *handle_out) const; /* selection control points */
     void snapshotHandles();
     void moveHandles(QPointF delta); /* one shared, bounded translation */
-    void sketch(class QPainter &p, const FcDrawing &flat) const;
-    void sketchIndex(class QPainter &p, int i) const;
+    void sketch(class QPainter &p, const FcDrawing &flat, const QList<int> *origins = nullptr) const;
     void sketchMacro(class QPainter &p, QPointF at) const;
     void drawRuler(class QPainter &p) const;
     QString num(double v) const;

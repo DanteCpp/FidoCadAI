@@ -344,6 +344,24 @@ int fc_bounds(const FcDrawing *d, const FcLib *lib, FcRect *out) {
     return 1;
 }
 
+void fc_prims_bounds(const FcDrawing *d, const FcLib *lib, FcRect *out, int *has) {
+    FcDrawing exp;
+    int i, last;
+    if (d->nprims <= 0) return;
+    memset(out, 0, (size_t)d->nprims * sizeof *out);
+    memset(has, 0, (size_t)d->nprims * sizeof *has);
+    fc_drawing_init(&exp);
+    last = fc_expand(d, &exp, lib) == FC_OK ? d->nprims - 1
+                                            : (exp.nprims ? exp.prims[exp.nprims - 1].origin : -1);
+    for (i = 0; i < exp.nprims; i++) {
+        int o = exp.prims[i].origin;
+        if (o >= 0 && o < d->nprims) include_prim_bounds(&out[o], &exp.prims[i], &has[o]);
+    }
+    /* past an expansion stopped over budget, primitives keep their own outline */
+    for (i = last + 1; i < d->nprims; i++) include_prim_bounds(&out[i], &d->prims[i], &has[i]);
+    fc_drawing_free(&exp);
+}
+
 void fc_stats(const FcDrawing *d, const FcLib *lib, FcStats *out) {
     int i, used = 0;
     memset(out, 0, sizeof *out);

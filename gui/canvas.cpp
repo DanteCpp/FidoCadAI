@@ -14,18 +14,11 @@
 #include <QWheelEvent>
 #include <cmath>
 #include <cstring>
+#include <vector>
 
 namespace {
 
 uint32_t toRgb(const QColor &c) { return (uint32_t)c.rgb() & 0xFFFFFFu; }
-
-void oneView(const FcDrawing &d, int i, FcDrawing *view) {
-    memset(view, 0, sizeof *view);
-    view->prims = const_cast<FcPrim *>(&d.prims[i]);
-    view->nprims = view->cap_prims = 1;
-    view->cfg = d.cfg;
-    memcpy(view->layers, d.layers, sizeof view->layers);
-}
 
 QPointF pt(const FcPoint &p) { return QPointF(p.x, p.y); }
 
@@ -234,9 +227,17 @@ QImage Canvas::renderImage(int w, int h) const {
     return img;
 }
 
-void Canvas::sketch(QPainter &p, const FcDrawing &flat) const {
+/* Outline of an expanded drawing; with origins, only what those primitives became. */
+void Canvas::sketch(QPainter &p, const FcDrawing &flat, const QList<int> *origins) const {
+    std::vector<char> keep;
+    if (origins) {
+        keep.assign(doc_->count(), 0);
+        for (int i : *origins)
+            if (i >= 0 && i < doc_->count()) keep[i] = 1;
+    }
     for (int i = 0; i < flat.nprims; i++) {
         const FcPrim &q = flat.prims[i];
+        if (origins && (q.origin < 0 || q.origin >= (int)keep.size() || !keep[q.origin])) continue;
         switch (q.kind) {
         case FC_LINE:
             p.drawLine(pt(q.u.line.a), pt(q.u.line.b));
@@ -281,15 +282,6 @@ void Canvas::sketch(QPainter &p, const FcDrawing &flat) const {
             break;
         }
     }
-}
-
-void Canvas::sketchIndex(QPainter &p, int i) const {
-    FcDrawing view, flat;
-    oneView(doc_->drawing(), i, &view);
-    fc_drawing_init(&flat);
-    fc_expand(&view, &flat, doc_->lib());
-    sketch(p, flat);
-    fc_drawing_free(&flat);
 }
 
 void Canvas::sketchMacro(QPainter &p, QPointF at) const {
@@ -400,7 +392,11 @@ void Canvas::paintEvent(QPaintEvent *) {
         pen.setCosmetic(true);
         p.setPen(pen);
         p.setBrush(Qt::NoBrush);
-        for (int i : sel_) sketchIndex(p, i);
+        FcDrawing flat;
+        fc_drawing_init(&flat);
+        fc_expand(&doc_->drawing(), &flat, doc_->lib());
+        sketch(p, flat, &sel_);
+        fc_drawing_free(&flat);
         p.restore();
         QRectF b = doc_->boundsOf(sel_);
         QRectF r(toPixel(b.topLeft()), toPixel(b.bottomRight()));

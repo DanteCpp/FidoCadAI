@@ -404,16 +404,24 @@ static int query_drawing(const Opt *o, const FcDrawing *d, const FcLib *lib) {
         if (!o->has_at) return FC_ERR_ARG;
         fc_buf_printf(&b, "{\"index\":%d}\n", fc_hit_test(d, lib, o->x, o->y, o->tolerance));
     } else {
-        if (!o->has_box) return FC_ERR_ARG;
+        FcRect *r = (FcRect *)calloc((size_t)d->nprims + 1, sizeof *r);
+        int *has = (int *)calloc((size_t)d->nprims + 1, sizeof *has);
+        if (!o->has_box || !r || !has) {
+            free(r);
+            free(has);
+            return o->has_box ? FC_ERR_NOMEM : FC_ERR_ARG;
+        }
+        fc_prims_bounds(d, lib, r, has);
         fc_buf_puts(&b, "{\"indices\":[");
         for (i = 0; i < d->nprims; i++) {
-            FcRect r;
-            if (fc_prim_bounds(d, lib, i, &r) && r.min_x <= o->box.max_x && r.max_x >= o->box.min_x &&
-                r.min_y <= o->box.max_y && r.max_y >= o->box.min_y) {
+            if (has[i] && r[i].min_x <= o->box.max_x && r[i].max_x >= o->box.min_x &&
+                r[i].min_y <= o->box.max_y && r[i].max_y >= o->box.min_y) {
                 fc_buf_printf(&b, "%s%d", n++ ? "," : "", i);
             }
         }
         fc_buf_puts(&b, "]}\n");
+        free(r);
+        free(has);
     }
     i = write_out(o, b.p, b.n); fc_buf_free(&b); return i;
 }

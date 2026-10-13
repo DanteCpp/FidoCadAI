@@ -47,7 +47,6 @@ public:
     QString context() const;
     QString diff(bool json) const;
     QString diffJson() const { return diff(true); }
-    QRectF bounds(int i) const;
     QRectF boundsAll() const;
     QRectF boundsOf(const QList<int> &idx) const;
     int hit(double x, double y, double tol) const;

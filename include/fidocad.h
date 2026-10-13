@@ -103,6 +103,7 @@ typedef struct {
     int layer;
     int filled;
     int src_line;
+    int origin; /* set by fc_expand: index of the source primitive this one came from */
     int has_ext;
     FcExt ext;
     int has_name, has_value;
@@ -294,7 +295,6 @@ int fc_drawing_move(FcDrawing *d, int from, int to);
 void fc_prim_translate(FcPrim *p, double dx, double dy);
 void fc_prim_rotate(FcPrim *p, double cx, double cy); /* 90 deg clockwise about (cx,cy) */
 void fc_prim_mirror(FcPrim *p, double cx);            /* horizontal flip about x = cx */
-int fc_prim_bounds(const FcDrawing *d, const FcLib *lib, int index, FcRect *out);
 int fc_hit_test(const FcDrawing *d, const FcLib *lib, double x, double y, double tol);
 char *fc_prim_fcd(const FcPrim *p); /* one primitive as FCD text (malloc) */
 /* which: 0 = TY text, 1 = name label, 2 = value label. Missing labels are
@@ -318,6 +318,10 @@ char *fc_diff(const FcDrawing *before, const FcDrawing *after, int json);
 /* --- expand / query --- */
 int fc_expand(const FcDrawing *src, FcDrawing *dst, const FcLib *lib);
 int fc_bounds(const FcDrawing *d, const FcLib *lib, FcRect *out);
+/* Bounds of every primitive (out and has hold d->nprims entries), macros by
+ * their expanded geometry, from one expansion. has[i] is 0 for a primitive
+ * without geometry, such as an empty macro. */
+void fc_prims_bounds(const FcDrawing *d, const FcLib *lib, FcRect *out, int *has);
 void fc_stats(const FcDrawing *d, const FcLib *lib, FcStats *out);
 char *fc_describe(const FcDrawing *d, const FcLib *lib, const FcDescribeOpts *opts);
 char *fc_to_json(const FcDrawing *d, const FcLib *lib);

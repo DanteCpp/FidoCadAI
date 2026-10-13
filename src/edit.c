@@ -103,21 +103,6 @@ void fc_prim_mirror(FcPrim *p, double cx) {
     fc_xform_prim(p, 0, 1, cx, 100.0);
 }
 
-static void one_prim_view(const FcDrawing *d, int index, FcDrawing *view) {
-    memset(view, 0, sizeof *view);
-    view->prims = &d->prims[index];
-    view->nprims = view->cap_prims = 1;
-    view->cfg = d->cfg;
-    memcpy(view->layers, d->layers, sizeof view->layers);
-}
-
-int fc_prim_bounds(const FcDrawing *d, const FcLib *lib, int index, FcRect *out) {
-    FcDrawing view;
-    if (!d || index < 0 || index >= d->nprims) return 0;
-    one_prim_view(d, index, &view);
-    return fc_bounds(&view, lib, out);
-}
-
 /* ---- hit testing ---- */
 
 static double seg_dist(FcPoint p, FcPoint a, FcPoint b) {
@@ -242,48 +227,52 @@ static double prim_dist(FcPoint p, const FcPrim *q) {
     return best < 0 ? 0 : best;
 }
 
-static double macro_dist(const FcDrawing *d, const FcLib *lib, int index, FcPoint p) {
-    FcDrawing view, exp;
-    double best;
-    int i;
-    one_prim_view(d, index, &view);
-    fc_drawing_init(&exp);
-    fc_expand(&view, &exp, lib);
-    best = prim_dist(p, &d->prims[index]);
-    for (i = 0; i < exp.nprims; i++) {
-        double dd = prim_dist(p, &exp.prims[i]);
-        if (dd < best) best = dd;
-    }
-    fc_drawing_free(&exp);
-    return best;
-}
-
 int fc_hit_test(const FcDrawing *d, const FcLib *lib, double x, double y, double tol) {
     FcPoint p;
-    int i, pick = -1;
-    double pick_area = 1e30;
+    FcDrawing exp;
+    FcRect *box;
+    double *dist, pick_area = 1e30;
+    int *has, i, n = d->nprims, pick = -1;
+    if (n <= 0 || !(dist = (double *)malloc((size_t)n * sizeof *dist))) return -1;
     p.x = x;
     p.y = y;
-    /* Topmost primitive whose ink is within tol wins. */
-    for (i = d->nprims - 1; i >= 0; i--) {
-        const FcPrim *q = &d->prims[i];
-        double dd = q->kind == FC_MACRO && lib ? macro_dist(d, lib, i, p) : prim_dist(p, q);
-        if (dd <= tol) return i;
+    /* Ink distance from one expansion: a macro is as near as its insertion
+     * point, labels or nearest expanded primitive. */
+    for (i = 0; i < n; i++) dist[i] = prim_dist(p, &d->prims[i]);
+    fc_drawing_init(&exp);
+    fc_expand(d, &exp, lib);
+    for (i = 0; i < exp.nprims; i++) {
+        int o = exp.prims[i].origin;
+        double dd;
+        if (o < 0 || o >= n || d->prims[o].kind != FC_MACRO) continue;
+        dd = prim_dist(p, &exp.prims[i]);
+        if (dd < dist[o]) dist[o] = dd;
     }
+    fc_drawing_free(&exp);
+    /* Topmost primitive whose ink is within tol wins. */
+    for (i = n - 1; i >= 0 && dist[i] > tol; i--) {}
+    free(dist);
+    if (i >= 0) return i;
     /* Otherwise the smallest symbol whose bounding box contains the point. */
-    for (i = d->nprims - 1; i >= 0; i--) {
-        FcRect r;
-        double area;
-        if (d->prims[i].kind != FC_MACRO) continue;
-        if (!fc_prim_bounds(d, lib, i, &r)) continue;
-        if (x < r.min_x - tol || x > r.max_x + tol || y < r.min_y - tol || y > r.max_y + tol)
-            continue;
-        area = (r.max_x - r.min_x + 1) * (r.max_y - r.min_y + 1);
-        if (area < pick_area) {
-            pick_area = area;
-            pick = i;
+    box = (FcRect *)malloc((size_t)n * sizeof *box);
+    has = (int *)malloc((size_t)n * sizeof *has);
+    if (box && has) {
+        fc_prims_bounds(d, lib, box, has);
+        for (i = n - 1; i >= 0; i--) {
+            const FcRect *r = &box[i];
+            double area;
+            if (d->prims[i].kind != FC_MACRO || !has[i]) continue;
+            if (x < r->min_x - tol || x > r->max_x + tol || y < r->min_y - tol || y > r->max_y + tol)
+                continue;
+            area = (r->max_x - r->min_x + 1) * (r->max_y - r->min_y + 1);
+            if (area < pick_area) {
+                pick_area = area;
+                pick = i;
+            }
         }
     }
+    free(box);
+    free(has);
     return pick;
 }
 

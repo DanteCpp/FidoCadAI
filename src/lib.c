@@ -484,6 +484,7 @@ typedef struct {
     unsigned char *state;
     unsigned char *warned; /* per macro index: diagnostic already given */
     int line;           /* source line of the top-level MC being expanded */
+    int origin;         /* index of the top-level primitive being expanded */
     long total;         /* primitives created so far, cached bodies included */
     int over_budget;
 } ExpandCtx;
@@ -525,10 +526,14 @@ static const FcDrawing *macro_body(ExpandCtx *cx, const FcMacro *m, int depth) {
     return &cx->flat[idx];
 }
 
-/* copy_prim that counts against the expansion budget */
+/* copy_prim that counts against the expansion budget and records which
+ * top-level primitive the copy came from */
 static FcPrim *emit_prim(ExpandCtx *cx, FcDrawing *dst, const FcPrim *src) {
     FcPrim *q = copy_prim(dst, src);
-    if (q) cx->total++;
+    if (q) {
+        cx->total++;
+        q->origin = cx->origin;
+    }
     return q;
 }
 
@@ -546,7 +551,10 @@ static int expand_into(ExpandCtx *cx, FcDrawing *dst, const FcDrawing *src, int 
     for (i = 0; i < src->nprims; i++) {
         const FcPrim *p = &src->prims[i];
         const FcDrawing *body = NULL;
-        if (depth == 0) cx->line = p->src_line;
+        if (depth == 0) {
+            cx->line = p->src_line;
+            cx->origin = i;
+        }
         if (!budget_ok(cx)) return FC_ERR_ARG;
         if (p->kind != FC_MACRO) {
             if (!emit_prim(cx, dst, p)) return FC_ERR_NOMEM;
