@@ -73,12 +73,16 @@ static void plot(Raster *r, int x, int y, uint32_t rgb, float a, int dash, doubl
     if (dash_on(dash, dist / r->scale)) put_px(r, x, y, rgb, a);
 }
 
-static void fill_disk(Raster *r, int cx, int cy, int rad, uint32_t rgb, float a) {
-    int x, y;
-    if (rad < 1) return;
-    for (y = -rad; y <= rad; y++)
-        for (x = -rad; x <= rad; x++)
-            if (x * x + y * y <= rad * rad) put_px(r, cx + x, cy + y, rgb, a);
+static void fill_circle(Raster *r, int cx, int cy, int rad, uint32_t rgb, float a) {
+    long long x, y, r2 = (long long)rad * rad;
+    long long x0 = -(long long)rad, x1 = rad, y0 = -(long long)rad, y1 = rad;
+    if (x0 < -(long long)cx) x0 = -(long long)cx;
+    if (x1 > (long long)r->w - 1 - cx) x1 = (long long)r->w - 1 - cx;
+    if (y0 < -(long long)cy) y0 = -(long long)cy;
+    if (y1 > (long long)r->h - 1 - cy) y1 = (long long)r->h - 1 - cy;
+    for (y = y0; y <= y1; y++)
+        for (x = x0; x <= x1; x++)
+            if (x * x + y * y <= r2) put_px(r, (int)(cx + x), (int)(cy + y), rgb, a);
 }
 
 /* Liang-Barsky: clips the segment to [xmin,xmax]x[ymin,ymax]; t0 gets the start
@@ -179,8 +183,8 @@ static void line_aa(Raster *r, int x0, int y0, int x1, int y1, uint32_t rgb, flo
      * corners of polylines, polygons and rectangles drawn edge by edge. */
     if (!dash && thick > 2) {
         int rad = thick / 2;
-        fill_disk(r, ax, ay, rad, rgb, a);
-        fill_disk(r, bx, by, rad, rgb, a);
+        fill_circle(r, ax, ay, rad, rgb, a);
+        fill_circle(r, bx, by, rad, rgb, a);
     }
 }
 
@@ -248,17 +252,6 @@ static void ellipse(Raster *r, int x0, int y0, int x1, int y1, uint32_t rgb, flo
     }
 }
 
-static void fill_circle(Raster *r, int cx, int cy, int rad, uint32_t rgb, float a) {
-    long long x, y, r2 = (long long)rad * rad;
-    long long x0 = -(long long)rad, x1 = rad, y0 = -(long long)rad, y1 = rad;
-    if (x0 < -(long long)cx) x0 = -(long long)cx;
-    if (x1 > (long long)r->w - 1 - cx) x1 = (long long)r->w - 1 - cx;
-    if (y0 < -(long long)cy) y0 = -(long long)cy;
-    if (y1 > (long long)r->h - 1 - cy) y1 = (long long)r->h - 1 - cy;
-    for (y = y0; y <= y1; y++)
-        for (x = x0; x <= x1; x++)
-            if (x * x + y * y <= r2) put_px(r, (int)(cx + x), (int)(cy + y), rgb, a);
-}
 
 static void cubic(FcPoint *o, FcPoint a, FcPoint b, FcPoint c, FcPoint d, double t) {
     double u = 1 - t;
@@ -414,232 +407,213 @@ static void draw_arrows(Raster *r, const FcPrim *p, const FcPoint *head, const F
                    p->ext.arrow_style);
 }
 
-static void stroke_seg(Raster *r, int x0, int y0, double ca, double sa, int mirror, float x1,
-                       float y1, float x2, float y2, int thick, uint32_t rgb, float a) {
+/* Where a label's glyphs land: text-space points (gx right, gy down from the
+ * anchor) are mirrored when the label is, rotated about the anchor pixel and
+ * drawn in the label's ink. */
+typedef struct {
+    Raster *r;
+    int x0, y0;
+    double ca, sa;
+    int mirror;
+    uint32_t rgb;
+    float a;
+} Pen;
+
+/* How a label's characters are drawn: the stroke font's scale and style, and
+ * the TrueType face (slot < 0: stroke font only) with its pixel size. */
+typedef struct {
+    float sx, sy; /* stroke font units to pixels */
+    int mono, italic, bold;
+    int slot, fake_italic;
+    float ph, xratio; /* TrueType pixel height and width ratio */
+} Font;
+
+static void pen_map(const Pen *p, float gx, float gy, int *qx, int *qy) {
+    if (p->mirror) gx = -gx;
+    *qx = p->x0 + (int)floor(gx * p->ca - gy * p->sa + 0.5);
+    *qy = p->y0 + (int)floor(gx * p->sa + gy * p->ca + 0.5);
+}
+
+static void pen_put(const Pen *p, float gx, float gy, float cover) {
+    int qx, qy;
+    pen_map(p, gx, gy, &qx, &qy);
+    put_px(p->r, qx, qy, p->rgb, p->a * cover);
+}
+
+static void stroke_seg(const Pen *p, float x1, float y1, float x2, float y2, int thick) {
     int ax, ay, bx, by;
-    if (mirror) {
-        x1 = -x1;
-        x2 = -x2;
-    }
-    ax = x0 + (int)floor(x1 * ca - y1 * sa + 0.5);
-    ay = y0 + (int)floor(x1 * sa + y1 * ca + 0.5);
-    bx = x0 + (int)floor(x2 * ca - y2 * sa + 0.5);
-    by = y0 + (int)floor(x2 * sa + y2 * ca + 0.5);
-    line_aa(r, ax, ay, bx, by, rgb, a, thick < 1 ? 1 : thick, 0);
+    pen_map(p, x1, y1, &ax, &ay);
+    pen_map(p, x2, y2, &bx, &by);
+    line_aa(p->r, ax, ay, bx, by, p->rgb, p->a, thick < 1 ? 1 : thick, 0);
 }
 
-static void map_font(float fx, float fy, float ox, float sx, float sy, int italic, float *gx,
-                     float *gy) {
-    if (italic) fx += 0.22f * fy;
-    *gx = ox + fx * sx;
-    *gy = (12.0f - fy) * sy; /* cap height at top of text box */
+/* A stroke-font point (font units, y up, cap height 12) to text space, for a
+ * glyph whose origin is at x. */
+static void map_font(const Font *f, float x, float fx, float fy, float *gx, float *gy) {
+    if (f->italic) fx += 0.22f * fy;
+    *gx = x + fx * f->sx;
+    *gy = (12.0f - fy) * f->sy; /* cap height at top of text box */
 }
 
-static void draw_accent(Raster *r, int acc, float cx, float top, float ox, float sx, float sy,
-                        int italic, int x0, int y0, double ca, double sa, int mirror, int thick,
-                        uint32_t rgb, float a) {
-    float gx1, gy1, gx2, gy2, gx3, gy3;
-    if (!acc) return;
-    if (acc == 1) { /* acute */
-        map_font(cx - 0.5f, top + 1.5f, ox, sx, sy, italic, &gx1, &gy1);
-        map_font(cx + 1.8f, top + 3.2f, ox, sx, sy, italic, &gx2, &gy2);
-        stroke_seg(r, x0, y0, ca, sa, mirror, gx1, gy1, gx2, gy2, thick, rgb, a);
-    } else if (acc == 2) { /* grave */
-        map_font(cx + 1.8f, top + 1.5f, ox, sx, sy, italic, &gx1, &gy1);
-        map_font(cx - 0.5f, top + 3.2f, ox, sx, sy, italic, &gx2, &gy2);
-        stroke_seg(r, x0, y0, ca, sa, mirror, gx1, gy1, gx2, gy2, thick, rgb, a);
-    } else if (acc == 3) { /* circ */
-        map_font(cx - 1.4f, top + 1.6f, ox, sx, sy, italic, &gx1, &gy1);
-        map_font(cx, top + 3.2f, ox, sx, sy, italic, &gx2, &gy2);
-        map_font(cx + 1.4f, top + 1.6f, ox, sx, sy, italic, &gx3, &gy3);
-        stroke_seg(r, x0, y0, ca, sa, mirror, gx1, gy1, gx2, gy2, thick, rgb, a);
-        stroke_seg(r, x0, y0, ca, sa, mirror, gx2, gy2, gx3, gy3, thick, rgb, a);
-    } else if (acc == 4) { /* umlaut */
-        map_font(cx - 1.2f, top + 2.6f, ox, sx, sy, italic, &gx1, &gy1);
-        map_font(cx - 0.4f, top + 2.6f, ox, sx, sy, italic, &gx2, &gy2);
-        stroke_seg(r, x0, y0, ca, sa, mirror, gx1, gy1, gx2, gy2, thick, rgb, a);
-        map_font(cx + 0.8f, top + 2.6f, ox, sx, sy, italic, &gx1, &gy1);
-        map_font(cx + 1.6f, top + 2.6f, ox, sx, sy, italic, &gx2, &gy2);
-        stroke_seg(r, x0, y0, ca, sa, mirror, gx1, gy1, gx2, gy2, thick, rgb, a);
-    } else if (acc == 5) { /* tilde */
-        map_font(cx - 1.8f, top + 2.0f, ox, sx, sy, italic, &gx1, &gy1);
-        map_font(cx - 0.4f, top + 3.0f, ox, sx, sy, italic, &gx2, &gy2);
-        map_font(cx + 0.4f, top + 1.6f, ox, sx, sy, italic, &gx3, &gy3);
-        stroke_seg(r, x0, y0, ca, sa, mirror, gx1, gy1, gx2, gy2, thick, rgb, a);
-        stroke_seg(r, x0, y0, ca, sa, mirror, gx2, gy2, gx3, gy3, thick, rgb, a);
-        map_font(cx + 1.8f, top + 2.6f, ox, sx, sy, italic, &gx1, &gy1);
-        stroke_seg(r, x0, y0, ca, sa, mirror, gx3, gy3, gx1, gy1, thick, rgb, a);
-    } else if (acc == 6) { /* cedilla */
-        map_font(cx, 0, ox, sx, sy, italic, &gx1, &gy1);
-        map_font(cx, -2.2f, ox, sx, sy, italic, &gx2, &gy2);
-        map_font(cx + 1.2f, -3.0f, ox, sx, sy, italic, &gx3, &gy3);
-        stroke_seg(r, x0, y0, ca, sa, mirror, gx1, gy1, gx2, gy2, thick, rgb, a);
-        stroke_seg(r, x0, y0, ca, sa, mirror, gx2, gy2, gx3, gy3, thick, rgb, a);
+/* n points (x, y pairs in font units) offset by (dx, dy), joined by strokes. */
+static void stroke_polyline(const Pen *p, const Font *f, float x, const float *pts, int n,
+                            float dx, float dy, int thick) {
+    float gx0, gy0, gx1, gy1;
+    int i;
+    map_font(f, x, dx + pts[0], dy + pts[1], &gx0, &gy0);
+    for (i = 1; i < n; i++) {
+        map_font(f, x, dx + pts[2 * i], dy + pts[2 * i + 1], &gx1, &gy1);
+        stroke_seg(p, gx0, gy0, gx1, gy1, thick);
+        gx0 = gx1;
+        gy0 = gy1;
     }
 }
 
-static float draw_cp_stroke(Raster *r, int cp, float pen, float sx, float sy, int mono, int italic,
-                            int bold, int x0, int y0, double ca, double sa, int mirror, uint32_t rgb,
-                            float a) {
-    int8_t xy[256];
-    int n, i, l, rgt, thick, acc;
-    float adv, xoff, px0, py0, px1, py1;
-    int have = 0;
+/* Accent marks, x from the glyph centre cx and y above the letter's top (the
+ * cedilla hangs from the baseline). */
+static void draw_accent(const Pen *p, const Font *f, int accent, float x, float cx, float top,
+                        int thick) {
+    static const float acute[] = {-0.5f, 1.5f, 1.8f, 3.2f};
+    static const float grave[] = {1.8f, 1.5f, -0.5f, 3.2f};
+    static const float circ[] = {-1.4f, 1.6f, 0, 3.2f, 1.4f, 1.6f};
+    static const float dots[] = {-1.2f, 2.6f, -0.4f, 2.6f, 0.8f, 2.6f, 1.6f, 2.6f};
+    static const float tilde[] = {-1.8f, 2.0f, -0.4f, 3.0f, 0.4f, 1.6f, 1.8f, 2.6f};
+    static const float cedilla[] = {0, 0, 0, -2.2f, 1.2f, -3.0f};
+    switch (accent) {
+    case 1: stroke_polyline(p, f, x, acute, 2, cx, top, thick); break;
+    case 2: stroke_polyline(p, f, x, grave, 2, cx, top, thick); break;
+    case 3: stroke_polyline(p, f, x, circ, 3, cx, top, thick); break;
+    case 4:
+        stroke_polyline(p, f, x, dots, 2, cx, top, thick);
+        stroke_polyline(p, f, x, dots + 4, 2, cx, top, thick);
+        break;
+    case 5: stroke_polyline(p, f, x, tilde, 4, cx, top, thick); break;
+    case 6: stroke_polyline(p, f, x, cedilla, 3, cx, 0, thick); break;
+    }
+}
+
+static float draw_cp_stroke(const Pen *p, const Font *f, int cp, float x) {
+    FcStroke g;
+    int i, thick, have = 0;
+    float adv, xoff, px0 = 0, py0 = 0, px1, py1;
     if (cp == 10 || cp == 13 || cp == 0) return 0;
-    n = fc_stroke_points(cp, xy, 256);
-    fc_stroke_lr(cp, &l, &rgt);
-    adv = mono ? 10.0f : (float)(rgt - l);
-    xoff = mono ? (10.0f - (float)(rgt - l)) * 0.5f - (float)l : -(float)l;
+    fc_stroke_glyph(cp, &g);
+    adv = f->mono ? 10.0f : (float)(g.right - g.left);
+    xoff = f->mono ? (10.0f - (float)(g.right - g.left)) * 0.5f - (float)g.left : -(float)g.left;
     thick = 1;
-    if (bold && sy >= 1.2f) thick = 2;
-    if (sy * 12.0f >= 22.0f && !bold) thick = 2;
-    if (bold && sy * 12.0f >= 22.0f) thick = 3;
-    for (i = 0; i + 1 < n;) {
-        unsigned char ax = (unsigned char)xy[i], ay = (unsigned char)xy[i + 1];
-        if (ax == 127 || ay == 127) {
+    if (f->bold && f->sy >= 1.2f) thick = 2;
+    if (f->sy * 12.0f >= 22.0f && !f->bold) thick = 2;
+    if (f->bold && f->sy * 12.0f >= 22.0f) thick = 3;
+    for (i = 0; i + 1 < g.n; i += 2) {
+        if ((unsigned char)g.xy[i] == 127 || (unsigned char)g.xy[i + 1] == 127) { /* pen up */
             have = 0;
-            i += 2;
             continue;
         }
-        map_font((float)xy[i] + xoff, (float)xy[i + 1], pen, sx, sy, italic, &px1, &py1);
-        if (have) stroke_seg(r, x0, y0, ca, sa, mirror, px0, py0, px1, py1, thick, rgb, a);
+        map_font(f, x, (float)g.xy[i] + xoff, (float)g.xy[i + 1], &px1, &py1);
+        if (have) stroke_seg(p, px0, py0, px1, py1, thick);
         px0 = px1;
         py0 = py1;
         have = 1;
-        i += 2;
     }
-    acc = fc_stroke_accent(cp);
-    if (acc) {
-        int base, ac2;
-        float cx = xoff + (float)l + (float)(rgt - l) * 0.5f;
-        float top = 12.0f;
-        fc_font_decompose(cp, &base, &ac2);
-        if (base >= 'a' && base <= 'z') top = 8.0f;
-        draw_accent(r, acc, cx, top, pen, sx, sy, italic, x0, y0, ca, sa, mirror, thick, rgb, a);
-    }
-    return adv * sx;
+    if (g.accent)
+        draw_accent(p, f, g.accent, x, xoff + (float)g.left + (float)(g.right - g.left) * 0.5f,
+                    g.lower ? 8.0f : 12.0f, thick);
+    return adv * f->sx;
 }
 
-static void blit_rule(Raster *r, int x0, int y0, double ca, double sa, int mirror, float px,
-                      float py, float w, float h, uint32_t rgb, float a) {
+static void blit_rule(const Pen *p, float px, float py, float w, float h) {
     int ix, iy;
     int rw = (int)ceil(w), rh = (int)ceil(h);
     if (rw < 1) rw = 1;
     if (rh < 1) rh = 1;
-    for (iy = 0; iy < rh; iy++) {
-        for (ix = 0; ix < rw; ix++) {
-            float gx = px + (float)ix, gy = py + (float)iy;
-            int qx, qy;
-            if (mirror) gx = -gx;
-            qx = x0 + (int)floor(gx * ca - gy * sa + 0.5);
-            qy = y0 + (int)floor(gx * sa + gy * ca + 0.5);
-            put_px(r, qx, qy, rgb, a);
-        }
-    }
+    for (iy = 0; iy < rh; iy++)
+        for (ix = 0; ix < rw; ix++) pen_put(p, px + (float)ix, py + (float)iy, 1.0f);
 }
 
-static void blit_bitmap_glyph(Raster *r, int x0, int y0, double ca, double sa, int mirror, int gid,
-                              float px, float py, float gw, float gh, int italic, int bold,
-                              uint32_t rgb, float a) {
+static void blit_bitmap_glyph(const Pen *p, int gid, float px, float py, float gw, float gh,
+                              int italic, int bold) {
     const unsigned char *g = fc_tex_glyph_bits(gid);
-    int row, col, ix, iy;
+    int row, col, ix, iy, qx, qy;
     int cw = (int)(gw / 8.0f) + 1;
     int ch = (int)(gh / 8.0f) + 1;
     if (cw < 1) cw = 1;
     if (ch < 1) ch = 1;
     for (row = 0; row < 8; row++) {
         for (col = 0; col < 8; col++) {
+            int gx0, gy0;
             if (!((g[row] >> (7 - col)) & 1)) continue;
-            int gx0 = (int)(col * gw / 8.0f);
-            int gy0 = (int)(row * gh / 8.0f);
+            gx0 = (int)(col * gw / 8.0f);
+            gy0 = (int)(row * gh / 8.0f);
             for (iy = 0; iy < ch; iy++) {
                 for (ix = 0; ix < cw; ix++) {
                     float gx = px + (float)gx0 + (float)ix;
                     float gy = py + (float)gy0 + (float)iy;
-                    int qx, qy;
                     if (italic) gx += 0.22f * (gh * 0.75f - ((float)gy0 + (float)iy));
-                    if (mirror) gx = -gx;
-                    qx = x0 + (int)floor(gx * ca - gy * sa + 0.5);
-                    qy = y0 + (int)floor(gx * sa + gy * ca + 0.5);
-                    put_px(r, qx, qy, rgb, a);
-                    if (bold) put_px(r, qx + 1, qy, rgb, a);
+                    pen_map(p, gx, gy, &qx, &qy);
+                    put_px(p->r, qx, qy, p->rgb, p->a);
+                    if (bold) put_px(p->r, qx + 1, qy, p->rgb, p->a);
                 }
             }
         }
     }
 }
 
-static float draw_cp_ttf(Raster *r, int cp, float pen, float base, int slot, int fake_italic,
-                         float ph, float xratio, int x0, int y0, double ca, double sa, int mirror,
-                         uint32_t rgb, float a) {
+static float draw_cp_ttf(const Pen *p, const Font *f, int cp, float x, float base) {
     FcTtfGlyph g;
     float ascent, bx, by;
     int i, j, ix, iy;
-    if (slot < 0) return 0;
+    if (f->slot < 0) return 0;
     /* Split the pen and the baseline into whole pixels plus a sub-pixel shift
        that goes into the glyph bitmap, so text glides instead of snapping. */
-    ascent = fc_ttf_ascent(slot, ph);
-    bx = floorf(pen * FC_TTF_SUBPIX + 0.5f) / FC_TTF_SUBPIX;
+    ascent = fc_ttf_ascent(f->slot, f->ph);
+    bx = floorf(x * FC_TTF_SUBPIX + 0.5f) / FC_TTF_SUBPIX;
     by = floorf((base + ascent) * FC_TTF_SUBPIX + 0.5f) / FC_TTF_SUBPIX;
     ix = (int)floorf(bx);
     iy = (int)floorf(by);
-    if (!fc_ttf_glyph(slot, ph, xratio, cp, bx - (float)ix, by - (float)iy, &g)) return 0;
+    if (!fc_ttf_glyph(f->slot, f->ph, f->xratio, cp, bx - (float)ix, by - (float)iy, &g)) return 0;
     for (j = 0; j < g.h; j++) {
         for (i = 0; i < g.w; i++) {
             float cov, gx, gy;
-            int qx, qy;
             if (!g.cover) break;
             cov = g.cover[j * g.w + i] / 255.0f;
             if (cov < 0.03f) continue;
             gx = (float)(ix + g.xoff + i);
             gy = (float)(iy + g.yoff + j);
-            if (fake_italic) gx += 0.20f * (by - gy);
-            if (mirror) gx = -gx;
-            qx = x0 + (int)floor(gx * ca - gy * sa + 0.5);
-            qy = y0 + (int)floor(gx * sa + gy * ca + 0.5);
-            put_px(r, qx, qy, rgb, a * cov);
+            if (f->fake_italic) gx += 0.20f * (by - gy);
+            pen_put(p, gx, gy, cov);
         }
     }
-    return g.advance > 0 ? g.advance : ph * 0.3f;
+    return g.advance > 0 ? g.advance : f->ph * 0.3f;
 }
 
-static void draw_plain_run(Raster *r, const char *s, int n, float *pen, float base, float sx,
-                           float sy, int mono, int italic, int bold, int x0, int y0, double ca,
-                           double sa, int mirror, uint32_t rgb, float a, int slot,
-                           int fake_italic, float ph, float xratio) {
-    const char *p = s;
+/* n bytes of UTF-8 from text position *x on the baseline, advancing *x. */
+static void draw_plain_run(const Pen *p, const Font *f, const char *s, int n, float *x,
+                           float base) {
     const char *end = s + n;
-    while (p < end) {
-        int cp = fc_utf8_next(&p, end);
+    while (s < end) {
+        int cp = fc_utf8_next(&s, end);
         float adv = 0;
         if (!cp) break;
-        if (slot >= 0)
-            adv = draw_cp_ttf(r, cp, *pen, base, slot, fake_italic, ph, xratio, x0, y0, ca, sa,
-                              mirror, rgb, a);
-        if (adv <= 0)
-            adv = draw_cp_stroke(r, cp, *pen, sx, sy, mono, italic, bold, x0, y0, ca, sa, mirror,
-                                 rgb, a);
-        *pen += adv;
+        if (f->slot >= 0) adv = draw_cp_ttf(p, f, cp, *x, base);
+        if (adv <= 0) adv = draw_cp_stroke(p, f, cp, *x);
+        *x += adv;
     }
 }
 
-static void draw_math_run(Raster *r, const char *latex, int n, int display, float *pen, float em,
-                          int x0, int y0, double ca, double sa, int mirror, uint32_t rgb, float a) {
+static void draw_math_run(const Pen *p, const char *latex, int n, int display, float *x, float em) {
+    const Font stroke = {.sx = em / 12.0f, .sy = em / 12.0f, .slot = -1, .xratio = 1};
     FcTexGeom g;
     char *buf;
     int i;
-    float base, sx, sy;
+    float base;
     buf = (char *)malloc((size_t)n + 1);
     if (!buf) return;
     memcpy(buf, latex, (size_t)n);
     buf[n] = 0;
-    sx = em / 12.0f;
-    sy = em / 12.0f;
-    if (!fc_tex_compile(buf, display, &g)) {
-        *pen += draw_cp_stroke(r, '$', *pen, sx, sy, 0, 0, 0, x0, y0, ca, sa, mirror, rgb, a);
-        draw_plain_run(r, buf, n, pen, 0, sx, sy, 0, 0, 0, x0, y0, ca, sa, mirror, rgb, a, -1, 0,
-                       0, 1);
-        *pen += draw_cp_stroke(r, '$', *pen, sx, sy, 0, 0, 0, x0, y0, ca, sa, mirror, rgb, a);
+    if (!fc_tex_compile(buf, display, &g)) { /* not typeset: the source between dollars */
+        *x += draw_cp_stroke(p, &stroke, '$', *x);
+        draw_plain_run(p, &stroke, buf, n, x, 0);
+        *x += draw_cp_stroke(p, &stroke, '$', *x);
         free(buf);
         fc_tex_geom_free(&g);
         return;
@@ -647,37 +621,38 @@ static void draw_math_run(Raster *r, const char *latex, int n, int display, floa
     base = em * 0.78f;
     for (i = 0; i < g.n; i++) {
         FcTexOp *o = &g.ops[i];
-        float gx = *pen + o->x * em;
+        float gx = *x + o->x * em;
         if (o->kind == 0) {
             float gh = o->size * em;
             float gy = base - o->y * em - 0.78f * gh;
             if (o->glyph >= 32 && o->glyph <= 126) {
-                float s = gh / 12.0f;
-                draw_cp_stroke(r, o->glyph, gx, s, s, 0, o->italic, o->bold, x0, y0 + (int)gy, ca,
-                               sa, mirror, rgb, a);
+                const Font glyph = {.sx = gh / 12.0f, .sy = gh / 12.0f, .italic = o->italic,
+                                    .bold = o->bold, .slot = -1, .xratio = 1};
+                Pen raised = *p;
+                raised.y0 += (int)gy;
+                draw_cp_stroke(&raised, &glyph, o->glyph, gx);
             } else {
                 float gw = (o->w > 0 ? o->w : 0.62f * o->size) * em;
-                blit_bitmap_glyph(r, x0, y0, ca, sa, mirror, o->glyph, gx, gy, gw, gh, o->italic,
-                                  o->bold, rgb, a);
+                blit_bitmap_glyph(p, o->glyph, gx, gy, gw, gh, o->italic, o->bold);
             }
         } else {
             float rh = o->h * em;
             float rw = o->w * em;
             float gy = base - o->y * em - rh * 0.5f;
-            blit_rule(r, x0, y0, ca, sa, mirror, gx, gy, rw, rh, rgb, a);
+            blit_rule(p, gx, gy, rw, rh);
         }
     }
-    *pen += g.w * em;
+    *x += g.w * em;
     fc_tex_geom_free(&g);
     free(buf);
 }
 
 static void draw_text(Raster *r, const FcLabel *l, uint32_t rgb, float a) {
     const char *s = l->text ? l->text : "";
-    int x0, y0, mirror, bold, italic, mono, slot, fake_it = 0;
-    double ang, ca, sa;
-    float pen = 0, base = 0, sx, sy, em, ph, xratio;
-    double hpx, wpx, fx, fy;
+    Pen pen;
+    Font f;
+    double ang, hpx, wpx, fx, fy;
+    float x = 0, base = 0, em;
     if (!*s) return;
     /* Text scales with the view and nothing else: no pixel floors, and the cap
        shrinks height and width together, so zooming never changes its shape or
@@ -690,38 +665,40 @@ static void draw_text(Raster *r, const FcLabel *l, uint32_t rgb, float a) {
         wpx *= k;
     }
     if (hpx < MIN_TEXT_PX) return; /* thinner than a pixel row: nothing to see */
-    sy = (float)(hpx / 12.0);
-    sx = (float)(wpx / 10.0);
+    memset(&f, 0, sizeof f);
+    f.sy = (float)(hpx / 12.0);
+    f.sx = (float)(wpx / 10.0);
     em = (float)hpx;
-    ph = (float)(hpx * 1.15);
-    xratio = 1.0f;
+    f.ph = (float)(hpx * 1.15);
+    f.xratio = 1.0f;
     if (l->size_y > 0.1)
-        xratio = (float)((l->size_x / l->size_y) * (4.0 / 3.0)); /* 1.0 at default 3×4 */
-    if (xratio < 0.4f) xratio = 0.4f;
-    if (xratio > 2.5f) xratio = 2.5f;
-    x0 = mapx(r, l->p.x);
-    y0 = mapy(r, l->p.y);
+        f.xratio = (float)((l->size_x / l->size_y) * (4.0 / 3.0)); /* 1.0 at default 3×4 */
+    if (f.xratio < 0.4f) f.xratio = 0.4f;
+    if (f.xratio > 2.5f) f.xratio = 2.5f;
+    pen.r = r;
+    pen.x0 = mapx(r, l->p.x);
+    pen.y0 = mapy(r, l->p.y);
     ang = l->rotation * 3.141592653589793 / 180.0;
-    ca = cos(ang);
-    sa = sin(ang);
-    mirror = (l->style & FC_STYLE_MIRROR) != 0;
+    pen.ca = cos(ang);
+    pen.sa = sin(ang);
+    pen.mirror = (l->style & FC_STYLE_MIRROR) != 0;
+    pen.rgb = rgb;
+    pen.a = a;
     /* the anchor's sub-pixel remainder, rotated back into text space */
-    fx = l->p.x * r->scale + r->ox - x0;
-    fy = l->p.y * r->scale + r->oy - y0;
+    fx = l->p.x * r->scale + r->ox - pen.x0;
+    fy = l->p.y * r->scale + r->oy - pen.y0;
     if (fabs(fx) <= 1 && fabs(fy) <= 1) {
-        pen = (float)(fx * ca + fy * sa);
-        base = (float)(fy * ca - fx * sa);
-        if (mirror) pen = -pen;
+        x = (float)(fx * pen.ca + fy * pen.sa);
+        base = (float)(fy * pen.ca - fx * pen.sa);
+        if (pen.mirror) x = -x;
     }
-    bold = (l->style & FC_STYLE_BOLD) != 0;
-    italic = (l->style & FC_STYLE_ITALIC) != 0;
-    mono = fc_font_is_mono(l->font);
-    slot = -1;
-    if (fc_ttf_ready())
-        slot = fc_ttf_resolve(fc_font_family(l->font), bold, italic, &fake_it);
+    f.bold = (l->style & FC_STYLE_BOLD) != 0;
+    f.italic = (l->style & FC_STYLE_ITALIC) != 0;
+    f.mono = fc_font_is_mono(l->font);
+    f.slot = -1;
+    if (fc_ttf_ready()) f.slot = fc_ttf_resolve(fc_font_family(l->font), f.bold, f.italic, &f.fake_italic);
     if (!r->tex || !fc_tex_has_math(s)) {
-        draw_plain_run(r, s, (int)fc_strlen(s), &pen, base, sx, sy, mono, italic, bold, x0, y0,
-                       ca, sa, mirror, rgb, a, slot, fake_it, ph, xratio);
+        draw_plain_run(&pen, &f, s, (int)fc_strlen(s), &x, base);
         return;
     }
     {
@@ -736,11 +713,9 @@ static void draw_text(Raster *r, const FcLabel *l, uint32_t rgb, float a) {
         ns = fc_tex_split(s, segs, maxn);
         for (i = 0; i < ns; i++) {
             if (segs[i].math)
-                draw_math_run(r, segs[i].p, segs[i].n, segs[i].math == 2, &pen, em, x0, y0, ca, sa,
-                              mirror, rgb, a);
+                draw_math_run(&pen, segs[i].p, segs[i].n, segs[i].math == 2, &x, em);
             else
-                draw_plain_run(r, segs[i].p, segs[i].n, &pen, base, sx, sy, mono, italic, bold,
-                               x0, y0, ca, sa, mirror, rgb, a, slot, fake_it, ph, xratio);
+                draw_plain_run(&pen, &f, segs[i].p, segs[i].n, &x, base);
         }
         free(segs);
     }

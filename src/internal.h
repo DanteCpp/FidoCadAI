@@ -78,8 +78,19 @@ const unsigned char *fc_tex_glyph_bits(int gid);
 
 int fc_utf8_next(const char **p, const char *end);
 int fc_font_is_mono(const char *name);
-int fc_font_is_serif(const char *name);
 int fc_font_family(const char *name); /* 0 sans, 1 serif, 2 mono */
+
+/* The stroke-font drawing of a code point; unknown ones draw as '?'. Accented
+ * Latin-1 letters are their base letter (an accented i or j without its dot)
+ * plus an accent mark that the renderer adds. */
+typedef struct {
+    int left, right;  /* horizontal extent, font units */
+    const int8_t *xy; /* n bytes of x,y pairs; a 127 pair lifts the pen */
+    int n;
+    int accent;       /* 0 none, 1 acute, 2 grave, 3 circumflex, 4 umlaut, 5 tilde, 6 cedilla */
+    int lower;        /* lowercase base letter: the accent sits at x-height */
+} FcStroke;
+int fc_stroke_glyph(int cp, FcStroke *out);
 
 typedef struct {
     int w, h, xoff, yoff;
@@ -111,10 +122,5 @@ float fc_ttf_ascent(int slot, float px_size);
 float fc_ttf_quantize(float px_size); /* the size glyphs are actually cached at */
 int fc_ttf_glyph(int slot, float px_size, float xratio, int cp, float shift_x, float shift_y,
                  FcTtfGlyph *out);
-int fc_font_decompose(int cp, int *base, int *acc);
-float fc_stroke_advance(int cp, int mono);
-int fc_stroke_lr(int cp, int *left, int *right);
-int fc_stroke_points(int cp, int8_t *xy, int maxn);
-int fc_stroke_accent(int cp);
 
 #endif
