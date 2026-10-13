@@ -78,6 +78,21 @@ FidoCadAI runs on Linux and macOS with a coding agent such as Pi, Codex or Claud
 
 A first request can be as simple as “Draw an inverting buck-boost converter.” Once the drawing is open, select something you want to change and continue the conversation.
 
+## Tests
+
+Run `make test` for the core, CLI, session, and GUI suites. With Qt6 Widgets and
+Qt6 Test installed, `make test-gui` runs the GUI suites alone, offscreen.
+
+The UI end-to-end suite sends mouse and keyboard events through the application
+window, letting Qt route them to the canvas, symbol picker, properties fields,
+and shortcut sheet. It checks every drawing tool and documented shortcut,
+placement with snapping on/off and pan/zoom, handle dragging for every primitive type, component
+rotation/mirroring, selection, clipboard edits, undo/redo, rulers, and saved
+files. It runs at normal and double display scaling. Explicit double-click and
+release events also cover dropped final points and drags without a final move
+event. These tests exercise Qt input dispatch; they do not automate a desktop
+compositor or physical input device.
+
 ## Credits and license
 
 * **Core & GUI:** Licensed under [GPLv3](LICENSE).

@@ -27,9 +27,11 @@ jobs:
       - name: Test (core + Qt6 GUI)
         run: |
           pkg-config --exists Qt6Widgets
+          pkg-config --exists Qt6Test
           make test
           test -x build/fcai-gui
           test -x build/test_gui
+          test -x build/test_ui
 
       - name: Sanitize (ASan + UBSan)
         run: make sanitize

@@ -51,14 +51,11 @@ build/gui/%.o: gui/%.cpp $(GUI_HDR) | build/gui
 build/fcai-gui: $(OBJ) $(GUI_OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(QT_LIBS) $(LDLIBS)
 
-build/gui/test_gui.o: tests/test_gui.cpp $(GUI_HDR) | build/gui
+build/gui/test_%.o: tests/test_%.cpp $(GUI_HDR) | build/gui
 	$(CXX) $(CXXFLAGS) -fPIC $(CPPFLAGS) $(QT_CFLAGS) $(shell pkg-config --cflags Qt6Test) -c $< -o $@
 
 build/test_gui: $(OBJ) $(filter-out build/gui/main.o,$(GUI_OBJ)) build/gui/test_gui.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(QT_LIBS) $(shell pkg-config --libs Qt6Test) $(LDLIBS)
-
-build/gui/test_ui.o: tests/test_ui.cpp $(GUI_HDR) | build/gui
-	$(CXX) $(CXXFLAGS) -fPIC $(CPPFLAGS) $(QT_CFLAGS) $(shell pkg-config --cflags Qt6Test) -c $< -o $@
 
 build/test_ui: $(OBJ) $(filter-out build/gui/main.o,$(GUI_OBJ)) build/gui/test_ui.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(QT_LIBS) $(shell pkg-config --libs Qt6Test) $(LDLIBS)
@@ -67,6 +64,7 @@ build/test_ui: $(OBJ) $(filter-out build/gui/main.o,$(GUI_OBJ)) build/gui/test_u
 test-gui: build/test_gui build/test_ui build/fcai-gui build/fcai
 	QT_QPA_PLATFORM=offscreen ASAN_OPTIONS=detect_leaks=0 ./build/test_gui
 	QT_QPA_PLATFORM=offscreen ASAN_OPTIONS=detect_leaks=0 ./build/test_ui
+	QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 ASAN_OPTIONS=detect_leaks=0 ./build/test_ui
 
 build:
 	mkdir -p build
