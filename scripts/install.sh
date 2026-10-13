@@ -34,7 +34,7 @@
 #   --no-build       use the existing build/ binaries (install from a build done as the user)
 #   --no-path        do not add the install prefix to system PATH files
 #   --no-skill       do not register the agent skill
-#   --no-userlib     do not create/migrate ~/.fcai/lib
+#   --no-userlib     do not create ~/.fcai/lib
 #   --no-hook        do not install/refresh the auto-update git hook
 #   --link           create the /usr/local/bin symlinks (default: only for the
 #                    default prefix)
@@ -190,22 +190,6 @@ esac
 [ "$PREFIX" != "/" ] || { err "refusing to use / as the prefix"; exit 2; }
 
 # ---- helpers ------------------------------------------------------------
-
-# Documents directory for the invoking user: xdg-user-dir when present, else
-# ~/Documents. HOME is forced to the invoking user's home, because under
-# sudo/pkexec the process runs as root with HOME=/root.
-documents_dir() {
-    d=""
-    if command -v xdg-user-dir >/dev/null 2>&1; then
-        d=$(HOME="$RUN_HOME" XDG_CONFIG_HOME="$RUN_HOME/.config" xdg-user-dir DOCUMENTS 2>/dev/null || true)
-        case $d in
-            "$RUN_HOME"/*) ;;
-            *) d="" ;;
-        esac
-    fi
-    [ -n "$d" ] || d="$RUN_HOME/Documents"
-    printf '%s\n' "$d"
-}
 
 user_lib_dir() {
     if [ -n "${FIDO_USER_LIB_DIR:-}" ]; then
@@ -438,21 +422,8 @@ do_userlib() {
     [ "$WITH_USERLIB" -eq 1 ] || return 0
     libdir=$(user_lib_dir)
     mkdir -p "$libdir"
-    # Copy legacy libraries without removing the originals or overwriting new
-    # definitions. Explicit overrides choose an isolated directory instead.
-    if [ -z "${FIDO_USER_LIB_DIR:-}" ] && [ -z "${FCAI_HOME:-}" ]; then
-        legacy="$(documents_dir)/FidoLib"
-        for oldlib in "$legacy"/*.fcl; do
-            [ -f "$oldlib" ] || continue
-            newlib="$libdir/$(basename "$oldlib")"
-            if [ -e "$newlib" ] || [ -L "$newlib" ]; then
-                cmp -s "$oldlib" "$newlib" || warn "keeping $newlib; legacy library differs: $oldlib"
-            else
-                cp -p "$oldlib" "$newlib"
-                log "migrated library: $newlib (original retained)"
-            fi
-        done
-    fi
+    # Old Documents/FidoLib libraries are not copied: fcai loads them where
+    # they are (see fc_user_lib_dir in include/fidocad.h).
     if [ ! -f "$libdir/README.md" ]; then
         cat > "$libdir/README.md" <<'EOF'
 # FidoLib — your FidoCad libraries

@@ -255,9 +255,11 @@ int fc_lib_load_file(FcLib *lib, const char *path, const char *prefix) {
     return rc;
 }
 
-int fc_lib_load_dir(FcLib *lib, const char *dir) {
+/* Loads every *.fcl in dir, except names that also exist in shadow (if given). */
+static int load_dir(FcLib *lib, const char *dir, const char *shadow) {
     DIR *dp;
     struct dirent *de;
+    struct stat st;
     int n = 0;
     if (!dir) return FC_ERR_ARG;
     dp = opendir(dir);
@@ -265,14 +267,19 @@ int fc_lib_load_dir(FcLib *lib, const char *dir) {
     while ((de = readdir(dp))) {
         size_t nlen = fc_strlen(de->d_name);
         char path[1024];
-        if (nlen < 5) continue;
-        if (strcmp(de->d_name + nlen - 4, ".fcl") != 0) continue;
+        if (nlen < 5 || strcmp(de->d_name + nlen - 4, ".fcl") != 0) continue;
+        if (shadow) {
+            snprintf(path, sizeof path, "%s/%s", shadow, de->d_name);
+            if (stat(path, &st) == 0) continue;
+        }
         snprintf(path, sizeof path, "%s/%s", dir, de->d_name);
         if (fc_lib_load_file(lib, path, fc_lib_prefix_for_file(de->d_name)) == FC_OK) n++;
     }
     closedir(dp);
     return n > 0 ? FC_OK : FC_ERR_IO;
 }
+
+int fc_lib_load_dir(FcLib *lib, const char *dir) { return load_dir(lib, dir, NULL); }
 
 /* ---- user library directory ------------------------------------------- */
 
@@ -370,10 +377,11 @@ static int load_user_dir(FcLib *lib) {
     int old_rc = FC_ERR_IO, rc;
     if (!lib || !fc_user_lib_dir(dir, sizeof dir)) return FC_ERR_ARG;
     /* Transitional compatibility: explicit overrides isolate the library;
-       otherwise load old Documents libraries first, so new definitions win. */
+       otherwise old Documents libraries load first, so new definitions win,
+       and a file in the user directory replaces the old file of that name. */
     if ((!override || !*override) && (!root || !*root) &&
         legacy_user_lib_dir(legacy, sizeof legacy) && !fc_streq(legacy, dir))
-        old_rc = fc_lib_load_dir(lib, legacy);
+        old_rc = load_dir(lib, legacy, dir);
     rc = fc_lib_load_dir(lib, dir);
     return rc == FC_OK || old_rc == FC_OK ? FC_OK : rc;
 }

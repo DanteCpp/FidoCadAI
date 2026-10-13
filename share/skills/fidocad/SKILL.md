@@ -350,7 +350,8 @@ Loading rules:
   with `FIDO_USER_LIB_DIR`) is loaded automatically: every `*.fcl` in it is
   available in every drawing. Read `fcai config` for the effective `user_lib`
   path before writing. Without either override, legacy Documents/FidoLib
-  libraries load first for compatibility; definitions in the new directory win;
+  libraries load first for compatibility; definitions in the new directory win,
+  and a file there replaces the legacy file of the same name;
 * `FIDO_LIB_DIR` and `--lib-dir DIR` load extra directories;
 * keys in all of these are `prefix.key`, prefix from the file name lowercased
   unless the file itself declares one (`FCDstdlib*` is unprefixed);
@@ -413,7 +414,7 @@ FidoCadAI installs system-wide to `/opt/FidoCadAI` with the project's install
 script:
 
 ```bash
-scripts/install.sh install     # build, install, create/migrate ~/.fcai/lib,
+scripts/install.sh install     # build, install, create ~/.fcai/lib,
                                # register this skill, install the update hook
 scripts/install.sh update      # refresh after a source change
 scripts/install.sh status      # what is installed where

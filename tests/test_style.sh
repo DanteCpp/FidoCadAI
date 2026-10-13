@@ -130,5 +130,13 @@ if grep -q '^style-legacy.part' "$task_tmp/isolated-lib"; then exit 1; fi
     "$fcai" style path | grep -qxF "$HOME/.fcai/style.md"
     "$fcai" config | grep -qxF "user_lib = $HOME/.fcai/lib"
     XDG_DOCUMENTS_DIR="$task_tmp/docs" "$fcai" lib | grep -q '^style-legacy.part'
+    # A file in the user directory replaces the legacy file of the same name,
+    # so a macro deleted from a migrated copy stays deleted.
+    HOME="$task_tmp/home"
+    mkdir -p "$HOME/.fcai/lib"
+    printf '[other Only in the new copy]\nLI 100 100 110 100 0\n' > "$HOME/.fcai/lib/style-legacy.fcl"
+    XDG_DOCUMENTS_DIR="$task_tmp/docs" "$fcai" lib > "$task_tmp/shadowed-lib"
+    grep -q '^style-legacy.other' "$task_tmp/shadowed-lib"
+    if grep -q '^style-legacy.part' "$task_tmp/shadowed-lib"; then exit 1; fi
 )
 printf 'Style profile and library-path checks passed\n'

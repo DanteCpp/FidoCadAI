@@ -268,7 +268,8 @@ void fc_set_argv0(const char *argv0);
 int fc_lib_load_stdlib(FcLib *lib);
 /* Directory for the user's own macros: $FIDO_USER_LIB_DIR, else
    $FCAI_HOME/lib, else ~/.fcai/lib. Old Documents/FidoLib libraries are loaded
-   first for compatibility when neither override is set; new definitions win. */
+   first for compatibility when neither override is set; new definitions win,
+   and a file in the new directory replaces the old file of the same name. */
 int fc_user_lib_dir(char *out, size_t cap);
 /* Every library source, in the order fcai and fcai-gui both use: the bundled
  * standard library (when stdlib is set), the user's directory, $FIDO_LIB_DIR,
