@@ -384,7 +384,7 @@ static int edit_drawing(const Opt *o, FcDrawing *d) {
     else if (fc_streq(o->action, "set")) {
         if (o->layer >= 0) p->layer = o->layer;
         if (o->dash >= 0 || o->stroke >= 0) {
-            if (!fc_kind_uses_fcj(p->kind)) return FC_ERR_ARG;
+            if (!(fc_kind_caps(p->kind) & FC_KIND_DASH)) return FC_ERR_ARG;
             if (o->dash >= 0) p->ext.dash = o->dash;
             if (o->stroke >= 0) p->ext.width = o->stroke;
             p->has_ext = 1;

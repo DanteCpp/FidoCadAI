@@ -38,11 +38,12 @@ static void emit_label(FcBuf *b, const FcLabel *l) {
 }
 
 static int need_fcj(const FcPrim *p) {
-    if (!fc_kind_uses_fcj(p->kind)) return 0;
+    int caps = fc_kind_caps(p->kind);
+    if (!(caps & FC_KIND_DASH)) return 0;
     if (p->has_name || p->has_value) return 1;
     if (p->ext.dash > 0) return 1;
     if (p->ext.width > 0) return 1;
-    if (fc_kind_arrowed(p->kind) && p->ext.arrows) return 1;
+    if ((caps & FC_KIND_ARROW) && p->ext.arrows) return 1;
     return 0;
 }
 
@@ -53,7 +54,7 @@ static void emit_fcj(FcBuf *b, const FcPrim *p) {
         w[0] = ' ';
         fc_fmt_num(w + 1, sizeof w - 1, p->ext.width);
     }
-    if (fc_kind_arrowed(p->kind)) {
+    if (fc_kind_caps(p->kind) & FC_KIND_ARROW) {
         fc_fmt_num(al, sizeof al, p->ext.arrow_len);
         fc_fmt_num(ah, sizeof ah, p->ext.arrow_half_w);
         fc_buf_printf(b, "FCJ %d %d %s %s %d%s %d\n", p->ext.arrows, p->ext.arrow_style, al, ah,
@@ -82,89 +83,42 @@ static int drop_degenerate(const FcPrim *p) {
     if (p->has_name || p->has_value) return 0;
     if (p->kind == FC_LINE && p->u.line.a.x == p->u.line.b.x && p->u.line.a.y == p->u.line.b.y)
         return 1;
-    if (p->kind == FC_CURVE && p->u.curve.n < 2) return 1;
+    if (p->kind == FC_CURVE && p->u.poly.n < 2) return 1;
     return 0;
 }
 
+/* Code, coordinates, the kind's own fields, layer; then FCJ and the labels. */
 void fc_emit_prim(FcBuf *b, const FcPrim *p, int extensions) {
-    char n[8][32];
-    int i;
+    char x[32], y[32], w[3][32];
+    int i, n;
+    const FcPoint *pts = fc_prim_points(p, &n);
     if (drop_degenerate(p)) return;
-    switch (p->kind) {
-    case FC_LINE:
-        fc_fmt_num(n[0], 32, p->u.line.a.x);
-        fc_fmt_num(n[1], 32, p->u.line.a.y);
-        fc_fmt_num(n[2], 32, p->u.line.b.x);
-        fc_fmt_num(n[3], 32, p->u.line.b.y);
-        fc_buf_printf(b, "LI %s %s %s %s %d\n", n[0], n[1], n[2], n[3], p->layer);
-        break;
-    case FC_BEZIER:
-        for (i = 0; i < 4; i++) {
-            fc_fmt_num(n[i * 2], 32, p->u.bezier.p[i].x);
-            fc_fmt_num(n[i * 2 + 1], 32, p->u.bezier.p[i].y);
-        }
-        fc_buf_printf(b, "BE %s %s %s %s %s %s %s %s %d\n", n[0], n[1], n[2], n[3], n[4], n[5], n[6],
-                      n[7], p->layer);
-        break;
-    case FC_RECT:
-    case FC_OVAL:
-        fc_fmt_num(n[0], 32, p->u.box.a.x);
-        fc_fmt_num(n[1], 32, p->u.box.a.y);
-        fc_fmt_num(n[2], 32, p->u.box.b.x);
-        fc_fmt_num(n[3], 32, p->u.box.b.y);
-        fc_buf_printf(b, "%s %s %s %s %s %d\n", fc_kind_code(p), n[0], n[1], n[2], n[3], p->layer);
-        break;
-    case FC_POLY:
-        fc_buf_puts(b, fc_kind_code(p));
-        for (i = 0; i < p->u.poly.n; i++) {
-            fc_fmt_num(n[0], 32, p->u.poly.pts[i].x);
-            fc_fmt_num(n[1], 32, p->u.poly.pts[i].y);
-            fc_buf_printf(b, " %s %s", n[0], n[1]);
-        }
-        fc_buf_printf(b, " %d\n", p->layer);
-        break;
-    case FC_CURVE:
-        fc_buf_printf(b, "%s %d", fc_kind_code(p), p->u.curve.closed ? 1 : 0);
-        for (i = 0; i < p->u.curve.n; i++) {
-            fc_fmt_num(n[0], 32, p->u.curve.pts[i].x);
-            fc_fmt_num(n[1], 32, p->u.curve.pts[i].y);
-            fc_buf_printf(b, " %s %s", n[0], n[1]);
-        }
-        fc_buf_printf(b, " %d\n", p->layer);
-        break;
-    case FC_CONN:
-        fc_fmt_num(n[0], 32, p->u.conn.p.x);
-        fc_fmt_num(n[1], 32, p->u.conn.p.y);
-        fc_buf_printf(b, "SA %s %s %d\n", n[0], n[1], p->layer);
-        break;
-    case FC_PCB_LINE:
-        fc_fmt_num(n[0], 32, p->u.pcb_line.a.x);
-        fc_fmt_num(n[1], 32, p->u.pcb_line.a.y);
-        fc_fmt_num(n[2], 32, p->u.pcb_line.b.x);
-        fc_fmt_num(n[3], 32, p->u.pcb_line.b.y);
-        fc_fmt_num(n[4], 32, p->u.pcb_line.width);
-        fc_buf_printf(b, "PL %s %s %s %s %s %d\n", n[0], n[1], n[2], n[3], n[4], p->layer);
-        break;
-    case FC_PCB_PAD:
-        fc_fmt_num(n[0], 32, p->u.pad.p.x);
-        fc_fmt_num(n[1], 32, p->u.pad.p.y);
-        fc_fmt_num(n[2], 32, p->u.pad.rx);
-        fc_fmt_num(n[3], 32, p->u.pad.ry);
-        fc_fmt_num(n[4], 32, p->u.pad.hole);
-        fc_buf_printf(b, "PA %s %s %s %s %s %d %d\n", n[0], n[1], n[2], n[3], n[4], p->u.pad.style,
-                      p->layer);
-        break;
-    case FC_MACRO:
-        fc_fmt_num(n[0], 32, p->u.macro.p.x);
-        fc_fmt_num(n[1], 32, p->u.macro.p.y);
-        fc_buf_printf(b, "MC %s %s %d %d %s\n", n[0], n[1], p->u.macro.orient,
-                      p->u.macro.mirror ? 1 : 0, p->u.macro.key ? p->u.macro.key : "");
-        break;
-    case FC_TEXT:
-        emit_label(b, &p->u.text);
-        return; /* text has no FCJ/labels */
+    if (p->kind == FC_TEXT) {
+        emit_label(b, &p->u.text); /* text has no FCJ/labels */
+        return;
     }
-    if (extensions && fc_kind_direct_labels(p->kind) && (p->has_name || p->has_value))
+    fc_buf_puts(b, fc_kind_code(p));
+    if (p->kind == FC_CURVE) fc_buf_printf(b, " %d", p->u.poly.closed ? 1 : 0);
+    for (i = 0; i < n; i++) {
+        fc_fmt_num(x, sizeof x, pts[i].x);
+        fc_fmt_num(y, sizeof y, pts[i].y);
+        fc_buf_printf(b, " %s %s", x, y);
+    }
+    if (p->kind == FC_PCB_LINE) {
+        fc_fmt_num(w[0], 32, p->u.pcb_line.width);
+        fc_buf_printf(b, " %s", w[0]);
+    } else if (p->kind == FC_PCB_PAD) {
+        fc_fmt_num(w[0], 32, p->u.pad.rx);
+        fc_fmt_num(w[1], 32, p->u.pad.ry);
+        fc_fmt_num(w[2], 32, p->u.pad.hole);
+        fc_buf_printf(b, " %s %s %s %d", w[0], w[1], w[2], p->u.pad.style);
+    }
+    if (p->kind == FC_MACRO) /* no layer: the macro's own primitives carry theirs */
+        fc_buf_printf(b, " %d %d %s\n", p->u.macro.orient, p->u.macro.mirror ? 1 : 0,
+                      p->u.macro.key ? p->u.macro.key : "");
+    else
+        fc_buf_printf(b, " %d\n", p->layer);
+    if (extensions && (fc_kind_caps(p->kind) & FC_KIND_LABELS) && (p->has_name || p->has_value))
         fc_buf_puts(b, "FCJ\n"); /* FidoCadJS saveText: labels need this marker */
     if (extensions && need_fcj(p)) emit_fcj(b, p);
     emit_labels(b, p);
@@ -252,7 +206,8 @@ static void json_point(FcBuf *b, const FcPoint *p) {
 }
 
 static void json_prim(FcBuf *b, const FcPrim *p) {
-    int i;
+    int i, n;
+    const FcPoint *pts = fc_prim_points(p, &n);
     fc_buf_puts(b, "{");
     fc_buf_printf(b, "\"kind\":");
     fc_json_escape(b, fc_kind_name(p->kind));
@@ -261,79 +216,42 @@ static void json_prim(FcBuf *b, const FcPrim *p) {
     fc_buf_printf(b, ",\"layer\":%d,\"line\":%d", p->layer, p->src_line);
     if (p->filled) fc_buf_puts(b, ",\"filled\":true");
     if (p->unresolved) fc_buf_puts(b, ",\"unresolved\":true");
-    switch (p->kind) {
-    case FC_LINE:
-        fc_buf_puts(b, ",\"a\":");
-        json_point(b, &p->u.line.a);
-        fc_buf_puts(b, ",\"b\":");
-        json_point(b, &p->u.line.b);
-        break;
-    case FC_BEZIER:
+    /* geometry: a text label, a point list, two ends "a"/"b", or a position "p" */
+    if (p->kind == FC_TEXT) {
+        fc_buf_putc(b, ',');
+        json_label(b, "text", &p->u.text);
+    } else if (p->kind == FC_BEZIER || p->kind == FC_POLY || p->kind == FC_CURVE) {
+        if (p->kind == FC_CURVE)
+            fc_buf_printf(b, ",\"closed\":%s", p->u.poly.closed ? "true" : "false");
         fc_buf_puts(b, ",\"points\":[");
-        for (i = 0; i < 4; i++) {
+        for (i = 0; i < n; i++) {
             if (i) fc_buf_putc(b, ',');
-            json_point(b, &p->u.bezier.p[i]);
+            json_point(b, &pts[i]);
         }
         fc_buf_putc(b, ']');
-        break;
-    case FC_RECT:
-    case FC_OVAL:
+    } else if (n == 2) {
         fc_buf_puts(b, ",\"a\":");
-        json_point(b, &p->u.box.a);
+        json_point(b, &pts[0]);
         fc_buf_puts(b, ",\"b\":");
-        json_point(b, &p->u.box.b);
-        break;
-    case FC_POLY:
-        fc_buf_puts(b, ",\"points\":[");
-        for (i = 0; i < p->u.poly.n; i++) {
-            if (i) fc_buf_putc(b, ',');
-            json_point(b, &p->u.poly.pts[i]);
-        }
-        fc_buf_putc(b, ']');
-        break;
-    case FC_CURVE:
-        fc_buf_printf(b, ",\"closed\":%s,\"points\":[", p->u.curve.closed ? "true" : "false");
-        for (i = 0; i < p->u.curve.n; i++) {
-            if (i) fc_buf_putc(b, ',');
-            json_point(b, &p->u.curve.pts[i]);
-        }
-        fc_buf_putc(b, ']');
-        break;
-    case FC_CONN:
+        json_point(b, &pts[1]);
+    } else {
         fc_buf_puts(b, ",\"p\":");
-        json_point(b, &p->u.conn.p);
-        break;
-    case FC_PCB_LINE: {
+        json_point(b, &pts[0]);
+    }
+    if (p->kind == FC_PCB_LINE) {
         char w[32];
-        fc_buf_puts(b, ",\"a\":");
-        json_point(b, &p->u.pcb_line.a);
-        fc_buf_puts(b, ",\"b\":");
-        json_point(b, &p->u.pcb_line.b);
         fc_fmt_num(w, 32, p->u.pcb_line.width);
         fc_buf_printf(b, ",\"width\":%s", w);
-        break;
-    }
-    case FC_PCB_PAD: {
+    } else if (p->kind == FC_PCB_PAD) {
         char rx[32], ry[32], h[32];
-        fc_buf_puts(b, ",\"p\":");
-        json_point(b, &p->u.pad.p);
         fc_fmt_num(rx, 32, p->u.pad.rx);
         fc_fmt_num(ry, 32, p->u.pad.ry);
         fc_fmt_num(h, 32, p->u.pad.hole);
         fc_buf_printf(b, ",\"rx\":%s,\"ry\":%s,\"hole\":%s,\"style\":%d", rx, ry, h, p->u.pad.style);
-        break;
-    }
-    case FC_MACRO:
-        fc_buf_puts(b, ",\"p\":");
-        json_point(b, &p->u.macro.p);
+    } else if (p->kind == FC_MACRO) {
         fc_buf_printf(b, ",\"orient\":%d,\"mirror\":%s,\"key\":", p->u.macro.orient,
                       p->u.macro.mirror ? "true" : "false");
         fc_json_escape(b, p->u.macro.key ? p->u.macro.key : "");
-        break;
-    case FC_TEXT:
-        fc_buf_putc(b, ',');
-        json_label(b, "text", &p->u.text);
-        break;
     }
     if (p->has_ext || p->ext.dash || p->ext.arrows || p->ext.width > 0) {
         char al[32], ah[32], w[32];
@@ -353,8 +271,6 @@ static void json_prim(FcBuf *b, const FcPrim *p) {
     }
     fc_buf_putc(b, '}');
 }
-
-static void include_prim_bounds(FcRect *r, const FcPrim *p, int *any);
 
 static void include_pt(FcRect *r, FcPoint pt, int *any) {
     if (!*any) {
@@ -380,37 +296,11 @@ static void include_label(FcRect *r, const FcLabel *l, int *any) {
 }
 
 static void include_prim_bounds(FcRect *r, const FcPrim *p, int *any) {
-    int i;
-    switch (p->kind) {
-    case FC_LINE:
-        include_pt(r, p->u.line.a, any);
-        include_pt(r, p->u.line.b, any);
-        break;
-    case FC_BEZIER:
-        for (i = 0; i < 4; i++) include_pt(r, p->u.bezier.p[i], any);
-        break;
-    case FC_RECT:
-    case FC_OVAL:
-        include_pt(r, p->u.box.a, any);
-        include_pt(r, p->u.box.b, any);
-        break;
-    case FC_POLY:
-        for (i = 0; i < p->u.poly.n; i++) include_pt(r, p->u.poly.pts[i], any);
-        break;
-    case FC_CURVE:
-        for (i = 0; i < p->u.curve.n; i++) include_pt(r, p->u.curve.pts[i], any);
-        break;
-    case FC_CONN:
-        include_pt(r, p->u.conn.p, any);
-        break;
-    case FC_PCB_LINE:
-        include_pt(r, p->u.pcb_line.a, any);
-        include_pt(r, p->u.pcb_line.b, any);
-        break;
-    case FC_PCB_PAD:
-        include_pt(r, p->u.pad.p, any);
-        break;
-    case FC_MACRO: {
+    int i, n;
+    const FcPoint *pts = fc_prim_points(p, &n);
+    if (p->kind == FC_TEXT) {
+        include_label(r, &p->u.text, any);
+    } else if (p->kind == FC_MACRO) {
         /* only unexpanded macros reach here; leave room for the render placeholder */
         FcPoint q = p->u.macro.p;
         include_pt(r, q, any);
@@ -427,11 +317,8 @@ static void include_prim_bounds(FcRect *r, const FcPrim *p, int *any) {
             l.text = p->u.macro.key;
             include_label(r, &l, any);
         }
-        break;
-    }
-    case FC_TEXT:
-        include_label(r, &p->u.text, any);
-        break;
+    } else {
+        for (i = 0; i < n; i++) include_pt(r, pts[i], any);
     }
     if (p->has_name) include_label(r, &p->name, any);
     if (p->has_value) include_label(r, &p->value, any);

@@ -121,12 +121,8 @@ typedef struct {
         struct {
             FcPoint *pts;
             int n;
-        } poly;
-        struct {
-            FcPoint *pts;
-            int n;
-            int closed;
-        } curve;
+            int closed; /* CV/CP only; polygons are always closed */
+        } poly;         /* PV/PP and CV/CP */
         struct {
             FcPoint p;
         } conn;
@@ -329,6 +325,16 @@ char *fc_context(const FcDrawing *d, const FcLib *lib);
 
 const char *fc_kind_name(FcKind k);
 const char *fc_kind_code(const FcPrim *p);
+/* What a kind supports in the file format (fc_kind_caps bits). */
+#define FC_KIND_FILL 1   /* has a filled variant: RP, EP, PP, CP */
+#define FC_KIND_DASH 2   /* FCJ dash style and stroke width */
+#define FC_KIND_ARROW 4  /* FCJ arrows */
+#define FC_KIND_LABELS 8 /* name/value follow a bare FCJ line: SA, PL, PA, MC */
+int fc_kind_caps(FcKind k);
+/* The points of a primitive in file order, writable through the result like
+ * strchr's: 2 for LI, RV/RP, EV/EP and PL, 4 for BE, the vertices of PV/PP and
+ * CV/CP, and the position of SA, PA, MC and TY. *n gets the count. */
+FcPoint *fc_prim_points(const FcPrim *p, int *n);
 int fc_validate(const FcDrawing *d, char **report);
 /* Advisory wire/dot geometry (macro geometry included), not electrical validation. */
 char *fc_lint(const FcDrawing *d, const FcLib *lib, int json);

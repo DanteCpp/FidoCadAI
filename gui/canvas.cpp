@@ -258,11 +258,9 @@ void Canvas::sketch(QPainter &p, const FcDrawing &flat) const {
             break;
         case FC_POLY:
         case FC_CURVE: {
-            const FcPoint *pts = q.kind == FC_POLY ? q.u.poly.pts : q.u.curve.pts;
-            int n = q.kind == FC_POLY ? q.u.poly.n : q.u.curve.n;
             QPolygonF poly;
-            for (int k = 0; k < n; k++) poly << pt(pts[k]);
-            if (q.kind == FC_POLY || q.u.curve.closed) p.drawPolygon(poly);
+            for (int k = 0; k < q.u.poly.n; k++) poly << pt(q.u.poly.pts[k]);
+            if (q.kind == FC_POLY || q.u.poly.closed) p.drawPolygon(poly);
             else p.drawPolyline(poly);
             break;
         }

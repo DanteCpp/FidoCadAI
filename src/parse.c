@@ -133,129 +133,52 @@ static int parse_xy_list(FcDrawing *d, const char **tok, int ntok, int start, in
     return n;
 }
 
+/* name/value labels stay unset (has_name/has_value 0) until TY lines or an
+ * edit attach them; only then are their fields meaningful. */
 static int parse_primitive(FcDrawing *d, FcPrim *p, const char **tok, int ntok, int line) {
     FcKind kind;
-    int filled = 0;
-    if (!fc_code_kind(tok[0], &kind, &filled)) return 0;
+    FcPoint *pts;
+    int filled = 0, i, n, extra;
+    if (!fc_code_kind(tok[0], &kind, &filled) || kind == FC_TEXT) return 0; /* TY/TE elsewhere */
     fc_prim_init(p);
     p->kind = kind;
     p->filled = filled;
     p->src_line = line;
-
-    switch (kind) {
-    case FC_LINE:
-        if (ntok < 5) return 0;
-        p->u.line.a.x = tok_coord(tok[1]);
-        p->u.line.a.y = tok_coord(tok[2]);
-        p->u.line.b.x = tok_coord(tok[3]);
-        p->u.line.b.y = tok_coord(tok[4]);
-        p->layer = ntok > 5 ? tok_layer(tok[5]) : 0;
-        fc_label_default(&p->name, p->u.line.a.x + 5, p->u.line.a.y + 5, p->layer);
-        fc_label_default(&p->value, p->u.line.a.x + 5, p->u.line.a.y + 10, p->layer);
-        return 1;
-    case FC_BEZIER:
-        if (ntok < 9) return 0;
-        {
-            int i;
-            for (i = 0; i < 4; i++) {
-                p->u.bezier.p[i].x = tok_coord(tok[1 + i * 2]);
-                p->u.bezier.p[i].y = tok_coord(tok[2 + i * 2]);
-            }
-        }
-        p->layer = ntok > 9 ? tok_layer(tok[9]) : 0;
-        fc_label_default(&p->name, p->u.bezier.p[0].x + 5, p->u.bezier.p[0].y + 5, p->layer);
-        fc_label_default(&p->value, p->u.bezier.p[0].x + 5, p->u.bezier.p[0].y + 10, p->layer);
-        return 1;
-    case FC_RECT:
-    case FC_OVAL:
-        if (ntok < 5) return 0;
-        p->u.box.a.x = tok_coord(tok[1]);
-        p->u.box.a.y = tok_coord(tok[2]);
-        p->u.box.b.x = tok_coord(tok[3]);
-        p->u.box.b.y = tok_coord(tok[4]);
-        p->layer = ntok > 5 ? tok_layer(tok[5]) : 0;
-        fc_label_default(&p->name, p->u.box.a.x + 5, p->u.box.a.y + 5, p->layer);
-        fc_label_default(&p->value, p->u.box.a.x + 5, p->u.box.a.y + 10, p->layer);
-        return 1;
-    case FC_POLY: {
-        FcPoint *pts = NULL;
-        int n, layer = 0;
+    if (kind == FC_POLY || kind == FC_CURVE) {
         if (ntok < 6) return 0;
-        n = parse_xy_list(d, tok, ntok, 1, line, &pts, &layer);
-        if (n < 2) return 0;
-        p->u.poly.pts = pts;
+        if (kind == FC_CURVE) p->u.poly.closed = tok_int(tok[1], 0) ? 1 : 0;
+        n = parse_xy_list(d, tok, ntok, kind == FC_CURVE ? 2 : 1, line, &p->u.poly.pts, &p->layer);
         p->u.poly.n = n;
-        p->layer = layer;
-        fc_label_default(&p->name, pts[0].x + 5, pts[0].y + 5, layer);
-        fc_label_default(&p->value, pts[0].x + 5, pts[0].y + 10, layer);
-        return 1;
+        return n >= (kind == FC_CURVE ? 1 : 2);
     }
-    case FC_CURVE: {
-        FcPoint *pts = NULL;
-        int n, layer = 0;
-        if (ntok < 6) return 0;
-        p->u.curve.closed = tok_int(tok[1], 0) ? 1 : 0;
-        n = parse_xy_list(d, tok, ntok, 2, line, &pts, &layer);
-        if (n < 1) return 0;
-        p->u.curve.pts = pts;
-        p->u.curve.n = n;
-        p->layer = layer;
-        fc_label_default(&p->name, pts[0].x + 5, pts[0].y + 5, layer);
-        fc_label_default(&p->value, pts[0].x + 5, pts[0].y + 10, layer);
-        return 1;
+    /* fixed point count: coordinates, then the kind's own fields, then the layer */
+    pts = fc_prim_points(p, &n);
+    extra = kind == FC_PCB_LINE ? 1 : kind == FC_PCB_PAD ? 4 : kind == FC_MACRO ? 3 : 0;
+    if (ntok < 1 + 2 * n + extra) return 0;
+    for (i = 0; i < n; i++) {
+        pts[i].x = tok_coord(tok[1 + 2 * i]);
+        pts[i].y = tok_coord(tok[2 + 2 * i]);
     }
-    case FC_CONN:
-        if (ntok < 3) return 0;
-        p->u.conn.p.x = tok_coord(tok[1]);
-        p->u.conn.p.y = tok_coord(tok[2]);
-        p->layer = ntok > 3 ? tok_layer(tok[3]) : 0;
-        fc_label_default(&p->name, p->u.conn.p.x + 5, p->u.conn.p.y + 5, p->layer);
-        fc_label_default(&p->value, p->u.conn.p.x + 5, p->u.conn.p.y + 10, p->layer);
-        return 1;
-    case FC_PCB_LINE:
-        if (ntok < 6) return 0;
-        p->u.pcb_line.a.x = tok_coord(tok[1]);
-        p->u.pcb_line.a.y = tok_coord(tok[2]);
-        p->u.pcb_line.b.x = tok_coord(tok[3]);
-        p->u.pcb_line.b.y = tok_coord(tok[4]);
-        p->u.pcb_line.width = tok_dbl(tok[5], 1);
-        p->layer = ntok > 6 ? tok_layer(tok[6]) : 0;
-        fc_label_default(&p->name, p->u.pcb_line.a.x + 5, p->u.pcb_line.a.y + 5, p->layer);
-        fc_label_default(&p->value, p->u.pcb_line.a.x + 5, p->u.pcb_line.a.y + 10, p->layer);
-        return 1;
-    case FC_PCB_PAD:
-        if (ntok < 7) return 0;
-        p->u.pad.p.x = tok_coord(tok[1]);
-        p->u.pad.p.y = tok_coord(tok[2]);
-        p->u.pad.rx = tok_dbl(tok[3], 0);
-        p->u.pad.ry = tok_dbl(tok[4], 0);
-        p->u.pad.hole = tok_dbl(tok[5], 0);
-        p->u.pad.style = tok_int(tok[6], 0);
-        p->layer = ntok > 7 ? tok_layer(tok[7]) : 0;
-        fc_label_default(&p->name, p->u.pad.p.x + 5, p->u.pad.p.y + 5, p->layer);
-        fc_label_default(&p->value, p->u.pad.p.x + 5, p->u.pad.p.y + 10, p->layer);
-        return 1;
-    case FC_MACRO: {
-        if (ntok < 6) return 0;
-        p->u.macro.p.x = tok_coord(tok[1]);
-        p->u.macro.p.y = tok_coord(tok[2]);
-        p->u.macro.orient = tok_int(tok[3], 0) & 3;
-        p->u.macro.mirror = tok_int(tok[4], 0) ? 1 : 0;
-        {
-            char *key = join_rest(&d->arena, tok, ntok, 5);
-            if (!key) return 0;
-            fc_tolower_buf(key);
-            p->u.macro.key = key;
-        }
-        p->layer = 0;
-        fc_label_default(&p->name, p->u.macro.p.x + 10, p->u.macro.p.y + 10, 0);
-        fc_label_default(&p->value, p->u.macro.p.x + 10, p->u.macro.p.y + 5, 0);
-        return 1;
+    i = 1 + 2 * n;
+    if (kind == FC_PCB_LINE) {
+        p->u.pcb_line.width = tok_dbl(tok[i++], 1);
+    } else if (kind == FC_PCB_PAD) {
+        p->u.pad.rx = tok_dbl(tok[i], 0);
+        p->u.pad.ry = tok_dbl(tok[i + 1], 0);
+        p->u.pad.hole = tok_dbl(tok[i + 2], 0);
+        p->u.pad.style = tok_int(tok[i + 3], 0);
+        i += 4;
+    } else if (kind == FC_MACRO) {
+        char *key = join_rest(&d->arena, tok, ntok, i + 2);
+        if (!key) return 0;
+        fc_tolower_buf(key);
+        p->u.macro.orient = tok_int(tok[i], 0) & 3;
+        p->u.macro.mirror = tok_int(tok[i + 1], 0) ? 1 : 0;
+        p->u.macro.key = key;
+        return 1; /* a macro has no layer of its own */
     }
-    case FC_TEXT:
-        return 0; /* handled as TY/TE */
-    }
-    return 0;
+    p->layer = ntok > i ? tok_layer(tok[i]) : 0;
+    return 1;
 }
 
 static void commit(ParseCtx *cx) {
@@ -283,7 +206,7 @@ static void apply_fcj(ParseCtx *cx, const char **tok, int ntok) {
     int text_flag = 0;
     if (!cx->has_pend) return;
     cx->expect_fcj = 0;
-    if (fc_kind_direct_labels(p->kind)) {
+    if (fc_kind_caps(p->kind) & FC_KIND_LABELS) {
         cx->labels_left = 2;
         cx->labels_seen = 0;
         return;
@@ -291,7 +214,7 @@ static void apply_fcj(ParseCtx *cx, const char **tok, int ntok) {
     /* The optional stroke width sits between the dash style and the text flag:
      * FidoCadJS/FidoCadJ read the dash by position and the text flag as the last
      * token, so they ignore it and still attach the labels. */
-    if (fc_kind_arrowed(p->kind) && ntok >= 7) {
+    if ((fc_kind_caps(p->kind) & FC_KIND_ARROW) && ntok >= 7) {
         p->ext.arrows = tok_int(tok[1], 0);
         p->ext.arrow_style = tok_int(tok[2], 0);
         p->ext.arrow_len = tok_dbl(tok[3], 3);
@@ -300,7 +223,7 @@ static void apply_fcj(ParseCtx *cx, const char **tok, int ntok) {
         if (ntok >= 8) p->ext.width = fcj_width(cx, tok[6]);
         text_flag = tok_int(tok[ntok >= 8 ? 7 : 6], 0);
         p->has_ext = 1;
-    } else if (fc_kind_uses_fcj(p->kind) && ntok >= 3) {
+    } else if ((fc_kind_caps(p->kind) & FC_KIND_DASH) && ntok >= 3) {
         p->ext.dash = fc_clamp_dash(tok_int(tok[1], 0));
         if (ntok >= 4) p->ext.width = fcj_width(cx, tok[2]);
         text_flag = tok_int(tok[ntok >= 4 ? 3 : 2], 0);

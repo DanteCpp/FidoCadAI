@@ -443,149 +443,64 @@ void fc_label_default(FcLabel *l, double x, double y, int layer) {
     l->text = "";
 }
 
-int fc_kind_uses_fcj(FcKind k) {
-    return k == FC_LINE || k == FC_BEZIER || k == FC_RECT || k == FC_OVAL || k == FC_POLY ||
-           k == FC_CURVE;
-}
+/* Everything that differs per kind in the file format; npts 0 = vertex list. */
+static const struct {
+    const char *name, *code, *filled_code;
+    int npts, caps;
+} k_kinds[] = {
+    [FC_LINE] = {"line", "LI", NULL, 2, FC_KIND_DASH | FC_KIND_ARROW},
+    [FC_BEZIER] = {"bezier", "BE", NULL, 4, FC_KIND_DASH | FC_KIND_ARROW},
+    [FC_RECT] = {"rectangle", "RV", "RP", 2, FC_KIND_DASH | FC_KIND_FILL},
+    [FC_OVAL] = {"ellipse", "EV", "EP", 2, FC_KIND_DASH | FC_KIND_FILL},
+    [FC_POLY] = {"polygon", "PV", "PP", 0, FC_KIND_DASH | FC_KIND_FILL},
+    [FC_CURVE] = {"curve", "CV", "CP", 0, FC_KIND_DASH | FC_KIND_ARROW | FC_KIND_FILL},
+    [FC_CONN] = {"connection", "SA", NULL, 1, FC_KIND_LABELS},
+    [FC_PCB_LINE] = {"pcb_track", "PL", NULL, 2, FC_KIND_LABELS},
+    [FC_PCB_PAD] = {"pcb_pad", "PA", NULL, 1, FC_KIND_LABELS},
+    [FC_MACRO] = {"macro", "MC", NULL, 1, FC_KIND_LABELS},
+    [FC_TEXT] = {"text", "TY", NULL, 1, 0},
+};
+#define KIND_OK(k) ((unsigned)(k) <= (unsigned)FC_TEXT)
 
-int fc_kind_direct_labels(FcKind k) {
-    return k == FC_CONN || k == FC_PCB_LINE || k == FC_PCB_PAD || k == FC_MACRO;
-}
+/* fc_prim_points relies on every fixed-size member starting with its points. */
+_Static_assert(offsetof(FcPrim, u.line.b) == offsetof(FcPrim, u) + sizeof(FcPoint), "line");
+_Static_assert(offsetof(FcPrim, u.box.b) == offsetof(FcPrim, u) + sizeof(FcPoint), "box");
+_Static_assert(offsetof(FcPrim, u.pcb_line.b) == offsetof(FcPrim, u) + sizeof(FcPoint), "pcb");
+_Static_assert(offsetof(FcPrim, u.bezier.p) == offsetof(FcPrim, u), "bezier");
+_Static_assert(offsetof(FcPrim, u.conn.p) == offsetof(FcPrim, u), "conn");
+_Static_assert(offsetof(FcPrim, u.pad.p) == offsetof(FcPrim, u), "pad");
+_Static_assert(offsetof(FcPrim, u.macro.p) == offsetof(FcPrim, u), "macro");
+_Static_assert(offsetof(FcPrim, u.text.p) == offsetof(FcPrim, u), "text");
 
-int fc_kind_arrowed(FcKind k) { return k == FC_LINE || k == FC_BEZIER || k == FC_CURVE; }
+int fc_kind_caps(FcKind k) { return KIND_OK(k) ? k_kinds[k].caps : 0; }
+
+FcPoint *fc_prim_points(const FcPrim *p, int *n) {
+    FcPrim *q = (FcPrim *)p;
+    *n = KIND_OK(p->kind) ? k_kinds[p->kind].npts : 0;
+    if (*n || !KIND_OK(p->kind)) return (FcPoint *)&q->u;
+    *n = q->u.poly.n;
+    return q->u.poly.pts;
+}
 
 int fc_code_kind(const char *tok, FcKind *kind, int *filled) {
-    if (!tok || !tok[0] || !tok[1]) return 0;
-    if (tok[2] != 0) return 0;
-    *filled = 0;
-    char a = tok[0], b = tok[1];
-    if (a == 'L' && b == 'I') {
-        *kind = FC_LINE;
-        return 1;
-    }
-    if (a == 'B' && b == 'E') {
-        *kind = FC_BEZIER;
-        return 1;
-    }
-    if (a == 'R' && b == 'V') {
-        *kind = FC_RECT;
-        return 1;
-    }
-    if (a == 'R' && b == 'P') {
-        *kind = FC_RECT;
-        *filled = 1;
-        return 1;
-    }
-    if (a == 'E' && b == 'V') {
-        *kind = FC_OVAL;
-        return 1;
-    }
-    if (a == 'E' && b == 'P') {
-        *kind = FC_OVAL;
-        *filled = 1;
-        return 1;
-    }
-    if (a == 'P' && b == 'V') {
-        *kind = FC_POLY;
-        return 1;
-    }
-    if (a == 'P' && b == 'P') {
-        *kind = FC_POLY;
-        *filled = 1;
-        return 1;
-    }
-    if (a == 'C' && b == 'V') {
-        *kind = FC_CURVE;
-        return 1;
-    }
-    if (a == 'C' && b == 'P') {
-        *kind = FC_CURVE;
-        *filled = 1;
-        return 1;
-    }
-    if (a == 'S' && b == 'A') {
-        *kind = FC_CONN;
-        return 1;
-    }
-    if (a == 'P' && b == 'L') {
-        *kind = FC_PCB_LINE;
-        return 1;
-    }
-    if (a == 'P' && b == 'A') {
-        *kind = FC_PCB_PAD;
-        return 1;
-    }
-    if (a == 'M' && b == 'C') {
-        *kind = FC_MACRO;
-        return 1;
-    }
-    if (a == 'T' && b == 'Y') {
-        *kind = FC_TEXT;
-        return 1;
-    }
-    if (a == 'T' && b == 'E') {
-        *kind = FC_TEXT;
-        return 1;
+    int k;
+    if (!tok) return 0;
+    for (k = 0; k <= FC_TEXT; k++) {
+        *filled = fc_streq(tok, k_kinds[k].filled_code);
+        if (*filled || fc_streq(tok, k_kinds[k].code)) {
+            *kind = (FcKind)k;
+            return 1;
+        }
     }
     return 0;
 }
 
-const char *fc_kind_name(FcKind k) {
-    switch (k) {
-    case FC_LINE:
-        return "line";
-    case FC_BEZIER:
-        return "bezier";
-    case FC_RECT:
-        return "rectangle";
-    case FC_OVAL:
-        return "ellipse";
-    case FC_POLY:
-        return "polygon";
-    case FC_CURVE:
-        return "curve";
-    case FC_CONN:
-        return "connection";
-    case FC_PCB_LINE:
-        return "pcb_track";
-    case FC_PCB_PAD:
-        return "pcb_pad";
-    case FC_MACRO:
-        return "macro";
-    case FC_TEXT:
-        return "text";
-    default:
-        return "unknown";
-    }
-}
+const char *fc_kind_name(FcKind k) { return KIND_OK(k) ? k_kinds[k].name : "unknown"; }
 
 const char *fc_kind_code(const FcPrim *p) {
-    switch (p->kind) {
-    case FC_LINE:
-        return "LI";
-    case FC_BEZIER:
-        return "BE";
-    case FC_RECT:
-        return p->filled ? "RP" : "RV";
-    case FC_OVAL:
-        return p->filled ? "EP" : "EV";
-    case FC_POLY:
-        return p->filled ? "PP" : "PV";
-    case FC_CURVE:
-        return p->filled ? "CP" : "CV";
-    case FC_CONN:
-        return "SA";
-    case FC_PCB_LINE:
-        return "PL";
-    case FC_PCB_PAD:
-        return "PA";
-    case FC_MACRO:
-        return "MC";
-    case FC_TEXT:
-        return "TY";
-    default:
-        return "??";
-    }
+    if (!KIND_OK(p->kind)) return "??";
+    return p->filled && k_kinds[p->kind].filled_code ? k_kinds[p->kind].filled_code
+                                                     : k_kinds[p->kind].code;
 }
 
 void fc_json_escape(FcBuf *b, const char *s) {
@@ -614,50 +529,17 @@ void fc_json_escape(FcBuf *b, const char *s) {
     fc_buf_putc(b, '"');
 }
 
+/* Macro placement: the body's origin (100,100) goes to (ox,oy), rotated by
+ * orient quarter turns clockwise, then mirrored horizontally. */
 void fc_xform_point(FcPoint *pt, int orient, int mirror, double ox, double oy) {
-    double xc = pt->x - 100.0;
-    double yc = pt->y - 100.0;
-    double vx = 0, vy = 0;
-    orient &= 3;
-    if (mirror) {
-        switch (orient) {
-        case 0:
-            vx = -xc;
-            vy = yc;
-            break;
-        case 1:
-            vx = yc;
-            vy = xc;
-            break;
-        case 2:
-            vx = xc;
-            vy = -yc;
-            break;
-        default:
-            vx = -yc;
-            vy = -xc;
-            break;
-        }
-    } else {
-        switch (orient) {
-        case 0:
-            vx = xc;
-            vy = yc;
-            break;
-        case 1:
-            vx = -yc;
-            vy = xc;
-            break;
-        case 2:
-            vx = -xc;
-            vy = -yc;
-            break;
-        default:
-            vx = yc;
-            vy = -xc;
-            break;
-        }
+    double vx = pt->x - 100.0, vy = pt->y - 100.0, t;
+    int k;
+    for (k = 0; k < (orient & 3); k++) {
+        t = vx;
+        vx = -vy;
+        vy = t;
     }
+    if (mirror) vx = -vx;
     pt->x = fc_clamp_coord(vx + ox);
     pt->y = fc_clamp_coord(vy + oy);
 }
@@ -678,50 +560,21 @@ void fc_xform_label(FcLabel *l, int orient, int mirror, double ox, double oy) {
 }
 
 void fc_xform_prim(FcPrim *p, int orient, int mirror, double ox, double oy) {
-    int i;
-    switch (p->kind) {
-    case FC_LINE:
-        fc_xform_point(&p->u.line.a, orient, mirror, ox, oy);
-        fc_xform_point(&p->u.line.b, orient, mirror, ox, oy);
-        break;
-    case FC_BEZIER:
-        for (i = 0; i < 4; i++) fc_xform_point(&p->u.bezier.p[i], orient, mirror, ox, oy);
-        break;
-    case FC_RECT:
-    case FC_OVAL:
-        fc_xform_point(&p->u.box.a, orient, mirror, ox, oy);
-        fc_xform_point(&p->u.box.b, orient, mirror, ox, oy);
-        break;
-    case FC_POLY:
-        for (i = 0; i < p->u.poly.n; i++) fc_xform_point(&p->u.poly.pts[i], orient, mirror, ox, oy);
-        break;
-    case FC_CURVE:
-        for (i = 0; i < p->u.curve.n; i++)
-            fc_xform_point(&p->u.curve.pts[i], orient, mirror, ox, oy);
-        break;
-    case FC_CONN:
-        fc_xform_point(&p->u.conn.p, orient, mirror, ox, oy);
-        break;
-    case FC_PCB_LINE:
-        fc_xform_point(&p->u.pcb_line.a, orient, mirror, ox, oy);
-        fc_xform_point(&p->u.pcb_line.b, orient, mirror, ox, oy);
-        break;
-    case FC_PCB_PAD:
-        fc_xform_point(&p->u.pad.p, orient, mirror, ox, oy);
-        break;
-    case FC_MACRO:
+    int i, n;
+    FcPoint *pts = fc_prim_points(p, &n);
+    if (p->kind == FC_TEXT) {
+        fc_xform_label(&p->u.text, orient, mirror, ox, oy);
+    } else {
+        for (i = 0; i < n; i++) fc_xform_point(&pts[i], orient, mirror, ox, oy);
+    }
+    if (p->kind == FC_MACRO) {
         /* outer M^mo R^oo applied to inner M^mi R^oi: if the inner one is mirrored,
          * R^oo * M == M * R^-oo, so the rotations subtract */
-        fc_xform_point(&p->u.macro.p, orient, mirror, ox, oy);
         if (p->u.macro.mirror)
             p->u.macro.orient = (p->u.macro.orient - orient) & 3;
         else
             p->u.macro.orient = (p->u.macro.orient + orient) & 3;
         if (mirror) p->u.macro.mirror = !p->u.macro.mirror;
-        break;
-    case FC_TEXT:
-        fc_xform_label(&p->u.text, orient, mirror, ox, oy);
-        break;
     }
     if (p->has_name) fc_xform_label(&p->name, orient, mirror, ox, oy);
     if (p->has_value) fc_xform_label(&p->value, orient, mirror, ox, oy);

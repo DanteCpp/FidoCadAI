@@ -36,9 +36,6 @@ int fc_streq(const char *a, const char *b);
 int fc_parse_bool(const char *v); /* 0, false, no, off and "" are false */
 size_t fc_strlen(const char *s);
 void fc_tolower_buf(char *s);
-int fc_kind_uses_fcj(FcKind k);
-int fc_kind_direct_labels(FcKind k);
-int fc_kind_arrowed(FcKind k);
 void fc_prim_init(FcPrim *p);
 void fc_label_default(FcLabel *l, double x, double y, int layer);
 void fc_json_escape(FcBuf *b, const char *s);

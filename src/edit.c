@@ -36,26 +36,9 @@ static void shift(FcPoint *p, double dx, double dy) {
 }
 
 static int geometry_handles(const FcPrim *p) {
-    if (!p) return 0;
-    switch (p->kind) {
-    case FC_LINE:
-    case FC_PCB_LINE:
-    case FC_RECT:
-    case FC_OVAL:
-        return 2;
-    case FC_BEZIER:
-        return 4;
-    case FC_POLY:
-        return p->u.poly.n;
-    case FC_CURVE:
-        return p->u.curve.n;
-    case FC_CONN:
-    case FC_PCB_PAD:
-    case FC_MACRO:
-    case FC_TEXT:
-        return 1;
-    }
-    return 0;
+    int n = 0;
+    if (p) fc_prim_points(p, &n);
+    return n;
 }
 
 static int label_has_handle(int present, const FcLabel *label) {
@@ -81,145 +64,30 @@ static int label_handle_slot(const FcPrim *p, int i) {
 }
 
 int fc_prim_handle(const FcPrim *p, int i, FcPoint *out) {
-    int label;
+    int label, n;
     if (!p || !out || i < 0 || i >= fc_prim_handles(p)) return 0;
     label = label_handle_slot(p, i);
-    if (label) {
-        *out = label == 1 ? p->name.p : p->value.p;
-        return 1;
-    }
-    switch (p->kind) {
-    case FC_LINE:
-        *out = i ? p->u.line.b : p->u.line.a;
-        break;
-    case FC_PCB_LINE:
-        *out = i ? p->u.pcb_line.b : p->u.pcb_line.a;
-        break;
-    case FC_RECT:
-    case FC_OVAL:
-        *out = i ? p->u.box.b : p->u.box.a;
-        break;
-    case FC_BEZIER:
-        *out = p->u.bezier.p[i];
-        break;
-    case FC_POLY:
-        *out = p->u.poly.pts[i];
-        break;
-    case FC_CURVE:
-        *out = p->u.curve.pts[i];
-        break;
-    case FC_CONN:
-        *out = p->u.conn.p;
-        break;
-    case FC_PCB_PAD:
-        *out = p->u.pad.p;
-        break;
-    case FC_MACRO:
-        *out = p->u.macro.p;
-        break;
-    case FC_TEXT:
-        *out = p->u.text.p;
-        break;
-    default:
-        return 0;
-    }
+    if (label) *out = label == 1 ? p->name.p : p->value.p;
+    else *out = fc_prim_points(p, &n)[i];
     return 1;
 }
 
 void fc_prim_set_handle(FcPrim *p, int i, double x, double y) {
     FcPoint q;
-    int label;
+    int label, n;
     if (!p || i < 0 || i >= fc_prim_handles(p)) return;
     q.x = fc_clamp_coord(x);
     q.y = fc_clamp_coord(y);
     label = label_handle_slot(p, i);
-    if (label) {
-        if (label == 1) p->name.p = q;
-        else p->value.p = q;
-        return;
-    }
-    switch (p->kind) {
-    case FC_LINE:
-        if (i)
-            p->u.line.b = q;
-        else
-            p->u.line.a = q;
-        break;
-    case FC_PCB_LINE:
-        if (i)
-            p->u.pcb_line.b = q;
-        else
-            p->u.pcb_line.a = q;
-        break;
-    case FC_RECT:
-    case FC_OVAL:
-        if (i)
-            p->u.box.b = q;
-        else
-            p->u.box.a = q;
-        break;
-    case FC_BEZIER:
-        p->u.bezier.p[i] = q;
-        break;
-    case FC_POLY:
-        p->u.poly.pts[i] = q;
-        break;
-    case FC_CURVE:
-        p->u.curve.pts[i] = q;
-        break;
-    case FC_CONN:
-        p->u.conn.p = q;
-        break;
-    case FC_PCB_PAD:
-        p->u.pad.p = q;
-        break;
-    case FC_MACRO:
-        p->u.macro.p = q;
-        break;
-    case FC_TEXT:
-        p->u.text.p = q;
-        break;
-    }
+    if (label == 1) p->name.p = q;
+    else if (label == 2) p->value.p = q;
+    else fc_prim_points(p, &n)[i] = q;
 }
 
 void fc_prim_translate(FcPrim *p, double dx, double dy) {
-    int i;
-    switch (p->kind) {
-    case FC_LINE:
-        shift(&p->u.line.a, dx, dy);
-        shift(&p->u.line.b, dx, dy);
-        break;
-    case FC_BEZIER:
-        for (i = 0; i < 4; i++) shift(&p->u.bezier.p[i], dx, dy);
-        break;
-    case FC_RECT:
-    case FC_OVAL:
-        shift(&p->u.box.a, dx, dy);
-        shift(&p->u.box.b, dx, dy);
-        break;
-    case FC_POLY:
-        for (i = 0; i < p->u.poly.n; i++) shift(&p->u.poly.pts[i], dx, dy);
-        break;
-    case FC_CURVE:
-        for (i = 0; i < p->u.curve.n; i++) shift(&p->u.curve.pts[i], dx, dy);
-        break;
-    case FC_CONN:
-        shift(&p->u.conn.p, dx, dy);
-        break;
-    case FC_PCB_LINE:
-        shift(&p->u.pcb_line.a, dx, dy);
-        shift(&p->u.pcb_line.b, dx, dy);
-        break;
-    case FC_PCB_PAD:
-        shift(&p->u.pad.p, dx, dy);
-        break;
-    case FC_MACRO:
-        shift(&p->u.macro.p, dx, dy);
-        break;
-    case FC_TEXT:
-        shift(&p->u.text.p, dx, dy);
-        break;
-    }
+    int i, n;
+    FcPoint *pts = fc_prim_points(p, &n);
+    for (i = 0; i < n; i++) shift(&pts[i], dx, dy);
     if (p->has_name) shift(&p->name.p, dx, dy);
     if (p->has_value) shift(&p->value.p, dx, dy);
 }
@@ -345,16 +213,11 @@ static double prim_dist(FcPoint p, const FcPrim *q) {
         break;
     }
     case FC_POLY:
+    case FC_CURVE:
         if (q->u.poly.n <= 0) break;
         best = q->filled && inside_poly(p, q->u.poly.pts, q->u.poly.n)
                    ? 0
-                   : poly_dist(p, q->u.poly.pts, q->u.poly.n, 1);
-        break;
-    case FC_CURVE:
-        if (q->u.curve.n <= 0) break;
-        best = q->filled && inside_poly(p, q->u.curve.pts, q->u.curve.n)
-                   ? 0
-                   : poly_dist(p, q->u.curve.pts, q->u.curve.n, q->u.curve.closed);
+                   : poly_dist(p, q->u.poly.pts, q->u.poly.n, q->kind == FC_POLY || q->u.poly.closed);
         break;
     case FC_CONN:
         best = hypot(p.x - q->u.conn.p.x, p.y - q->u.conn.p.y) - 1;
@@ -433,20 +296,11 @@ char *fc_prim_fcd(const FcPrim *p) {
 }
 
 static int anchor(const FcPrim *p, FcPoint *out) {
-    switch (p->kind) {
-    case FC_LINE: *out = p->u.line.a; return 1;
-    case FC_BEZIER: *out = p->u.bezier.p[0]; return 1;
-    case FC_RECT:
-    case FC_OVAL: *out = p->u.box.a; return 1;
-    case FC_POLY: if (p->u.poly.n) { *out = p->u.poly.pts[0]; return 1; } return 0;
-    case FC_CURVE: if (p->u.curve.n) { *out = p->u.curve.pts[0]; return 1; } return 0;
-    case FC_CONN: *out = p->u.conn.p; return 1;
-    case FC_PCB_LINE: *out = p->u.pcb_line.a; return 1;
-    case FC_PCB_PAD: *out = p->u.pad.p; return 1;
-    case FC_MACRO: *out = p->u.macro.p; return 1;
-    case FC_TEXT: *out = p->u.text.p; return 1;
-    }
-    return 0;
+    int n;
+    const FcPoint *pts = fc_prim_points(p, &n);
+    if (!n) return 0;
+    *out = pts[0];
+    return 1;
 }
 
 int fc_prim_set_text(FcDrawing *d, int index, int which, const char *text) {

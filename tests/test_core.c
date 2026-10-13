@@ -210,7 +210,7 @@ static void test_poly_no_layer(void) {
     EXPECT(d.prims[0].u.poly.n == 3 && d.prims[0].layer == 0);
     EXPECT(d.prims[0].u.poly.pts[2].x == 120 && d.prims[0].u.poly.pts[2].y == 105);
     EXPECT(d.prims[1].u.poly.n == 4 && d.prims[1].layer == 3);
-    EXPECT(d.prims[2].u.curve.n == 3 && d.prims[2].u.curve.closed);
+    EXPECT(d.prims[2].u.poly.n == 3 && d.prims[2].u.poly.closed);
     EXPECT(fc_emit(&d, &a, NULL) > 0);
     fc_drawing_free(&d);
     fc_drawing_init(&d);

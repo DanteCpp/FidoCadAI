@@ -8,6 +8,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QRegularExpression>
+#include <algorithm>
 #include <vector>
 
 InlineForm::InlineForm(QWidget *parent, const QString &title) : QFrame(parent) {
@@ -140,41 +141,24 @@ const QStringList kArrowStyle = {"filled head", "filled head + bar", "open head"
 const QStringList kOrient = {"0°", "90°", "180°", "270°"};
 const QStringList kPad = {"round/oval", "rectangular", "rounded rectangle"};
 
-bool isArrowed(FcKind k) { return k == FC_LINE || k == FC_BEZIER || k == FC_CURVE; }
-bool hasDash(FcKind k) {
-    return k == FC_LINE || k == FC_BEZIER || k == FC_RECT || k == FC_OVAL || k == FC_POLY || k == FC_CURVE;
-}
-bool fillable(FcKind k) { return k == FC_RECT || k == FC_OVAL || k == FC_POLY || k == FC_CURVE; }
+bool vertexList(FcKind k) { return k == FC_POLY || k == FC_CURVE; }
 
 /* Points of a primitive as editable coordinates. */
 QString coordsOf(const FcPrim &p) {
-    switch (p.kind) {
-    case FC_LINE: return pointsText(&p.u.line.a, 1) + " " + pointsText(&p.u.line.b, 1);
-    case FC_BEZIER: return pointsText(p.u.bezier.p, 4);
-    case FC_RECT:
-    case FC_OVAL: return pointsText(&p.u.box.a, 1) + " " + pointsText(&p.u.box.b, 1);
-    case FC_POLY: return pointsText(p.u.poly.pts, p.u.poly.n);
-    case FC_CURVE: return pointsText(p.u.curve.pts, p.u.curve.n);
-    case FC_CONN: return pointsText(&p.u.conn.p, 1);
-    case FC_PCB_LINE: return pointsText(&p.u.pcb_line.a, 1) + " " + pointsText(&p.u.pcb_line.b, 1);
-    case FC_PCB_PAD: return pointsText(&p.u.pad.p, 1);
-    case FC_MACRO: return pointsText(&p.u.macro.p, 1);
-    case FC_TEXT: return pointsText(&p.u.text.p, 1);
-    }
-    return QString();
+    int n;
+    const FcPoint *pts = fc_prim_points(&p, &n);
+    return pointsText(pts, n);
 }
 
-QString coordsHint(FcKind k) {
-    switch (k) {
-    case FC_BEZIER: return "x1 y1 x2 y2 x3 y3 x4 y4";
-    case FC_POLY:
-    case FC_CURVE: return "x1 y1 x2 y2 ... (at least 2 points)";
-    case FC_LINE:
-    case FC_RECT:
-    case FC_OVAL:
-    case FC_PCB_LINE: return "x1 y1 x2 y2";
-    default: return "x y";
-    }
+/* "x y", "x1 y1 x2 y2", ... for n points; vertex lists take any count >= 2. */
+QString coordsHint(const FcPrim &p) {
+    int n;
+    if (vertexList(p.kind)) return "x1 y1 x2 y2 ... (at least 2 points)";
+    fc_prim_points(&p, &n);
+    if (n == 1) return "x y";
+    QStringList s;
+    for (int k = 1; k <= n; k++) s << QString("x%1 y%1").arg(k);
+    return s.join(' ');
 }
 
 bool parseNum(const QString &s, double *out) {
@@ -224,15 +208,16 @@ InlineForm *editProperties(QWidget *parent, Document *doc, int i) {
         value = f->addText("Value", oldValue, "e.g. 10k");
     }
     QComboBox *layer = f->addChoice("Layer", layers, k == FC_TEXT ? p0.u.text.layer : p0.layer);
-    QLineEdit *coords = f->addText("Coordinates", coordsOf(p0), coordsHint(k));
-    if (fillable(k)) filled = f->addCheck("Filled", p0.filled);
-    if (k == FC_CURVE) closed = f->addCheck("Closed", p0.u.curve.closed);
-    if (hasDash(k)) {
+    const int caps = fc_kind_caps(k);
+    QLineEdit *coords = f->addText("Coordinates", coordsOf(p0), coordsHint(p0));
+    if (caps & FC_KIND_FILL) filled = f->addCheck("Filled", p0.filled);
+    if (k == FC_CURVE) closed = f->addCheck("Closed", p0.u.poly.closed);
+    if (caps & FC_KIND_DASH) {
         dash = f->addChoice("Dash", kDash, p0.ext.dash);
         stroke = f->addText("Line width", p0.ext.width > 0 ? num(p0.ext.width) : QString(),
                             "empty = drawing default");
     }
-    if (isArrowed(k)) {
+    if (caps & FC_KIND_ARROW) {
         arrows = f->addChoice("Arrows", kArrows, p0.ext.arrows & 3);
         arrowStyle = f->addChoice("Arrow style", kArrowStyle, p0.ext.arrow_style & 3);
         arrowLen = f->addText("Arrow length", num(p0.ext.arrow_len > 0 ? p0.ext.arrow_len : 3));
@@ -271,30 +256,21 @@ InlineForm *editProperties(QWidget *parent, Document *doc, int i) {
             if (!parseNum(toks[t], &q.x) || !parseNum(toks[t + 1], &q.y)) return "coordinates must be numbers";
             pts.push_back(q);
         }
-        int n = (int)pts.size();
-        int need = (k == FC_BEZIER) ? 4 : (k == FC_LINE || k == FC_RECT || k == FC_OVAL || k == FC_PCB_LINE) ? 2 : 1;
-        if (k == FC_POLY || k == FC_CURVE) {
+        int n = (int)pts.size(), need;
+        FcPoint *dst = fc_prim_points(&p, &need);
+        if (vertexList(k)) {
             if (n < 2) return "at least 2 points";
+            p.u.poly.pts = pts.data();
+            p.u.poly.n = n;
         } else if (n != need) {
-            return QString("expected %1 coordinate pair%2 (%3)").arg(need).arg(need > 1 ? "s" : "").arg(coordsHint(k));
-        }
-        switch (k) {
-        case FC_LINE: p.u.line.a = pts[0]; p.u.line.b = pts[1]; break;
-        case FC_BEZIER: for (int t = 0; t < 4; t++) p.u.bezier.p[t] = pts[t]; break;
-        case FC_RECT:
-        case FC_OVAL: p.u.box.a = pts[0]; p.u.box.b = pts[1]; break;
-        case FC_POLY: p.u.poly.pts = pts.data(); p.u.poly.n = n; break;
-        case FC_CURVE: p.u.curve.pts = pts.data(); p.u.curve.n = n; break;
-        case FC_CONN: p.u.conn.p = pts[0]; break;
-        case FC_PCB_LINE: p.u.pcb_line.a = pts[0]; p.u.pcb_line.b = pts[1]; break;
-        case FC_PCB_PAD: p.u.pad.p = pts[0]; break;
-        case FC_MACRO: p.u.macro.p = pts[0]; break;
-        case FC_TEXT: p.u.text.p = pts[0]; break;
+            return QString("expected %1 coordinate pair%2 (%3)").arg(need).arg(need > 1 ? "s" : "").arg(coordsHint(p));
+        } else {
+            std::copy(pts.begin(), pts.end(), dst);
         }
 
         p.layer = layer->currentIndex();
         if (filled) p.filled = filled->isChecked();
-        if (closed) p.u.curve.closed = closed->isChecked();
+        if (closed) p.u.poly.closed = closed->isChecked();
         if (dash) p.ext.dash = dash->currentIndex();
         if (stroke) {
             QString s = stroke->text().trimmed();

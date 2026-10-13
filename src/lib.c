@@ -448,20 +448,13 @@ static FcPrim *copy_prim(FcDrawing *dst, const FcPrim *src) {
     FcPrim *p = fc_drawing_push(dst);
     if (!p) return NULL;
     *p = *src;
-    if (src->kind == FC_POLY && src->u.poly.n > 0) {
-        p->u.poly.pts =
-            (FcPoint *)fc_arena_alloc(&dst->arena, (size_t)src->u.poly.n * sizeof(FcPoint));
+    if ((src->kind == FC_POLY || src->kind == FC_CURVE) && src->u.poly.n > 0) {
+        size_t size = (size_t)src->u.poly.n * sizeof(FcPoint);
+        p->u.poly.pts = (FcPoint *)fc_arena_alloc(&dst->arena, size);
         if (p->u.poly.pts)
-            memcpy(p->u.poly.pts, src->u.poly.pts, (size_t)src->u.poly.n * sizeof(FcPoint));
+            memcpy(p->u.poly.pts, src->u.poly.pts, size);
         else
             p->u.poly.n = 0;
-    } else if (src->kind == FC_CURVE && src->u.curve.n > 0) {
-        p->u.curve.pts =
-            (FcPoint *)fc_arena_alloc(&dst->arena, (size_t)src->u.curve.n * sizeof(FcPoint));
-        if (p->u.curve.pts)
-            memcpy(p->u.curve.pts, src->u.curve.pts, (size_t)src->u.curve.n * sizeof(FcPoint));
-        else
-            p->u.curve.n = 0;
     }
     if (src->kind == FC_MACRO && src->u.macro.key)
         p->u.macro.key = fc_arena_strdup(&dst->arena, src->u.macro.key);

@@ -813,12 +813,12 @@ static void draw_prim(Raster *r, const FcDrawing *d, const FcPrim *p) {
         stroke_poly(r, p->u.poly.pts, p->u.poly.n, 1, rgb, a, lw, dash);
         break;
     case FC_CURVE:
-        if (p->filled) fill_poly(r, p->u.curve.pts, p->u.curve.n, rgb, a);
-        spline(r, p->u.curve.pts, p->u.curve.n, p->u.curve.closed, rgb, a, lw, dash);
-        if (p->ext.arrows && !p->u.curve.closed && p->u.curve.n >= 2) {
+        if (p->filled) fill_poly(r, p->u.poly.pts, p->u.poly.n, rgb, a);
+        spline(r, p->u.poly.pts, p->u.poly.n, p->u.poly.closed, rgb, a, lw, dash);
+        if (p->ext.arrows && !p->u.poly.closed && p->u.poly.n >= 2) {
             /* open Catmull-Rom leaves each end along its first/last chord */
-            int n = p->u.curve.n;
-            const FcPoint *c = p->u.curve.pts;
+            int n = p->u.poly.n;
+            const FcPoint *c = p->u.poly.pts;
             FcPoint head[2] = {c[0], c[1]}, tail[2] = {c[n - 1], c[n - 2]};
             draw_arrows(r, p, head, tail, 2, rgb, a);
         }
