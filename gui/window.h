@@ -67,7 +67,7 @@ private:
     void toggleBar();                      /* I */
     void report(const QString &text);      /* transient message in the bottom bar */
     void applyCommand(const QJsonObject &cmd);
-    QJsonObject stateEvent(const QString &event, const QString &note);
+    void sendEvent(const QString &event, QJsonObject extra = QJsonObject());
     void watchFile();
 
     Document *doc_;

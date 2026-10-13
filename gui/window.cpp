@@ -166,9 +166,8 @@ MainWindow::MainWindow(Document *doc, Settings *settings, Theme *theme, QApplica
                 report("file changed on disk, but you have unsaved edits — kept yours");
                 if (session_ && canon != conflict_disk_) {
                     conflict_disk_ = canon;
-                    QJsonObject event = stateEvent("conflict", "disk changed with unsaved GUI edits");
-                    event["disk_fcd"] = QString::fromUtf8(canon);
-                    session_->send(event);
+                    sendEvent("conflict", {{"note", "disk changed with unsaved GUI edits"},
+                                           {"disk_fcd", QString::fromUtf8(canon)}});
                 }
             }
             watchFile();
@@ -497,11 +496,16 @@ bool MainWindow::save(const QString &what) {
     return true;
 }
 
-QJsonObject MainWindow::stateEvent(const QString &event, const QString &note) {
-    QJsonObject e;
+/* Every event carries the current state, and its diff_prev covers the changes
+ * since the previous event of any kind; sending makes it that baseline. A user
+ * change still waiting for its debounce always goes out first, as its own
+ * change event. */
+void MainWindow::sendEvent(const QString &event, QJsonObject e) {
+    if (!session_) return;
+    if (event != "change") flushChange();
     e["event"] = event;
     e["protocol"] = 2;
-    e["note"] = note;
+    if (!e.contains("note")) e["note"] = QString();
     e["file"] = doc_->path();
     e["saved"] = !doc_->path().isEmpty();
     e["modified"] = doc_->modified();
@@ -521,7 +525,7 @@ QJsonObject MainWindow::stateEvent(const QString &event, const QString &note) {
     free(delta);
     fc_drawing_free(&previous);
     previous_event_ = doc_->fcd();
-    return e;
+    session_->send(e);
 }
 
 void MainWindow::scheduleChange(bool drawing) {
@@ -540,9 +544,7 @@ void MainWindow::flushChange() {
     QJsonArray changes;
     if (drawing) changes << "drawing";
     if (selection) changes << "selection";
-    QJsonObject e = stateEvent("change", QString());
-    e["changes"] = changes;
-    session_->send(e);
+    sendEvent("change", {{"changes", changes}});
 }
 
 void MainWindow::toggleBar() {
@@ -556,7 +558,7 @@ void MainWindow::applyCommand(const QJsonObject &c) {
     const QString cmd = c["cmd"].toString();
     QString error;
     bool reply = false;
-    flushChange(); /* the user's pending edits precede the agent's command */
+    flushChange(); /* the user's pending edits precede the agent's command and its effects */
     agent_ = true;
     if (cmd == "push") {
         reply = true;
@@ -611,12 +613,10 @@ void MainWindow::applyCommand(const QJsonObject &c) {
     }
     agent_ = false;
     if (reply) {
-        QJsonObject event = stateEvent(cmd == "get" ? "state" : "applied", QString());
-        event["command"] = cmd;
-        event["ok"] = error.isEmpty();
+        QJsonObject event{{"command", cmd}, {"ok", error.isEmpty()}};
         if (!error.isEmpty()) event["error"] = error;
         if (c.contains("id")) event["id"] = c["id"];
-        session_->send(event);
+        sendEvent(cmd == "get" ? "state" : "applied", event);
     }
 }
 
@@ -656,8 +656,7 @@ void MainWindow::closeEvent(QCloseEvent *e) {
         }
     }
     if (!finishing_) note_ = QString();
-    flushChange();
-    if (session_) session_->send(stateEvent("closed", note_));
+    sendEvent("closed", {{"note", note_}});
     finishing_ = true;
     e->accept();
     if (onFinished) onFinished();

@@ -215,6 +215,33 @@ static void test_session_feedback(QApplication &app) {
     EXPECT(!QFile::exists(archived + "/.events.pos"));
 }
 
+/* A disk conflict never swallows a user edit still waiting for its debounce:
+ * the edit goes out first, as its own change event. */
+static void test_conflict_after_edit(QApplication &app) {
+    QTemporaryDir tmp;
+    QString fcd = tmp.path() + "/c.fcd", dir = tmp.path() + "/session";
+    auto write = [](const QString &path, const char *text) {
+        QFile f(path);
+        EXPECT(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        f.write(text);
+    };
+    write(fcd, "[FIDOCAD]\nLI 10 10 30 10 0\n");
+    Settings settings(tmp.path() + "/gui.conf");
+    Theme theme = Theme::load("dark");
+    Document doc;
+    QString err;
+    EXPECT(doc.open(fcd, &err));
+    MainWindow win(&doc, &settings, &theme, &app, dir);
+    win.show();
+    QTest::qWait(50);
+    doc.append("SA 20 20 0");                        /* the user's edit, still unsent */
+    write(fcd, "[FIDOCAD]\nLI 10 10 40 10 0\n"); /* meanwhile the disk changes */
+    QTest::qWait(600);
+    QString log = readAll(dir + "/events.jsonl");
+    int change = log.indexOf("\"event\":\"change\""), conflict = log.indexOf("\"event\":\"conflict\"");
+    EXPECT(conflict > 0 && change >= 0 && change < conflict);
+}
+
 /* Library problems are handled like the CLI: an empty --lib-dir only warns
  * (the standard library still loads), an unreadable --lib fails and keeps the
  * libraries already loaded. */
@@ -425,6 +452,7 @@ int main(int argc, char **argv) {
     QApplication app(argc, argv);
     fc_set_argv0(argv[0]);
     test_library_errors();
+    test_conflict_after_edit(app);
     test_label_handles();
     test_grouped_handles();
     test_touchpad_gestures();
