@@ -204,15 +204,16 @@ static void apply_kv(Opt *o, const char *k, const char *v) {
     if (fc_streq(k, "lib_dir") && o->nlibdirs < 16) o->libdirs[o->nlibdirs++] = v;
 }
 
-/* Settings point into the file text, so it is kept until the program ends. */
+/* Settings point into --config file text, so it is kept until the program ends. */
+static char *g_config_text[8];
+static int g_nconfig;
+
 static int load_config(Opt *o, const char *path) {
-    static char *kept[8];
-    static int nkept;
     char *text = NULL;
     size_t len = 0;
     char *p, *line;
-    if (nkept == 8 || fc_read_file(path, &text, &len) != FC_OK) return FC_ERR_IO;
-    kept[nkept++] = text;
+    if (g_nconfig == 8 || fc_read_file(path, &text, &len) != FC_OK) return FC_ERR_IO;
+    g_config_text[g_nconfig++] = text;
     p = text;
     while (p && *p) {
         char *nl = strchr(p, '\n');
