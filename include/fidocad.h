@@ -229,6 +229,7 @@ typedef struct {
     int grid_major;    /* emphasise every Nth grid dot, 0 = none */
     uint32_t grid_rgb;
     int tex;
+    const uint32_t *layer_rgb; /* FC_MAX_LAYERS colours drawn instead of the layers', or NULL */
 } FcView;
 
 /* --- arena / IO --- */

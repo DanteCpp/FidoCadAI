@@ -39,14 +39,10 @@ QByteArray hyprctl(const QStringList &args, bool *ok = nullptr) {
     return p.readAllStandardOutput();
 }
 
-double luma(uint32_t rgb) {
-    return (0.299 * ((rgb >> 16) & 255) + 0.587 * ((rgb >> 8) & 255) + 0.114 * (rgb & 255)) / 255.0;
-}
-
 /* Render one library macro into an image for the palette preview. Reuses the
  * C renderer (fc_render_rgb) so it matches the canvas and `fcai render`. */
 QImage macroPreview(const Document *doc, const QString &key, int w, int h, const QColor &paper,
-                    const QColor &fg) {
+                    const Theme &theme) {
     const FcMacro *m = fc_lib_find(doc->lib(), key.toUtf8().constData());
     if (!m || !m->body || !*m->body) return QImage();
     FcDrawing body, flat;
@@ -58,7 +54,7 @@ QImage macroPreview(const Document *doc, const QString &key, int w, int h, const
     QImage img(w, h, QImage::Format_RGB888);
     img.fill(paper);
     FcRect b;
-    if (fc_bounds(&flat, doc->lib(), &b) && b.max_x > b.min_x && b.max_y > b.min_y) {
+    if (fc_bounds(&flat, nullptr, &b) && b.max_x > b.min_x && b.max_y > b.min_y) {
         FcView v;
         memset(&v, 0, sizeof v);
         const double mrg = 10;
@@ -67,12 +63,10 @@ QImage macroPreview(const Document *doc, const QString &key, int w, int h, const
         v.ox = w / 2.0 - (b.min_x + b.max_x) / 2 * v.scale;
         v.oy = h / 2.0 - (b.min_y + b.max_y) / 2 * v.scale;
         v.bg = ((uint32_t)paper.rgb()) & 0xFFFFFFu;
-        FcDrawing view = flat; /* shallow copy: adjust ink for dark paper */
-        if (paper.lightnessF() < 0.5)
-            for (int i = 0; i < FC_MAX_LAYERS; i++)
-                if (luma(view.layers[i].rgb) < 0.2)
-                    view.layers[i].rgb = ((uint32_t)fg.rgb()) & 0xFFFFFFu;
-        fc_render_rgb(&view, doc->lib(), &v, img.bits(), w, h, (int)img.bytesPerLine());
+        uint32_t ink[FC_MAX_LAYERS];
+        for (int i = 0; i < FC_MAX_LAYERS; i++) ink[i] = theme.ink(flat.layers[i].rgb, paper).rgb() & 0xFFFFFFu;
+        v.layer_rgb = ink;
+        fc_render_rgb(&flat, nullptr, &v, img.bits(), w, h, (int)img.bytesPerLine());
     }
     fc_drawing_free(&body);
     fc_drawing_free(&flat);
@@ -437,7 +431,7 @@ void MainWindow::updatePreview() {
     qreal dpr = preview_->devicePixelRatioF();
     int w = qMax(80, (int)(preview_->width() * dpr));
     int h = qMax(80, (int)(preview_->height() * dpr));
-    QImage img = macroPreview(doc_, preview_key_, w, h, canvas_->paper(), theme_->fg);
+    QImage img = macroPreview(doc_, preview_key_, w, h, canvas_->paper(), *theme_);
     if (img.isNull()) {
         preview_->setPixmap(QPixmap());
         return;

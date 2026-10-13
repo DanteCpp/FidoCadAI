@@ -12,6 +12,7 @@ typedef struct {
     double scale;
     double dash_phase; /* pixel arc length within the current primitive */
     int tex;
+    const uint32_t *layer_rgb; /* FcView override of the layer colours, or NULL */
 } Raster;
 
 #define MAX_RASTER 8192
@@ -768,7 +769,7 @@ static void draw_prim(Raster *r, const FcDrawing *d, const FcPrim *p) {
     float a;
     int lw, lwc, dash;
     if (p->layer < 0 || p->layer >= FC_MAX_LAYERS) return;
-    rgb = d->layers[p->layer].rgb;
+    rgb = r->layer_rgb ? r->layer_rgb[p->layer] : d->layers[p->layer].rgb;
     a = d->layers[p->layer].alpha;
     lw = scale_len(r, p->ext.width > 0 ? p->ext.width : d->cfg.line_width);
     if (lw < 1) lw = 1;
@@ -910,6 +911,7 @@ int fc_render_rgb(const FcDrawing *d, const FcLib *lib, const FcView *v, uint8_t
     r.scale = v->scale;
     r.tex = v->tex;
     r.dash_phase = 0;
+    r.layer_rgb = v->layer_rgb;
     fill_bg(&r, v->bg);
     if (v->grid > 0 && v->grid * v->scale >= 4) {
         double step = v->grid * v->scale;
@@ -1017,6 +1019,7 @@ int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opt
     r.oy = o.margin - bb.min_y * r.scale;
     r.tex = o.tex;
     r.dash_phase = 0;
+    r.layer_rgb = NULL;
     r.stride = (size_t)r.w * 3;
     r.px = (uint8_t *)malloc((size_t)r.w * (size_t)r.h * 3);
     if (!r.px) {

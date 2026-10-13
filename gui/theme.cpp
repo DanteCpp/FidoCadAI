@@ -11,6 +11,10 @@
 
 namespace {
 
+double luma(uint32_t rgb) {
+    return (0.299 * ((rgb >> 16) & 255) + 0.587 * ((rgb >> 8) & 255) + 0.114 * (rgb & 255)) / 255.0;
+}
+
 Theme builtin(bool dark) {
     Theme t;
     t.dark = dark;
@@ -44,6 +48,12 @@ Theme builtin(bool dark) {
 }
 
 } // namespace
+
+bool Theme::isDark(const QColor &paper) { return luma((uint32_t)paper.rgb() & 0xFFFFFFu) < 0.5; }
+
+QColor Theme::ink(uint32_t layer_rgb, const QColor &paper) const {
+    return isDark(paper) && luma(layer_rgb) < 0.2 ? fg : QColor::fromRgb(layer_rgb);
+}
 
 QString Theme::omarchyColorsPath() {
     const QString home = QDir::homePath();

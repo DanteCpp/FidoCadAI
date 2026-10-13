@@ -17,23 +17,7 @@
 
 namespace {
 
-double luma(uint32_t rgb) {
-    return (0.299 * ((rgb >> 16) & 255) + 0.587 * ((rgb >> 8) & 255) + 0.114 * (rgb & 255)) / 255.0;
-}
-
 uint32_t toRgb(const QColor &c) { return (uint32_t)c.rgb() & 0xFFFFFFu; }
-
-/* Shallow copy of the drawing with layer colours adjusted for the paper:
- * on dark paper, near-black layers (FidoCad's default circuit layer) take
- * the theme foreground so they stay visible. Saturated colours (red, green)
- * are kept — their luma is low but they read fine on dark paper. */
-FcDrawing paperView(const FcDrawing &d, const QColor &paper, const QColor &fg) {
-    FcDrawing v = d;
-    if (luma(toRgb(paper)) < 0.5)
-        for (int i = 0; i < FC_MAX_LAYERS; i++)
-            if (luma(v.layers[i].rgb) < 0.2) v.layers[i].rgb = toRgb(fg);
-    return v;
-}
 
 void oneView(const FcDrawing &d, int i, FcDrawing *view) {
     memset(view, 0, sizeof *view);
@@ -225,11 +209,12 @@ void Canvas::renderCache() {
     v.bg = toRgb(paper());
     v.grid = settings_->getBool("show_grid") ? grid() : 0;
     v.grid_major = 5;
-    QColor gc = paper().lightnessF() < 0.5 ? theme_->muted : QColor(190, 190, 200);
-    v.grid_rgb = toRgb(gc);
+    v.grid_rgb = toRgb(Theme::isDark(paper()) ? theme_->muted : QColor(190, 190, 200));
     v.tex = settings_->getBool("tex");
-    FcDrawing pv = paperView(doc_->drawing(), paper(), theme_->fg);
-    fc_render_rgb(&pv, doc_->lib(), &v, cache_.bits(), w, h, (int)cache_.bytesPerLine());
+    uint32_t ink[FC_MAX_LAYERS];
+    for (int i = 0; i < FC_MAX_LAYERS; i++) ink[i] = layerColor(i).rgb() & 0xFFFFFFu;
+    v.layer_rgb = ink;
+    fc_render_rgb(&doc_->drawing(), doc_->lib(), &v, cache_.bits(), w, h, (int)cache_.bytesPerLine());
     dirty_ = false;
 }
 
@@ -621,11 +606,7 @@ void Canvas::moveHandles(QPointF delta) {
 
 QColor Canvas::layerColor(int l) const {
     if (l < 0 || l >= FC_MAX_LAYERS) l = 0;
-    uint32_t rgb = doc_->drawing().layers[l].rgb;
-    /* same adaptation as paperView: near-black ink needs the theme foreground
-     * to stay readable on dark paper */
-    if (luma(toRgb(paper())) < 0.5 && luma(rgb) < 0.2) return theme_->fg;
-    return QColor::fromRgb(rgb);
+    return theme_->ink(doc_->drawing().layers[l].rgb, paper());
 }
 
 void Canvas::status() {
