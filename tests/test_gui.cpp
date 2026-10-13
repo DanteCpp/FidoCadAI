@@ -236,7 +236,13 @@ static void test_conflict_after_edit(QApplication &app) {
     QTest::qWait(50);
     doc.append("SA 20 20 0");                        /* the user's edit, still unsent */
     write(fcd, "[FIDOCAD]\nLI 10 10 40 10 0\n"); /* meanwhile the disk changes */
-    QTest::qWait(600);
+    /* File-watcher delivery can take longer on macOS, especially under ASan.
+     * Wait for the event, then check ordering independently of that latency. */
+    QElapsedTimer clock;
+    clock.start();
+    while (!readAll(dir + "/events.jsonl").contains("\"event\":\"conflict\"") &&
+           clock.elapsed() < 5000)
+        QTest::qWait(20);
     QString log = readAll(dir + "/events.jsonl");
     int change = log.indexOf("\"event\":\"change\""), conflict = log.indexOf("\"event\":\"conflict\"");
     EXPECT(conflict > 0 && change >= 0 && change < conflict);
