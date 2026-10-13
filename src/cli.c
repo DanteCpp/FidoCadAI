@@ -344,7 +344,6 @@ static int edit_drawing(const Opt *o, FcDrawing *d) {
     if (fc_streq(o->action, "add")) {
         FcDrawing extra;
         char *text = NULL;
-        FcEmitOpts emit = {1, 1};
         int i, rc;
         if (!o->from) return FC_ERR_ARG;
         fc_drawing_init(&extra);
@@ -352,7 +351,7 @@ static int edit_drawing(const Opt *o, FcDrawing *d) {
         for (i = 0; i < extra.ndiags; i++)
             if (extra.diags[i].level == FC_DIAG_ERR) rc = FC_ERR_ARG;
         if (rc == FC_OK) {
-            size_t n = fc_emit(&extra, &text, &emit);
+            size_t n = fc_emit(&extra, &text, 1);
             if (!text) rc = FC_ERR_NOMEM;
             else fc_append_fcd(d, text, n);
         }
@@ -449,17 +448,12 @@ static int cmd_macro(const Opt *o, FcLib *lib) {
 
 static int run_on_drawing(const Opt *o, FcDrawing *d, FcLib *lib) {
     const char *cmd = o->cmd[0] ? o->cmd : "context";
-    FcDescribeOpts dopts;
-    FcEmitOpts eopts;
     char *s = NULL;
     int rc = FC_OK;
-    dopts.verbose = o->verbose || fc_streq(cmd, "context");
-    eopts.extensions = o->extensions;
-    eopts.header = 1;
     if (fc_streq(cmd, "edit")) {
         rc = edit_drawing(o, d);
         if (rc != FC_OK) { fprintf(stderr, "fcai: invalid edit action, index, or fields\n"); return rc; }
-        size_t n = fc_emit(d, &s, &eopts);
+        size_t n = fc_emit(d, &s, o->extensions);
         rc = s ? write_out(o, s, n) : FC_ERR_NOMEM;
         free(s); return rc;
     }
@@ -487,7 +481,7 @@ static int run_on_drawing(const Opt *o, FcDrawing *d, FcLib *lib) {
         return rc;
     }
     if (fc_streq(cmd, "describe")) {
-        s = fc_describe(d, lib, &dopts);
+        s = fc_describe(d, lib, o->verbose);
         rc = s ? write_out(o, s, fc_strlen(s)) : FC_ERR_NOMEM;
         free(s);
         return rc;
@@ -499,7 +493,7 @@ static int run_on_drawing(const Opt *o, FcDrawing *d, FcLib *lib) {
         return rc;
     }
     if (fc_streq(cmd, "emit")) {
-        size_t n = fc_emit(d, &s, &eopts);
+        size_t n = fc_emit(d, &s, o->extensions);
         rc = s ? write_out(o, s, n) : FC_ERR_NOMEM;
         free(s);
         return rc;
@@ -515,7 +509,7 @@ static int run_on_drawing(const Opt *o, FcDrawing *d, FcLib *lib) {
         size_t n;
         fc_drawing_init(&exp);
         fc_expand(d, &exp, lib);
-        n = fc_emit(&exp, &s, &eopts);
+        n = fc_emit(&exp, &s, o->extensions);
         rc = s ? write_out(o, s, n) : FC_ERR_NOMEM;
         free(s);
         fc_drawing_free(&exp);
@@ -799,24 +793,19 @@ bad_file:
 
 /* ---- fcai skill: the fidocad agent skill ------------------------------- */
 
-/* The skill directory holds SKILL.md. Locate it through sys.c the same way
- * libraries and fonts are found, so installed Linux and macOS trees both work
- * (/usr/local, /opt/homebrew, /usr/share, or next to the binary). */
-typedef struct {
-    char *out;
-    size_t cap;
-} SkillPath;
-
-static int try_skill_md(void *ctx, const char *dir) {
-    SkillPath *sp = (SkillPath *)ctx;
-    snprintf(sp->out, sp->cap, "%s/SKILL.md", dir);
-    return file_exists(sp->out);
+/* dir/name into out; 0 when it does not fit. */
+static int path_join(char *out, size_t cap, const char *dir, const char *name) {
+    int n = snprintf(out, cap, "%s/%s", dir, name);
+    return n > 0 && (size_t)n < cap;
 }
 
+/* The skill directory holds SKILL.md. Locate it like libraries and fonts, so
+ * installed Linux and macOS trees both work (/usr/local, /opt/homebrew,
+ * /usr/share, or next to the binary). */
 static int find_skill_file(char *out, size_t n) {
     const char *env = getenv("FIDO_SKILL_DIR");
-    char cand[4096];
-    SkillPath sp;
+    char cand[4096], dirs[FC_DATA_DIRS][FC_DIR_MAX];
+    int i, nd;
     if (env && *env) {
         /* parent of fidocad/ (the installed share/fidocad/skills), or the skill
          * directory itself */
@@ -831,9 +820,9 @@ static int find_skill_file(char *out, size_t n) {
             return 1;
         }
     }
-    sp.out = out;
-    sp.cap = n;
-    return fc_find_data("skills/fidocad", try_skill_md, &sp);
+    for (i = 0, nd = fc_data_dirs("skills/fidocad", dirs); i < nd; i++)
+        if (path_join(out, n, dirs[i], "SKILL.md") && file_exists(out)) return 1;
+    return 0;
 }
 
 /* Canonical source for `fcai skill install`: the Omarchy default-agents
@@ -999,12 +988,6 @@ static int skill_dirs(int argc, char **argv, int installing, char dirs[][4096], 
         snprintf(dirs[n++], 4096, "%s/%s", parent, k_skill_agents[i].skills);
     }
     return n;
-}
-
-/* dir/name into out; 0 when it does not fit. */
-static int path_join(char *out, size_t cap, const char *dir, const char *name) {
-    int n = snprintf(out, cap, "%s/%s", dir, name);
-    return n > 0 && (size_t)n < cap;
 }
 
 /* An entry fcai may replace or remove: a link (dangling or not) or a copy made

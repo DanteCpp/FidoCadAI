@@ -44,8 +44,6 @@ static int lib_find_index(const FcLib *lib, const char *key) {
 
 FcLib *fc_lib_new(void) {
     FcLib *lib = (FcLib *)calloc(1, sizeof *lib);
-    if (!lib) return NULL;
-    fc_arena_init(&lib->arena, 1 << 16);
     return lib;
 }
 
@@ -410,12 +408,14 @@ static int try_stdlib_dir(FcLib *lib, const char *dir) {
     return ok;
 }
 
-static int try_stdlib_cb(void *ctx, const char *dir) { return try_stdlib_dir((FcLib *)ctx, dir); }
-
 int fc_lib_load_stdlib(FcLib *lib) {
     const char *env = getenv("FIDO_STDLIB_DIR");
+    char dirs[FC_DATA_DIRS][FC_DIR_MAX];
+    int i, n;
     if (env && try_stdlib_dir(lib, env)) return FC_OK;
-    return fc_find_data("lib", try_stdlib_cb, lib) ? FC_OK : FC_ERR_IO;
+    for (i = 0, n = fc_data_dirs("lib", dirs); i < n; i++)
+        if (try_stdlib_dir(lib, dirs[i])) return FC_OK;
+    return FC_ERR_IO;
 }
 
 int fc_lib_load_all(FcLib *lib, int stdlib, const char *const *dirs, int ndirs,

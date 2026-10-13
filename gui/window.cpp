@@ -131,16 +131,7 @@ MainWindow::MainWindow(Document *doc, Settings *settings, Theme *theme, QApplica
         QTimer::singleShot(100, this, [this] {
             QFile f(doc_->path());
             if (!f.open(QIODevice::ReadOnly)) return;
-            QByteArray disk = f.readAll();
-            FcDrawing tmp;
-            fc_drawing_init(&tmp);
-            fc_parse(&tmp, disk.constData(), (size_t)disk.size());
-            char *out = nullptr;
-            FcEmitOpts o = {1, 1};
-            fc_emit(&tmp, &out, &o);
-            QByteArray canon(out ? out : "");
-            free(out);
-            fc_drawing_free(&tmp);
+            QByteArray canon = Document::canonical(f.readAll());
             /* Atomic file replacements drop the watch even if text is unchanged. */
             watchFile();
             if (canon == doc_->fcd() || canon == doc_->savedFcd()) {
@@ -563,12 +554,9 @@ void MainWindow::applyCommand(const QJsonObject &c) {
     if (cmd == "push") {
         reply = true;
         if (!c["fcd"].isString()) error = "push requires fcd text";
-        if (error.isEmpty() && c.contains("base")) {
-            Document base;
-            base.openText(c["base"].toString().toUtf8());
-            if (!c["base"].isString() || base.fcd() != doc_->fcd())
-                error = "drawing changed since base; read current state and merge";
-        }
+        if (error.isEmpty() && c.contains("base") &&
+            (!c["base"].isString() || Document::canonical(c["base"].toString().toUtf8()) != doc_->fcd()))
+            error = "drawing changed since base; read current state and merge";
         if (error.isEmpty()) {
             doc_->setFcd(c["fcd"].toString().toUtf8());
             disk_changed_ = false;

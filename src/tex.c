@@ -794,7 +794,7 @@ static void emit(FcTexGeom *g, Node *n, float x, float y, float size) {
 }
 
 int fc_tex_compile(const char *latex, int display, FcTexGeom *g) {
-    FcArena a;
+    FcArena a = {NULL, NULL, 0};
     P p;
     Node *root;
     Box b;
@@ -803,7 +803,6 @@ int fc_tex_compile(const char *latex, int display, FcTexGeom *g) {
     memset(g, 0, sizeof *g);
     if (!latex) return 0;
     n = fc_strlen(latex);
-    fc_arena_init(&a, 8192);
     tmp = fc_arena_strndup(&a, latex, n);
     p.p = tmp;
     p.end = tmp + n;

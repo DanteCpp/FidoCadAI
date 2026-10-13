@@ -14,6 +14,14 @@ QString takeString(char *s) {
     return out;
 }
 
+QByteArray emitted(const FcDrawing &d) {
+    char *out = nullptr;
+    size_t n = fc_emit(&d, &out, 1);
+    QByteArray b(out ? out : "", (qsizetype)n);
+    free(out);
+    return b;
+}
+
 QRectF toRect(const FcRect &r) {
     return QRectF(QPointF(r.min_x, r.min_y), QPointF(r.max_x, r.max_y));
 }
@@ -148,13 +156,15 @@ bool Document::reloadFromDisk(QString *err) {
 
 void Document::setBaseline() { original_ = fcd(); }
 
-QByteArray Document::fcd() const {
-    char *out = nullptr;
-    FcEmitOpts o = {1, 1};
-    size_t n = fc_emit(&d_, &out, &o);
-    QByteArray b(out ? out : "", (qsizetype)n);
-    free(out);
-    return b;
+QByteArray Document::fcd() const { return emitted(d_); }
+
+QByteArray Document::canonical(const QByteArray &text) {
+    FcDrawing d;
+    fc_drawing_init(&d);
+    fc_parse(&d, text.constData(), (size_t)text.size());
+    QByteArray out = emitted(d);
+    fc_drawing_free(&d);
+    return out;
 }
 
 QString Document::primFcd(int i) const {

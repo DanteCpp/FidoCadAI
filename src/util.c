@@ -63,12 +63,6 @@ uint32_t fc_hash(const char *s) {
     return h;
 }
 
-void fc_arena_init(FcArena *a, size_t cap) {
-    a->blocks = a->cur = NULL;
-    a->used = 0;
-    (void)cap;
-}
-
 void fc_arena_free(FcArena *a) {
     struct FcArenaBlock *b = a->blocks;
     while (b) {
@@ -374,7 +368,6 @@ void fc_layers_init(FcLayer layers[FC_MAX_LAYERS]) {
 
 void fc_drawing_init(FcDrawing *d) {
     memset(d, 0, sizeof *d);
-    fc_arena_init(&d->arena, 65536);
     fc_config_init(&d->cfg);
     fc_layers_init(d->layers);
 }

@@ -156,27 +156,15 @@ static void emit_config(FcBuf *b, const FcDrawing *d) {
     }
 }
 
-size_t fc_emit(const FcDrawing *d, char **out, const FcEmitOpts *opts) {
-    FcEmitOpts o;
+size_t fc_emit(const FcDrawing *d, char **out, int extensions) {
     FcBuf b;
     int i;
-    o.extensions = 1;
-    o.header = 1;
-    if (opts) o = *opts;
     fc_buf_init(&b);
-    if (o.header) fc_buf_puts(&b, "[FIDOCAD]\n");
-    if (o.extensions) emit_config(&b, d);
-    for (i = 0; i < d->nprims; i++) fc_emit_prim(&b, &d->prims[i], o.extensions);
+    fc_buf_puts(&b, "[FIDOCAD]\n");
+    if (extensions) emit_config(&b, d);
+    for (i = 0; i < d->nprims; i++) fc_emit_prim(&b, &d->prims[i], extensions);
     *out = fc_buf_steal(&b);
     return *out ? fc_strlen(*out) : 0;
-}
-
-int fc_emit_file(const FcDrawing *d, const char *path, const FcEmitOpts *opts) {
-    char *s = NULL;
-    size_t n = fc_emit(d, &s, opts);
-    int rc = s ? fc_write_file(path, s, n) : FC_ERR_NOMEM;
-    free(s);
-    return rc;
 }
 
 static void json_label(FcBuf *b, const char *key, const FcLabel *l) {
@@ -439,10 +427,10 @@ static void describe_prim(FcBuf *b, const FcPrim *p, int i) {
     fc_buf_putc(b, '\n');
 }
 
-char *fc_describe(const FcDrawing *d, const FcLib *lib, const FcDescribeOpts *opts) {
+char *fc_describe(const FcDrawing *d, const FcLib *lib, int verbose) {
     FcBuf b;
     FcStats st;
-    int i, verbose = opts && opts->verbose;
+    int i;
     fc_stats(d, lib, &st);
     fc_buf_init(&b);
     fc_buf_printf(&b, "FidoCad drawing: %d primitives", st.nprims);
@@ -570,11 +558,9 @@ char *fc_to_json(const FcDrawing *d, const FcLib *lib) {
 }
 
 char *fc_context(const FcDrawing *d, const FcLib *lib) {
-    FcDescribeOpts o;
     FcBuf b;
     char *desc, *js;
-    o.verbose = 1;
-    desc = fc_describe(d, lib, &o);
+    desc = fc_describe(d, lib, 1);
     js = fc_to_json(d, lib);
     fc_buf_init(&b);
     fc_buf_puts(&b, "=== FidoCadAI context ===\n");
@@ -587,19 +573,16 @@ char *fc_context(const FcDrawing *d, const FcLib *lib) {
 }
 
 int fc_validate(const FcDrawing *d, char **report) {
-    FcEmitOpts opts;
     FcDrawing d2, d3;
     char *e1 = NULL, *e2 = NULL;
     FcBuf b;
     int ok = 1;
     int i, ndropped = 0;
-    opts.extensions = 1;
-    opts.header = 1;
     fc_buf_init(&b);
-    fc_emit(d, &e1, &opts);
+    fc_emit(d, &e1, 1);
     fc_drawing_init(&d2);
     fc_parse(&d2, e1, fc_strlen(e1));
-    fc_emit(&d2, &e2, &opts);
+    fc_emit(&d2, &e2, 1);
     if (!e1 || !e2 || !fc_streq(e1, e2)) {
         ok = 0;
         fc_buf_puts(&b, "ROUNDTRIP FAIL: emit is not idempotent\n");

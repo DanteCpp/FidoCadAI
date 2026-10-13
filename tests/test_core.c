@@ -31,14 +31,13 @@ static void test_parse_line(void) {
 static void test_te_upgrade(void) {
     FcDrawing d;
     char *out = NULL;
-    FcEmitOpts o = {1, 1};
     fc_drawing_init(&d);
     fc_parse(&d, "TE 10 20 Hello world\n", 0);
     EXPECT(d.nprims == 1);
     EXPECT(d.prims[0].kind == FC_TEXT);
     EXPECT(d.prims[0].u.text.size_y == 4);
     EXPECT(strcmp(d.prims[0].u.text.text, "Hello world") == 0);
-    fc_emit(&d, &out, &o);
+    fc_emit(&d, &out, 1);
     EXPECT(out && strstr(out, "TY 10 20 4 3 0 0 0 * Hello world"));
     free(out);
     fc_drawing_free(&d);
@@ -211,11 +210,11 @@ static void test_poly_no_layer(void) {
     EXPECT(d.prims[0].u.poly.pts[2].x == 120 && d.prims[0].u.poly.pts[2].y == 105);
     EXPECT(d.prims[1].u.poly.n == 4 && d.prims[1].layer == 3);
     EXPECT(d.prims[2].u.poly.n == 3 && d.prims[2].u.poly.closed);
-    EXPECT(fc_emit(&d, &a, NULL) > 0);
+    EXPECT(fc_emit(&d, &a, 1) > 0);
     fc_drawing_free(&d);
     fc_drawing_init(&d);
     fc_parse(&d, a, 0);
-    EXPECT(fc_emit(&d, &b, NULL) > 0);
+    EXPECT(fc_emit(&d, &b, 1) > 0);
     EXPECT(a && b && strcmp(a, b) == 0);
     EXPECT(d.prims[0].u.poly.n == 3);
     free(a);
@@ -337,7 +336,7 @@ static void test_json_and_describe(void) {
     fc_drawing_init(&d);
     fc_parse(&d, "MC 10 10 0 0 080\nTY 12 12 4 3 0 0 0 * R1\nLI 0 0 5 5 0\n", 0);
     js = fc_to_json(&d, NULL);
-    ds = fc_describe(&d, NULL, NULL);
+    ds = fc_describe(&d, NULL, 0);
     EXPECT(js && strstr(js, "\"kind\":\"macro\""));
     EXPECT(js && strstr(js, "\"key\":\"080\""));
     EXPECT(ds && strstr(ds, "MC"));
@@ -422,7 +421,7 @@ static void test_fmt_num_saturates(void) {
     fc_parse(&d, "PL 0 0 10 10 999999999999999999999999 0\nPA 5 5 -99999999999 3 0 0 0\n", 0);
     EXPECT(d.prims[0].u.pcb_line.width == FC_MAX_COORD);
     EXPECT(d.prims[1].u.pad.rx == -FC_MAX_COORD);
-    fc_emit(&d, &out, NULL);
+    fc_emit(&d, &out, 1);
     EXPECT(out && strstr(out, "PL 0 0 10 10 1000000 0\n"));
     free(out);
     fc_drawing_free(&d);
@@ -461,12 +460,12 @@ static void test_fcj_stroke_width(void) {
     EXPECT(d.prims[4].ext.width == 3 && fabs(d.prims[5].ext.width - 0.75) < 1e-9 && d.prims[6].ext.width == 1);
     EXPECT(d.prims[7].ext.width == 0 && d.prims[8].kind == FC_TEXT);
     a = NULL;
-    fc_emit(&d, &a, NULL);
+    fc_emit(&d, &a, 1);
     EXPECT(a && strstr(a, "FCJ 2 0 3 1 1 0.25 1\n") && strstr(a, "FCJ 0 1.5 0\n"));
     EXPECT(a && !strstr(a, "FCJ 0 0\n")); /* no override, no FCJ */
     EXPECT(a && fc_parse(&r, a, 0) == FC_OK);
     b = NULL;
-    fc_emit(&r, &b, NULL);
+    fc_emit(&r, &b, 1);
     EXPECT(a && b && strcmp(a, b) == 0);
     free(a);
     free(b);
@@ -896,9 +895,9 @@ static void test_label_handles(void) {
         p->has_name = p->has_value = 1;
     }
     EXPECT(fc_prim_handles(&d.prims[d.nprims - 1]) == 1); /* standalone TY */
-    fc_emit(&d, &emitted, NULL);
+    fc_emit(&d, &emitted, 1);
     EXPECT(emitted && fc_parse(&roundtrip, emitted, 0) == FC_OK);
-    fc_emit(&roundtrip, &again, NULL);
+    fc_emit(&roundtrip, &again, 1);
     EXPECT(emitted && again && strcmp(emitted, again) == 0);
     free(emitted); free(again);
 

@@ -197,11 +197,6 @@ typedef struct {
 } FcStats;
 
 typedef struct {
-    int extensions; /* emit FCJ/FJC (default 1) */
-    int header;     /* emit [FIDOCAD] (default 1) */
-} FcEmitOpts;
-
-typedef struct {
     int scale;      /* pixels per grid unit; 0 = auto (fits max_w x max_h) */
     int margin;     /* padding in pixels (0 allowed) */
     int max_w, max_h; /* <= 0 = default */
@@ -212,10 +207,6 @@ typedef struct {
     int has_crop;   /* use crop bounds in logical units instead of drawing bounds */
     FcRect crop;
 } FcRenderOpts;
-
-typedef struct {
-    int verbose; /* list every primitive */
-} FcDescribeOpts;
 
 /* Viewport for interactive rendering: pixel = logical * scale + origin. */
 typedef struct {
@@ -229,8 +220,7 @@ typedef struct {
     const uint32_t *layer_rgb; /* FC_MAX_LAYERS colours drawn instead of the layers', or NULL */
 } FcView;
 
-/* --- arena / IO --- */
-void fc_arena_init(FcArena *a, size_t cap);
+/* --- arena / IO (an all-zero FcArena is empty) --- */
 void fc_arena_free(FcArena *a);
 void *fc_arena_alloc(FcArena *a, size_t n);
 char *fc_arena_strndup(FcArena *a, const char *s, size_t n);
@@ -251,8 +241,8 @@ void fc_config_init(FcConfig *c);
 int fc_parse(FcDrawing *d, const char *text, size_t len);
 int fc_parse_file(FcDrawing *d, const char *path);
 
-size_t fc_emit(const FcDrawing *d, char **out, const FcEmitOpts *opts);
-int fc_emit_file(const FcDrawing *d, const char *path, const FcEmitOpts *opts);
+/* extensions: FCJ/FJC lines as FidoCadJ writes them; 0 = legacy FidoCAD */
+size_t fc_emit(const FcDrawing *d, char **out, int extensions);
 
 /* --- libraries --- */
 FcLib *fc_lib_new(void);
@@ -323,7 +313,7 @@ int fc_bounds(const FcDrawing *d, const FcLib *lib, FcRect *out);
  * without geometry, such as an empty macro. */
 void fc_prims_bounds(const FcDrawing *d, const FcLib *lib, FcRect *out, int *has);
 void fc_stats(const FcDrawing *d, const FcLib *lib, FcStats *out);
-char *fc_describe(const FcDrawing *d, const FcLib *lib, const FcDescribeOpts *opts);
+char *fc_describe(const FcDrawing *d, const FcLib *lib, int verbose); /* verbose: every primitive */
 char *fc_to_json(const FcDrawing *d, const FcLib *lib);
 char *fc_context(const FcDrawing *d, const FcLib *lib);
 

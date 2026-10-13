@@ -68,21 +68,16 @@ static int try_dir(const char *dir) {
     return n;
 }
 
-/* keep searching: faces missing in one directory may be in the next */
-static int try_dir_cb(void *ctx, const char *dir) {
-    (void)ctx;
-    try_dir(dir);
-    return 0;
-}
-
 int fc_ttf_init(void) {
+    char dirs[FC_DATA_DIRS][FC_DIR_MAX];
     const char *env;
-    int i;
+    int i, n;
     if (ttf_inited) return fc_ttf_ready();
     ttf_inited = 1;
     env = getenv("FIDO_FONT_DIR");
     if (env) try_dir(env);
-    fc_find_data("fonts", try_dir_cb, NULL);
+    /* every candidate: faces missing in one directory may be in the next */
+    for (i = 0, n = fc_data_dirs("fonts", dirs); i < n; i++) try_dir(dirs[i]);
     /* system copies of Liberation (Linux packages, macOS font folders) */
     try_dir("/usr/share/fonts/liberation");
     try_dir("/usr/share/fonts/truetype/liberation");

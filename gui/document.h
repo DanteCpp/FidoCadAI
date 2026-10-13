@@ -42,6 +42,7 @@ public:
     const FcDrawing &drawing() const { return d_; }
     int count() const { return d_.nprims; }
     QByteArray fcd() const;
+    static QByteArray canonical(const QByteArray &fcd); /* as fcai would write it */
     QString primFcd(int i) const;
     QString listing() const; /* numbered primitives, for chat tools */
     QString context() const;

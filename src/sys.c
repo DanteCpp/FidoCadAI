@@ -115,25 +115,19 @@ int fc_app_dir(char *out, size_t cap) {
     return 1;
 }
 
-int fc_find_data(const char *sub, int (*try_dir)(void *ctx, const char *dir), void *ctx) {
+int fc_data_dirs(const char *sub, char dirs[FC_DATA_DIRS][FC_DIR_MAX]) {
     static const char *const k_prefixes[] = {"/usr/local/share/fidocad", "/opt/homebrew/share/fidocad",
-                                             "/usr/share/fidocad", NULL};
-    char exe[PATH_MAX], dir[PATH_MAX], cand[PATH_MAX + 64];
-    int i;
+                                             "/usr/share/fidocad"};
+    char exe[PATH_MAX], dir[PATH_MAX];
+    int i, n = 0;
     if (fc_exe_path(exe, sizeof exe)) {
         /* installed ($PREFIX/bin + $PREFIX/share/fidocad) or a build tree (build/ + share/) */
         fc_dirname(exe, dir, sizeof dir);
-        snprintf(cand, sizeof cand, "%s/../share/fidocad/%s", dir, sub);
-        if (try_dir(ctx, cand)) return 1;
-        snprintf(cand, sizeof cand, "%s/../share/%s", dir, sub);
-        if (try_dir(ctx, cand)) return 1;
-        snprintf(cand, sizeof cand, "%s/share/%s", dir, sub);
-        if (try_dir(ctx, cand)) return 1;
+        snprintf(dirs[n++], FC_DIR_MAX, "%s/../share/fidocad/%s", dir, sub);
+        snprintf(dirs[n++], FC_DIR_MAX, "%s/../share/%s", dir, sub);
+        snprintf(dirs[n++], FC_DIR_MAX, "%s/share/%s", dir, sub);
     }
-    for (i = 0; k_prefixes[i]; i++) {
-        snprintf(cand, sizeof cand, "%s/%s", k_prefixes[i], sub);
-        if (try_dir(ctx, cand)) return 1;
-    }
-    snprintf(cand, sizeof cand, "share/%s", sub);
-    return try_dir(ctx, cand);
+    for (i = 0; i < 3; i++) snprintf(dirs[n++], FC_DIR_MAX, "%s/%s", k_prefixes[i], sub);
+    snprintf(dirs[n++], FC_DIR_MAX, "share/%s", sub);
+    return n;
 }

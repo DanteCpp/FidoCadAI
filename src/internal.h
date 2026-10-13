@@ -101,9 +101,12 @@ typedef struct {
 /* sys.c: executable location and data-directory search */
 void fc_dirname(const char *path, char *out, size_t cap);
 int fc_exe_path(char *out, size_t cap);
-/* Calls try_dir(ctx, dir) on each candidate for share/<sub> (next to the binary, then
- * install prefixes, then ./share); stops and returns 1 when it returns non-zero. */
-int fc_find_data(const char *sub, int (*try_dir)(void *ctx, const char *dir), void *ctx);
+/* Candidate directories for share/<sub>, in search order: next to the binary
+ * (an installed prefix or the build tree), the usual install prefixes, then
+ * ./share. Returns how many were written. */
+#define FC_DATA_DIRS 7
+#define FC_DIR_MAX 4160
+int fc_data_dirs(const char *sub, char dirs[FC_DATA_DIRS][FC_DIR_MAX]);
 int fc_stdin_is_tty(void);
 /* User-owned application data: $FCAI_HOME, else ~/.fcai. */
 int fc_app_dir(char *out, size_t cap);
