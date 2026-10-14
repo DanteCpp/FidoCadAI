@@ -4,3 +4,6 @@
 !docs/images/*.png
 *.ppm
 .cache/
+
+# macOS
+.DS_Store
