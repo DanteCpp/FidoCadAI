@@ -147,6 +147,13 @@ float fc_ttf_ascent(int slot, float px_size) {
     return (float)asc * sc;
 }
 
+float fc_ttf_advance(int slot, float px_size, float xratio, int cp) {
+    int advance, bearing;
+    if (slot < 0 || slot >= N_FACE || !faces[slot].loaded) return 0;
+    stbtt_GetCodepointHMetrics(&faces[slot].info, cp, &advance, &bearing);
+    return advance * stbtt_ScaleForPixelHeight(&faces[slot].info, fc_ttf_quantize(px_size)) * xratio;
+}
+
 /* cp:21 | slot:4 | subpixel x:2 | subpixel y:2 | px*32:20 | xratio*256:12 */
 static uint64_t cache_key(int slot, int cp, float px, float xratio, int qx, int qy) {
     uint32_t ph = (uint32_t)(px * 32.0f + 0.5f);

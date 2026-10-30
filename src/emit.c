@@ -273,21 +273,18 @@ static void include_pt(FcRect *r, FcPoint pt, int *any) {
     if (pt.y > r->max_y) r->max_y = pt.y;
 }
 
-static void include_label(FcRect *r, const FcLabel *l, int *any) {
-    FcPoint q;
-    double w;
-    include_pt(r, l->p, any);
-    w = (l->text ? (double)fc_strlen(l->text) : 1) * (l->size_x > 0 ? l->size_x : 3);
-    q.x = l->p.x + w;
-    q.y = l->p.y + (l->size_y > 0 ? l->size_y : 4);
-    include_pt(r, q, any);
+static void include_label(FcRect *r, const FcLabel *l, int *any, int tex) {
+    FcRect box;
+    fc_label_bounds(l, tex, &box);
+    include_pt(r, (FcPoint){box.min_x, box.min_y}, any);
+    include_pt(r, (FcPoint){box.max_x, box.max_y}, any);
 }
 
-static void include_prim_bounds(FcRect *r, const FcPrim *p, int *any) {
+static void include_prim_bounds(FcRect *r, const FcPrim *p, int *any, int tex) {
     int i, n;
     const FcPoint *pts = fc_prim_points(p, &n);
     if (p->kind == FC_TEXT) {
-        include_label(r, &p->u.text, any);
+        include_label(r, &p->u.text, any, tex);
     } else if (p->kind == FC_MACRO) {
         /* only unexpanded macros reach here; leave room for the render placeholder */
         FcPoint q = p->u.macro.p;
@@ -303,13 +300,21 @@ static void include_prim_bounds(FcRect *r, const FcPrim *p, int *any) {
             fc_label_default(&l, p->u.macro.p.x + FC_PLACEHOLDER_SIZE,
                              p->u.macro.p.y - FC_PLACEHOLDER_SIZE, 0);
             l.text = p->u.macro.key;
-            include_label(r, &l, any);
+            include_label(r, &l, any, tex);
         }
     } else {
         for (i = 0; i < n; i++) include_pt(r, pts[i], any);
     }
-    if (p->has_name) include_label(r, &p->name, any);
-    if (p->has_value) include_label(r, &p->value, any);
+    if (p->has_name) include_label(r, &p->name, any, tex);
+    if (p->has_value) include_label(r, &p->value, any, tex);
+}
+
+int fc_render_bounds(const FcDrawing *drawing, int tex, FcRect *box) {
+    int i, any = 0;
+    *box = (FcRect){0, 0, 0, 0};
+    for (i = 0; i < drawing->nprims; ++i)
+        include_prim_bounds(box, &drawing->prims[i], &any, tex);
+    return any;
 }
 
 int fc_bounds(const FcDrawing *d, const FcLib *lib, FcRect *out) {
@@ -322,7 +327,7 @@ int fc_bounds(const FcDrawing *d, const FcLib *lib, FcRect *out) {
         fc_drawing_init(&exp);
         if (fc_expand(d, &exp, lib) == FC_OK) src = &exp;
     }
-    for (i = 0; i < src->nprims; i++) include_prim_bounds(&r, &src->prims[i], &any);
+    for (i = 0; i < src->nprims; i++) include_prim_bounds(&r, &src->prims[i], &any, 1);
     if (lib) fc_drawing_free(&exp);
     if (!any) {
         out->min_x = out->min_y = out->max_x = out->max_y = 0;
@@ -343,10 +348,10 @@ void fc_prims_bounds(const FcDrawing *d, const FcLib *lib, FcRect *out, int *has
                                             : (exp.nprims ? exp.prims[exp.nprims - 1].origin : -1);
     for (i = 0; i < exp.nprims; i++) {
         int o = exp.prims[i].origin;
-        if (o >= 0 && o < d->nprims) include_prim_bounds(&out[o], &exp.prims[i], &has[o]);
+        if (o >= 0 && o < d->nprims) include_prim_bounds(&out[o], &exp.prims[i], &has[o], 1);
     }
     /* past an expansion stopped over budget, primitives keep their own outline */
-    for (i = last + 1; i < d->nprims; i++) include_prim_bounds(&out[i], &d->prims[i], &has[i]);
+    for (i = last + 1; i < d->nprims; i++) include_prim_bounds(&out[i], &d->prims[i], &has[i], 1);
     fc_drawing_free(&exp);
 }
 

@@ -453,11 +453,87 @@ static void test_touchpad_gestures() {
     EXPECT(c->toPixel(QPointF(10, 10)) - before == QPointF(-5, 9));
 }
 
+static void test_math_editor() {
+    QTemporaryDir dir;
+    for (const QString &mode : {QString("light"), QString("dark")}) {
+        Settings settings(dir.path() + "/" + mode + ".conf");
+        settings.set("show_grid", "0");
+        Theme theme = Theme::load(mode);
+        theme.apply(*qApp, QString(), 11);
+        Document doc;
+        const QByteArray equation = "$$\\sigma_v^2=\\int_0^\\infty S_v(f)\\,df=\\frac{kT}{C}$$";
+        const QByteArray original = "[FIDOCAD]\nTY 100 100 12 9 0 0 0 * " + equation + "\n";
+        EXPECT(doc.openText(original));
+        Canvas canvas(&doc, &settings, &theme);
+        canvas.resize(1000, 650);
+        canvas.show();
+        canvas.fit();
+        QApplication::processEvents();
+        canvas.setSelection({0});
+        QTest::keyClick(&canvas, Qt::Key_P);
+        InlineForm *form = canvas.form();
+        EXPECT(form && form->isVisible());
+        if (!form) continue;
+        auto fields = form->findChildren<QLineEdit *>();
+        EXPECT(!fields.isEmpty());
+        if (fields.isEmpty()) continue;
+        QLineEdit *input = fields.front();
+        EXPECT(input->text().toUtf8() == equation);
+        input->deselect();
+        QApplication::processEvents();
+        const QImage before = form->grab().toImage();
+        /* Flood the underlying canvas with very different ink while the form is
+         * open: every form pixel, including input fields/gaps, must stay identical. */
+        QByteArray flooded = "[FIDOCAD]\n";
+        for (int y = 0; y < 500; y += 2)
+            flooded += "LI 0 " + QByteArray::number(y) + " 1000 " + QByteArray::number(y) + " 0\n";
+        doc.openText(flooded);
+        canvas.refresh();
+        QApplication::processEvents();
+        EXPECT(form->grab().toImage() == before);
+        EXPECT(input->text().toUtf8() == equation);
+        form->cancel();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        doc.openText(original);
+        canvas.refresh();
+        canvas.fit();
+        canvas.setSelection({0});
+        QTest::keyClick(&canvas, Qt::Key_P);
+        form = canvas.form();
+        EXPECT(form != nullptr);
+        if (!form) continue;
+        fields = form->findChildren<QLineEdit *>();
+        input = fields.front();
+        const QByteArray replacement = "$\\sqrt[3]{x^2+y^2}$";
+        input->setText(QString::fromUtf8(replacement));
+        QTest::keyClick(input, Qt::Key_Return);
+        EXPECT(doc.fcd().contains(replacement) && !canvas.editing());
+        doc.undo();
+        EXPECT(doc.fcd().contains(equation));
+        doc.redo();
+        EXPECT(doc.fcd().contains(replacement));
+        canvas.fit();
+        /* New-text input is also plain source until it is applied. */
+        canvas.setTool(Canvas::Text);
+        QTest::mouseClick(&canvas, Qt::LeftButton, {}, QPoint(200, 300));
+        form = canvas.form();
+        EXPECT(form && form->isVisible());
+        if (form) {
+            auto *entry = form->findChildren<QLineEdit *>().front();
+            entry->setText(QString::fromUtf8(equation));
+            EXPECT(entry->text().toUtf8() == equation && doc.count() == 1);
+            QTest::keyClick(entry, Qt::Key_Escape);
+            EXPECT(doc.count() == 1 && !canvas.editing());
+        }
+    }
+}
+
 int main(int argc, char **argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
     fc_set_argv0(argv[0]);
     test_library_errors();
+    test_math_editor();
     test_conflict_after_edit(app);
     test_label_handles();
     test_grouped_handles();

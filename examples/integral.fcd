@@ -1,0 +1,4 @@
+[FIDOCAD]
+TY 20 20 5 3.75 0 0 0 * Gaussian integral
+TY 20 65 12 9 0 0 0 * $$\int_{-\infty}^{\infty} e^{-x^2}\,\mathrm{d}x=\sqrt{\pi}$$
+TY 20 115 4 3 0 0 0 * Area under exp(-x^2) over the whole real line.

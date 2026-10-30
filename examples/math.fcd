@@ -1,0 +1,13 @@
+[FIDOCAD]
+TY 20 15 5 4 0 0 0 * FidoCadAI - native LaTeX with mimeTeX
+TY 20 38 4 3 0 0 0 * Inline text: Noise $S_v(f)=4kTR$ in a resistor
+TY 20 65 7 5.25 0 0 0 * $$S_{v,out}(f)=\frac{4kTR}{1+(2\pi fRC)^2}$$
+TY 20 110 7 5.25 0 0 0 * $$\sigma_v^2=\int_0^\infty S_{v,out}(f)\,df=\frac{kT}{C}$$
+TY 20 165 7 5.25 0 0 0 * $$v_{n,rms}=\sqrt{\frac{kT}{C}}$$
+TY 20 210 7 5.25 0 0 0 * $$\sqrt[3]{x^2+y^2}+\frac{1}{\frac{a+b}{c+d}}$$
+TY 20 265 7 5.25 0 0 0 * $$\sum_{n=0}^{\infty}\frac{x^n}{n!}=e^x$$
+TY 260 65 7 5.25 0 0 0 * $$A=\begin{pmatrix}a&b\\c&d\end{pmatrix}$$
+TY 260 125 7 5.25 0 0 0 * $$f(x)=\begin{cases}x^2&x\geq0\\-x&x<0\end{cases}$$
+TY 260 190 7 5.25 0 0 0 * $$\begin{aligned}a&=b+c\\d&=e+f\end{aligned}$$
+TY 260 255 7 5.25 0 0 0 * $$\hat{x}+\vec{v}+\bar{y}+\overline{ab}$$
+TY 20 320 4 3 0 0 0 * Edit with P: the fields keep the LaTeX source. Enter applies; Esc cancels.

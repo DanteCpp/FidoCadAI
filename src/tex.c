@@ -1,839 +1,224 @@
 #include "internal.h"
-#include "font8x8.h"
-#include "font_math.h"
+#include "mimetex/embedded.h"
+#include <ctype.h>
+#include <stdatomic.h>
 
-#include <math.h>
+/* Cache layout at a fixed high resolution, independent of zoom, colour and
+ * rotation. Acquired images remain valid when another call evicts the entry. */
+typedef struct TexImage {
+    struct TexImage *next;
+    char *source;
+    int display, refs, ok;
+    FcTexGeom geom;
+    size_t bytes;
+} TexImage;
+static TexImage *images;
+static size_t cache_bytes;
+static int cache_count;
+static atomic_flag tex_lock = ATOMIC_FLAG_INIT;
+#define TEX_CACHE_BYTES (16u * 1024u * 1024u)
+#define TEX_CACHE_COUNT 64
+#define TEX_SOURCE_MAX 4096
 
-enum {
-    MG_ALPHA,
-    MG_BETA,
-    MG_GAMMA,
-    MG_DELTA,
-    MG_EPS,
-    MG_ZETA,
-    MG_ETA,
-    MG_THETA,
-    MG_IOTA,
-    MG_KAPPA,
-    MG_LAM,
-    MG_MU,
-    MG_NU,
-    MG_XI,
-    MG_PI,
-    MG_RHO,
-    MG_SIGMA,
-    MG_TAU,
-    MG_UPS,
-    MG_PHI,
-    MG_CHI,
-    MG_PSI,
-    MG_OMEGA,
-    MG_GAMMA_U,
-    MG_DELTA_U,
-    MG_THETA_U,
-    MG_LAM_U,
-    MG_XI_U,
-    MG_PI_U,
-    MG_SIGMA_U,
-    MG_PHI_U,
-    MG_PSI_U,
-    MG_OMEGA_U,
-    MG_PM,
-    MG_CDOT,
-    MG_TIMES,
-    MG_DIV,
-    MG_CIRC,
-    MG_INF,
-    MG_LEQ,
-    MG_GEQ,
-    MG_NEQ,
-    MG_APPROX,
-    MG_EQUIV,
-    MG_PARTIAL,
-    MG_NABLA,
-    MG_INT,
-    MG_ELLIPSIS,
-    MG_DEGREE,
-    MG_LARR,
-    MG_RARR,
-    MG_SQRT,
-    MG_PRIME,
-    MG_COUNT
-};
-
-#define MG(x) (128 + (x))
-
-typedef enum { N_LIST, N_SYM, N_FRAC, N_SQRT, N_OVER, N_SPACE, N_SCRIPTS } NKind;
-
-typedef struct Node {
-    NKind kind;
-    int ch;
-    int italic, bold;
-    int display;
-    float space_em;
-    struct Node *a, *b, *c, *next;
-} Node;
-
-typedef struct {
-    const char *p, *end;
-    FcArena *arena;
-    int err;
-    int display;
-    int italic;
-    int bold;
-    int roman;
-} P;
-
-typedef enum {
-    CMD_SYM,
-    CMD_FRAC,
-    CMD_SQRT,
-    CMD_OVER,
-    CMD_STYLE,
-    CMD_SPACE,
-    CMD_FUNC,
-    CMD_LEFT,
-    CMD_SKIP
-} CmdKind;
-
-enum { ST_ROMAN = 1, ST_BOLD = 2, ST_ITAL = 4, ST_UP = 8 };
-
-/* One row per command. Symbols also carry the Unicode code point that types
- * them directly (0 = none), so `\alpha` and a typed alpha are the same symbol. */
-typedef struct {
-    const char *name;
-    CmdKind kind;
-    int glyph;
-    float space;
-    int style;
-    int cp;
-} Cmd;
-
-static const Cmd k_cmd[] = {
-    {"alpha", CMD_SYM, MG(MG_ALPHA), 0, 0, 0x3B1},
-    {"beta", CMD_SYM, MG(MG_BETA), 0, 0, 0x3B2},
-    {"gamma", CMD_SYM, MG(MG_GAMMA), 0, 0, 0x3B3},
-    {"delta", CMD_SYM, MG(MG_DELTA), 0, 0, 0x3B4},
-    {"epsilon", CMD_SYM, MG(MG_EPS), 0, 0, 0x3F5},
-    {"varepsilon", CMD_SYM, MG(MG_EPS), 0, 0, 0x3B5},
-    {"zeta", CMD_SYM, MG(MG_ZETA), 0, 0, 0x3B6},
-    {"eta", CMD_SYM, MG(MG_ETA), 0, 0, 0x3B7},
-    {"theta", CMD_SYM, MG(MG_THETA), 0, 0, 0x3B8},
-    {"vartheta", CMD_SYM, MG(MG_THETA), 0, 0, 0x3D1},
-    {"iota", CMD_SYM, MG(MG_IOTA), 0, 0, 0x3B9},
-    {"kappa", CMD_SYM, MG(MG_KAPPA), 0, 0, 0x3BA},
-    {"lambda", CMD_SYM, MG(MG_LAM), 0, 0, 0x3BB},
-    {"mu", CMD_SYM, MG(MG_MU), 0, 0, 0x3BC},
-    {"nu", CMD_SYM, MG(MG_NU), 0, 0, 0x3BD},
-    {"xi", CMD_SYM, MG(MG_XI), 0, 0, 0x3BE},
-    {"pi", CMD_SYM, MG(MG_PI), 0, 0, 0x3C0},
-    {"varpi", CMD_SYM, MG(MG_PI), 0, 0, 0x3D6},
-    {"rho", CMD_SYM, MG(MG_RHO), 0, 0, 0x3C1},
-    {"sigma", CMD_SYM, MG(MG_SIGMA), 0, 0, 0x3C3},
-    {"tau", CMD_SYM, MG(MG_TAU), 0, 0, 0x3C4},
-    {"upsilon", CMD_SYM, MG(MG_UPS), 0, 0, 0x3C5},
-    {"phi", CMD_SYM, MG(MG_PHI), 0, 0, 0x3D5},
-    {"varphi", CMD_SYM, MG(MG_PHI), 0, 0, 0x3C6},
-    {"chi", CMD_SYM, MG(MG_CHI), 0, 0, 0x3C7},
-    {"psi", CMD_SYM, MG(MG_PSI), 0, 0, 0x3C8},
-    {"omega", CMD_SYM, MG(MG_OMEGA), 0, 0, 0x3C9},
-    {"Gamma", CMD_SYM, MG(MG_GAMMA_U), 0, 0, 0x393},
-    {"Delta", CMD_SYM, MG(MG_DELTA_U), 0, 0, 0x394},
-    {"Theta", CMD_SYM, MG(MG_THETA_U), 0, 0, 0x398},
-    {"Lambda", CMD_SYM, MG(MG_LAM_U), 0, 0, 0x39B},
-    {"Xi", CMD_SYM, MG(MG_XI_U), 0, 0, 0x39E},
-    {"Pi", CMD_SYM, MG(MG_PI_U), 0, 0, 0x3A0},
-    {"Sigma", CMD_SYM, MG(MG_SIGMA_U), 0, 0, 0x3A3},
-    {"Phi", CMD_SYM, MG(MG_PHI_U), 0, 0, 0x3A6},
-    {"Psi", CMD_SYM, MG(MG_PSI_U), 0, 0, 0x3A8},
-    {"Omega", CMD_SYM, MG(MG_OMEGA_U), 0, 0, 0x3A9},
-    {"ohm", CMD_SYM, MG(MG_OMEGA_U), 0, 0, 0x2126},
-    {"pm", CMD_SYM, MG(MG_PM), 0, 0, 0xB1},
-    {"mp", CMD_SYM, MG(MG_PM), 0, 0, 0x2213},
-    {"cdot", CMD_SYM, MG(MG_CDOT), 0, 0, 0x22C5},
-    {"times", CMD_SYM, MG(MG_TIMES), 0, 0, 0xD7},
-    {"div", CMD_SYM, MG(MG_DIV), 0, 0, 0xF7},
-    {"circ", CMD_SYM, MG(MG_CIRC), 0, 0, 0x2218},
-    {"degree", CMD_SYM, MG(MG_DEGREE), 0, 0, 0xB0},
-    {"infty", CMD_SYM, MG(MG_INF), 0, 0, 0x221E},
-    {"inf", CMD_SYM, MG(MG_INF), 0, 0, 0},
-    {"leq", CMD_SYM, MG(MG_LEQ), 0, 0, 0x2264},
-    {"le", CMD_SYM, MG(MG_LEQ), 0, 0, 0},
-    {"geq", CMD_SYM, MG(MG_GEQ), 0, 0, 0x2265},
-    {"ge", CMD_SYM, MG(MG_GEQ), 0, 0, 0},
-    {"neq", CMD_SYM, MG(MG_NEQ), 0, 0, 0x2260},
-    {"ne", CMD_SYM, MG(MG_NEQ), 0, 0, 0},
-    {"approx", CMD_SYM, MG(MG_APPROX), 0, 0, 0x2248},
-    {"equiv", CMD_SYM, MG(MG_EQUIV), 0, 0, 0x2261},
-    {"partial", CMD_SYM, MG(MG_PARTIAL), 0, 0, 0x2202},
-    {"nabla", CMD_SYM, MG(MG_NABLA), 0, 0, 0x2207},
-    {"int", CMD_SYM, MG(MG_INT), 0, 0, 0x222B},
-    {"sum", CMD_SYM, MG(MG_SIGMA_U), 0, 0, 0x2211},
-    {"prod", CMD_SYM, MG(MG_PI_U), 0, 0, 0x220F},
-    {"ldots", CMD_SYM, MG(MG_ELLIPSIS), 0, 0, 0x2026},
-    {"dots", CMD_SYM, MG(MG_ELLIPSIS), 0, 0, 0},
-    {"cdots", CMD_SYM, MG(MG_ELLIPSIS), 0, 0, 0x22EF},
-    {"to", CMD_SYM, MG(MG_RARR), 0, 0, 0},
-    {"rightarrow", CMD_SYM, MG(MG_RARR), 0, 0, 0x2192},
-    {"leftarrow", CMD_SYM, MG(MG_LARR), 0, 0, 0x2190},
-    {"prime", CMD_SYM, MG(MG_PRIME), 0, 0, 0x2032},
-    {"surd", CMD_SYM, MG(MG_SQRT), 0, 0, 0x221A},
-    {"frac", CMD_FRAC, 0, 0, 0, 0},
-    {"dfrac", CMD_FRAC, 0, 0, 0, 0},
-    {"tfrac", CMD_FRAC, 0, 0, 0, 0},
-    {"sqrt", CMD_SQRT, 0, 0, 0, 0},
-    {"overline", CMD_OVER, 0, 0, 0, 0},
-    {"bar", CMD_OVER, 0, 0, 0, 0},
-    {"vec", CMD_OVER, 0, 0, 0, 0},
-    {"hat", CMD_OVER, 0, 0, 0, 0},
-    {"mathrm", CMD_STYLE, 0, 0, ST_ROMAN, 0},
-    {"textrm", CMD_STYLE, 0, 0, ST_ROMAN, 0},
-    {"rm", CMD_STYLE, 0, 0, ST_ROMAN, 0},
-    {"text", CMD_STYLE, 0, 0, ST_ROMAN | ST_UP, 0},
-    {"operatorname", CMD_STYLE, 0, 0, ST_ROMAN | ST_UP, 0},
-    {"mathbf", CMD_STYLE, 0, 0, ST_BOLD, 0},
-    {"textbf", CMD_STYLE, 0, 0, ST_BOLD, 0},
-    {"bf", CMD_STYLE, 0, 0, ST_BOLD, 0},
-    {"mathit", CMD_STYLE, 0, 0, ST_ITAL, 0},
-    {"textit", CMD_STYLE, 0, 0, ST_ITAL, 0},
-    {"it", CMD_STYLE, 0, 0, ST_ITAL, 0},
-    {",", CMD_SPACE, 0, 0.17f, 0, 0},
-    {":", CMD_SPACE, 0, 0.22f, 0, 0},
-    {";", CMD_SPACE, 0, 0.28f, 0, 0},
-    {"!", CMD_SPACE, 0, -0.17f, 0, 0},
-    {"quad", CMD_SPACE, 0, 1.0f, 0, 0},
-    {"qquad", CMD_SPACE, 0, 2.0f, 0, 0},
-    {" ", CMD_SPACE, 0, 0.35f, 0, 0},
-    {"sin", CMD_FUNC, 0, 0, 0, 0},
-    {"cos", CMD_FUNC, 0, 0, 0, 0},
-    {"tan", CMD_FUNC, 0, 0, 0, 0},
-    {"log", CMD_FUNC, 0, 0, 0, 0},
-    {"ln", CMD_FUNC, 0, 0, 0, 0},
-    {"exp", CMD_FUNC, 0, 0, 0, 0},
-    {"min", CMD_FUNC, 0, 0, 0, 0},
-    {"max", CMD_FUNC, 0, 0, 0, 0},
-    {"lim", CMD_FUNC, 0, 0, 0, 0},
-    {"arg", CMD_FUNC, 0, 0, 0, 0},
-    {"det", CMD_FUNC, 0, 0, 0, 0},
-    {"left", CMD_LEFT, 0, 0, 0, 0},
-    {"right", CMD_LEFT, 0, 0, 0, 0},
-    {"big", CMD_LEFT, 0, 0, 0, 0},
-    {"Big", CMD_LEFT, 0, 0, 0, 0},
-    {"bigg", CMD_LEFT, 0, 0, 0, 0},
-    {"Bigg", CMD_LEFT, 0, 0, 0, 0},
-    {"displaystyle", CMD_SKIP, 0, 0, 0, 0},
-    {"textstyle", CMD_SKIP, 0, 0, 0, 0},
-    {"scriptstyle", CMD_SKIP, 0, 0, 0, 0},
-    {NULL, CMD_SYM, 0, 0, 0, 0}};
-
-int fc_tex_has_math(const char *s) { return s && strchr(s, '$') != NULL; }
-
-const unsigned char *fc_tex_glyph_bits(int gid) {
-    if (gid >= 32 && gid <= 126) return fc_font8x8[gid - 32];
-    if (gid >= 128 && gid < 128 + MG_COUNT) return fc_font8x8_math[gid - 128];
-    return fc_font8x8['?' - 32];
+static void lock_tex(void) { while (atomic_flag_test_and_set(&tex_lock)) {} }
+static void unlock_tex(void) { atomic_flag_clear(&tex_lock); }
+static void release(TexImage *im) {
+    if (--im->refs) return;
+    free((void *)im->geom.pixels);
+    free((void *)im->geom.sum);
+    free(im->source);
+    free(im);
 }
+
+/* Ignore escaped dollars and consume backslash pairs as literal characters. */
+static const char *dollar(const char *p, int display) {
+    for (; *p; ++p) {
+        if (*p == '\\' && p[1]) { ++p; continue; }
+        if (*p == '$' && (!display || p[1] == '$')) return p;
+    }
+    return NULL;
+}
+int fc_tex_has_math(const char *s) { return s && dollar(s, 0) != NULL; }
 
 int fc_tex_split(const char *text, FcTexSeg *out, int maxn) {
-    int n = 0;
     const char *p = text;
-    if (!text) return 0;
+    int n = 0;
+    if (!p) return 0;
     while (*p && n < maxn) {
-        const char *d1 = strchr(p, '$');
-        if (!d1) {
-            out[n].math = 0;
-            out[n].p = p;
-            out[n].n = (int)fc_strlen(p);
-            n++;
+        const char *start = dollar(p, 0), *end;
+        int display, delim;
+        if (!start) { out[n++] = (FcTexSeg){0, p, (int)strlen(p)}; break; }
+        if (start > p) {
+            out[n++] = (FcTexSeg){0, p, (int)(start - p)};
+            if (n == maxn) break;
+        }
+        display = start[1] == '$';
+        delim = display ? 2 : 1;
+        end = dollar(start + delim, display);
+        if (!end) {
+            out[n++] = (FcTexSeg){0, start, (int)strlen(start)};
             break;
         }
-        if (d1 > p) {
-            out[n].math = 0;
-            out[n].p = p;
-            out[n].n = (int)(d1 - p);
-            n++;
-            if (n >= maxn) break;
-        }
-        if (d1[1] == '$') {
-            const char *end = strstr(d1 + 2, "$$");
-            if (!end) {
-                out[n].math = 0;
-                out[n].p = d1;
-                out[n].n = 2;
-                n++;
-                p = d1 + 2;
-                continue;
-            }
-            out[n].math = 2;
-            out[n].p = d1 + 2;
-            out[n].n = (int)(end - (d1 + 2));
-            n++;
-            p = end + 2;
-        } else {
-            const char *end = strchr(d1 + 1, '$');
-            if (!end) {
-                out[n].math = 0;
-                out[n].p = d1;
-                out[n].n = 1;
-                n++;
-                p = d1 + 1;
-                continue;
-            }
-            out[n].math = 1;
-            out[n].p = d1 + 1;
-            out[n].n = (int)(end - (d1 + 1));
-            n++;
-            p = end + 1;
-        }
+        out[n++] = (FcTexSeg){display ? 2 : 1, start + delim, (int)(end - start - delim)};
+        p = end + delim;
     }
     return n;
 }
 
-static Node *node_new(P *p, NKind k) {
-    Node *n = (Node *)fc_arena_alloc(p->arena, sizeof *n);
-    if (!n) {
-        p->err = 1;
-        return NULL;
+/* mimeTeX predates widespread Unicode input. Normalize common mathematical
+ * code points without changing the document or the editable source. */
+static const struct { int cp; const char *tex; } unicode_math[] = {
+    {0xB0,"^{\\circ}"},{0xB1,"\\pm "},{0xB2,"^{2}"},{0xB3,"^{3}"},{0xB5,"\\mu "},
+    {0xD7,"\\times "},{0xF7,"\\div "},
+    {0x391,"A"},{0x392,"B"},{0x393,"\\Gamma "},{0x394,"\\Delta "},{0x395,"E"},
+    {0x396,"Z"},{0x397,"H"},{0x398,"\\Theta "},{0x399,"I"},{0x39A,"K"},
+    {0x39B,"\\Lambda "},{0x39C,"M"},{0x39D,"N"},{0x39E,"\\Xi "},{0x39F,"O"},
+    {0x3A0,"\\Pi "},{0x3A1,"P"},{0x3A3,"\\Sigma "},{0x3A4,"T"},
+    {0x3A5,"\\Upsilon "},{0x3A6,"\\Phi "},{0x3A7,"X"},{0x3A8,"\\Psi "},{0x3A9,"\\Omega "},
+    {0x3B1,"\\alpha "},{0x3B2,"\\beta "},{0x3B3,"\\gamma "},{0x3B4,"\\delta "},
+    {0x3B5,"\\epsilon "},{0x3B6,"\\zeta "},{0x3B7,"\\eta "},{0x3B8,"\\theta "},
+    {0x3B9,"\\iota "},{0x3BA,"\\kappa "},{0x3BB,"\\lambda "},{0x3BC,"\\mu "},
+    {0x3BD,"\\nu "},{0x3BE,"\\xi "},{0x3BF,"o"},{0x3C0,"\\pi "},
+    {0x3C1,"\\rho "},{0x3C2,"\\varsigma "},{0x3C3,"\\sigma "},{0x3C4,"\\tau "},
+    {0x3C5,"\\upsilon "},{0x3C6,"\\phi "},{0x3C7,"\\chi "},{0x3C8,"\\psi "},{0x3C9,"\\omega "},
+    {0x3D1,"\\vartheta "},{0x3D5,"\\varphi "},{0x3D6,"\\varpi "},
+    {0x2032,"'"},{0x2033,"''"},{0x2070,"^{0}"},{0x2071,"^{i}"},
+    {0x2074,"^{4}"},{0x2075,"^{5}"},{0x2076,"^{6}"},{0x2077,"^{7}"},
+    {0x2078,"^{8}"},{0x2079,"^{9}"},
+    {0x2080,"_{0}"},{0x2081,"_{1}"},{0x2082,"_{2}"},{0x2083,"_{3}"},
+    {0x2084,"_{4}"},{0x2085,"_{5}"},{0x2086,"_{6}"},{0x2087,"_{7}"},
+    {0x2088,"_{8}"},{0x2089,"_{9}"},
+    {0x210F,"\\hbar "},{0x2202,"\\partial "},{0x2207,"\\nabla "},
+    {0x220F,"\\prod "},{0x2211,"\\sum "},{0x2212,"-"},{0x221A,"\\sqrt "},
+    {0x221E,"\\infty "},{0x222B,"\\int "},{0x2248,"\\approx "},
+    {0x2260,"\\ne "},{0x2261,"\\equiv "},{0x2264,"\\leq "},{0x2265,"\\geq "},
+    {0x22C5,"\\cdot "},{0x2190,"\\leftarrow "},{0x2192,"\\rightarrow "}
+};
+
+static char *prepare(const char *s) {
+    FcBuf b;
+    const char *p = s, *end = s + strlen(s);
+    int depth = 0;
+    fc_buf_init(&b);
+    while (p < end) {
+        int cp;
+        if (*p == '\\' && p + 1 < end) {
+            /* Backslash and the next character form a token. In particular,
+             * escaped braces/dollars do not affect group validation. */
+            fc_buf_putc(&b, *p++);
+            fc_buf_putc(&b, *p++);
+            continue;
+        }
+        if (*p == '{' && ++depth > 48) goto fail;
+        if (*p == '}' && --depth < 0) goto fail;
+        cp = fc_utf8_next(&p, end);
+        if (cp < 128) fc_buf_putc(&b, (char)cp);
+        else {
+            size_t i;
+            for (i = 0; i < sizeof unicode_math / sizeof *unicode_math; ++i)
+                if (unicode_math[i].cp == cp) break;
+            if (i == sizeof unicode_math / sizeof *unicode_math) goto fail;
+            fc_buf_puts(&b, unicode_math[i].tex);
+        }
+        if (b.n > TEX_SOURCE_MAX) goto fail;
     }
-    memset(n, 0, sizeof *n);
-    n->kind = k;
-    n->italic = p->roman ? 0 : p->italic;
-    n->bold = p->bold;
-    n->display = p->display;
-    return n;
-}
-
-static void skip_sp(P *p) {
-    while (*p->p == ' ' || *p->p == '\t' || *p->p == '\n' || *p->p == '\r') p->p++;
-}
-
-static const Cmd *find_cmd(const char *name) {
-    int i;
-    for (i = 0; k_cmd[i].name; i++)
-        if (strcmp(k_cmd[i].name, name) == 0) return &k_cmd[i];
+    if (depth) goto fail;
+    return fc_buf_steal(&b);
+fail:
+    fc_buf_free(&b);
     return NULL;
 }
 
-static Node *parse_list(P *p, int stop);
-static Node *parse_nucleus(P *p);
-
-static Node *parse_group(P *p) {
-    skip_sp(p);
-    if (*p->p == '{') {
-        Node *n;
-        p->p++;
-        n = parse_list(p, '}');
-        if (*p->p == '}') p->p++;
-        else p->err = 1;
-        return n;
+static TexImage *compile(const char *source, int display) {
+    TexImage *im = calloc(1, sizeof *im);
+    char *normalized;
+    uint8_t *pixels = NULL;
+    uint32_t *sum;
+    size_t n = strlen(source);
+    int x, y;
+    if (!im) return NULL;
+    im->refs = 1; /* cache reference */
+    im->display = !!display;
+    im->source = malloc(n + 1);
+    if (!im->source) { release(im); return NULL; }
+    memcpy(im->source, source, n + 1);
+    im->bytes = sizeof *im + n + 1;
+    normalized = prepare(source);
+    if (normalized) {
+        /* mimeprep expands its buffer in place. Reserve its documented maximum. */
+        char *buffer = calloc(32768, 1);
+        if (buffer) {
+            memcpy(buffer, normalized, strlen(normalized) + 1);
+            im->ok = fc_mimetex_render(buffer, display, &pixels, &im->geom.width,
+                                      &im->geom.height, &im->geom.baseline, &im->geom.em);
+        }
+        free(buffer);
+        free(normalized);
     }
-    return parse_nucleus(p);
+    if (!im->ok) return im; /* cache failures too */
+    im->geom.pixels = pixels;
+    n = (size_t)(im->geom.width + 1) * (im->geom.height + 1);
+    sum = calloc(n, sizeof *sum);
+    if (!sum) { im->ok = 0; free(pixels); im->geom.pixels = NULL; return im; }
+    im->geom.sum = sum;
+    for (y = 0; y < im->geom.height; ++y) {
+        uint32_t row = 0;
+        for (x = 0; x < im->geom.width; ++x) {
+            row += pixels[y * im->geom.width + x];
+            sum[(y + 1) * (im->geom.width + 1) + x + 1] =
+                sum[y * (im->geom.width + 1) + x + 1] + row;
+        }
+    }
+    im->bytes += (size_t)im->geom.width * im->geom.height + n * sizeof *sum;
+    im->geom.w = im->geom.width / im->geom.em;
+    im->geom.h = im->geom.baseline / im->geom.em;
+    im->geom.d = (im->geom.height - im->geom.baseline) / im->geom.em;
+    im->geom.owner = im;
+    return im;
 }
 
-static Node *node_word(P *p, const char *w, int italic) {
-    Node *list = node_new(p, N_LIST);
-    Node **tail;
-    int save_i, save_r;
-    if (!list) return NULL;
-    tail = &list->a;
-    save_i = p->italic;
-    save_r = p->roman;
-    p->italic = italic;
-    p->roman = !italic;
-    for (; *w; w++) {
-        Node *s = node_new(p, N_SYM);
-        if (!s) break;
-        s->ch = (unsigned char)*w;
-        s->italic = italic;
-        *tail = s;
-        tail = &s->next;
-    }
-    p->italic = save_i;
-    p->roman = save_r;
-    return list;
-}
-
-/* A typed character: the symbol with that code point, else a visible '?'. */
-static int utf8_sym(P *p) {
-    int i, cp = fc_utf8_next(&p->p, p->end);
-    for (i = 0; k_cmd[i].name; i++)
-        if (k_cmd[i].kind == CMD_SYM && k_cmd[i].cp == cp) return k_cmd[i].glyph;
-    return '?';
-}
-
-static Node *parse_command(P *p) {
-    char name[32];
-    int ni = 0;
-    const Cmd *c;
-    p->p++; /* skip backslash */
-    if (!*p->p) return NULL;
-    if ((*p->p >= 'a' && *p->p <= 'z') || (*p->p >= 'A' && *p->p <= 'Z')) {
-        while (((*p->p >= 'a' && *p->p <= 'z') || (*p->p >= 'A' && *p->p <= 'Z')) && ni < 31)
-            name[ni++] = *p->p++;
-        name[ni] = 0;
-        skip_sp(p);
-    } else {
-        name[0] = *p->p++;
-        name[1] = 0;
-    }
-    c = find_cmd(name);
-    if (!c) return node_word(p, name, 0);
-    if (c->kind == CMD_SYM) {
-        Node *n = node_new(p, N_SYM);
-        if (n) {
-            n->ch = c->glyph;
-            n->italic = 0;
-        }
-        return n;
-    }
-    if (c->kind == CMD_SPACE) {
-        Node *n = node_new(p, N_SPACE);
-        if (n) n->space_em = c->space;
-        return n;
-    }
-    if (c->kind == CMD_FUNC) return node_word(p, name, 0);
-    if (c->kind == CMD_SKIP) return node_new(p, N_SPACE);
-    if (c->kind == CMD_LEFT) {
-        skip_sp(p);
-        if (*p->p == '.') {
-            p->p++;
-            return node_new(p, N_SPACE);
-        }
-        return parse_nucleus(p);
-    }
-    if (c->kind == CMD_FRAC) {
-        Node *n = node_new(p, N_FRAC);
-        if (!n) return NULL;
-        n->a = parse_group(p);
-        n->b = parse_group(p);
-        n->display = p->display || strcmp(name, "dfrac") == 0;
-        return n;
-    }
-    if (c->kind == CMD_SQRT) {
-        Node *n = node_new(p, N_SQRT);
-        if (!n) return NULL;
-        skip_sp(p);
-        if (*p->p == '[') {
-            p->p++;
-            n->c = parse_list(p, ']');
-            if (*p->p == ']') p->p++;
-        }
-        n->a = parse_group(p);
-        return n;
-    }
-    if (c->kind == CMD_OVER) {
-        Node *n = node_new(p, N_OVER);
-        if (!n) return NULL;
-        n->a = parse_group(p);
-        return n;
-    }
-    if (c->kind == CMD_STYLE) {
-        int si = p->italic, sr = p->roman, sb = p->bold;
-        Node *n;
-        if (c->style & ST_ROMAN) {
-            p->roman = 1;
-            p->italic = 0;
-        }
-        if (c->style & ST_BOLD) p->bold = 1;
-        if (c->style & ST_ITAL) {
-            p->italic = 1;
-            p->roman = 0;
-        }
-        n = parse_group(p);
-        p->italic = si;
-        p->roman = sr;
-        p->bold = sb;
-        return n;
-    }
-    return NULL;
-}
-
-static Node *parse_nucleus(P *p) {
-    int u;
-    skip_sp(p);
-    if (!*p->p || *p->p == '}' || *p->p == '$') return NULL;
-    if (*p->p == '{') return parse_group(p);
-    if (*p->p == '\\') return parse_command(p);
-    if (*p->p == '~') {
-        Node *n;
-        p->p++;
-        n = node_new(p, N_SPACE);
-        if (n) n->space_em = 0.4f;
-        return n;
-    }
-    if ((unsigned char)*p->p >= 0x80) {
-        Node *n;
-        u = utf8_sym(p);
-        n = node_new(p, N_SYM);
-        if (n) {
-            n->ch = u;
-            n->italic = 0;
-        }
-        return n;
-    }
-    {
-        Node *n = node_new(p, N_SYM);
-        unsigned char ch = (unsigned char)*p->p++;
-        if (!n) return NULL;
-        n->ch = ch;
-        if (ch >= '0' && ch <= '9') n->italic = 0;
-        if (ch == '(' || ch == ')' || ch == '[' || ch == ']' || ch == '.' || ch == ',' ||
-            ch == '=' || ch == '+' || ch == '-' || ch == '/' || ch == '|')
-            n->italic = 0;
-        return n;
-    }
-}
-
-static Node *parse_item(P *p) {
-    Node *nuc, *sup = NULL, *sub = NULL;
-    skip_sp(p);
-    if (!*p->p || *p->p == '}' || *p->p == '$') return NULL;
-    nuc = parse_nucleus(p);
-    if (!nuc) return NULL;
-    for (;;) {
-        skip_sp(p);
-        if (*p->p == '^' && !sup) {
-            p->p++;
-            sup = parse_group(p);
-            continue;
-        }
-        if (*p->p == '_' && !sub) {
-            p->p++;
-            sub = parse_group(p);
-            continue;
-        }
-        if (*p->p == '\'') {
-            Node *pr = node_new(p, N_SYM);
-            p->p++;
-            if (pr) {
-                pr->ch = MG(MG_PRIME);
-                pr->italic = 0;
-            }
-            if (!sup) sup = pr;
-            else {
-                /* chain primes into a list */
-                Node *list = node_new(p, N_LIST);
-                if (list) {
-                    list->a = sup;
-                    if (sup) sup->next = pr;
-                    sup = list;
-                }
-            }
-            continue;
-        }
-        break;
-    }
-    if (!sup && !sub) return nuc;
-    {
-        Node *n = node_new(p, N_SCRIPTS);
-        if (!n) return nuc;
-        n->a = nuc;
-        n->b = sup;
-        n->c = sub;
-        return n;
-    }
-}
-
-/* TeX-ish atom classes for automatic math spacing: 0 = ordinary, 1 = binary, 2 = relation. */
-static int math_class(const Node *n) {
-    if (!n) return 0;
-    while (n->kind == N_SCRIPTS) n = n->a;
-    if (n->kind != N_SYM) return 0;
-    switch (n->ch) {
-    case '=':
-    case '<':
-    case '>':
-    case MG(MG_LEQ):
-    case MG(MG_GEQ):
-    case MG(MG_NEQ):
-    case MG(MG_APPROX):
-    case MG(MG_EQUIV):
-        return 2;
-    case '+':
-    case '-':
-    case '*':
-    case MG(MG_PM):
-    case MG(MG_CDOT):
-    case MG(MG_TIMES):
-    case MG(MG_DIV):
-        return 1;
-    default:
-        return 0;
-    }
-}
-
-static int math_is_ch(const Node *n, const char *set) {
-    while (n && n->kind == N_SCRIPTS) n = n->a;
-    return n && n->kind == N_SYM && n->ch < 128 && strchr(set, n->ch) != NULL;
-}
-
-static Node *parse_list(P *p, int stop) {
-    Node *list = node_new(p, N_LIST);
-    Node **tail;
-    Node *prev = NULL;
-    int prev_class = 0;
-    if (!list) return NULL;
-    tail = &list->a;
-    for (;;) {
-        Node *it;
-        skip_sp(p);
-        if (!*p->p) break;
-        if (stop && *p->p == stop) break;
-        if (*p->p == '$') break;
-        if (*p->p == '&') {
-            p->p++;
-            continue;
-        }
-        it = parse_item(p);
-        if (!it) break;
-        {
-            int ci = math_class(it);
-            /* a leading sign is unary after an operator or an open bracket */
-            if (ci == 1 && math_is_ch(it, "-") &&
-                (prev == NULL || prev_class > 0 || math_is_ch(prev, "([")))
-                ci = 0;
-            /* medium space around binary operators, thick around relations */
-            if (prev && (prev_class > 0) != (ci > 0) && !math_is_ch(it, ")].,;:")) {
-                Node *sp = node_new(p, N_SPACE);
-                if (sp) {
-                    sp->space_em = (prev_class == 2 || ci == 2) ? 0.28f : 0.22f;
-                    *tail = sp;
-                    tail = &sp->next;
-                }
-            }
-            prev_class = ci;
-        }
-        *tail = it;
-        tail = &it->next;
-        prev = it;
-    }
-    return list;
-}
-
-typedef struct {
-    float w, h, d;
-} Box;
-
-static float glyph_w(int ch) {
-    if (ch >= 128) return 0.72f;
-    if (ch == ' ') return 0.35f;
-    if (ch == '.' || ch == ',' || ch == '\'' || ch == ':') return 0.35f;
-    if (ch == 'i' || ch == 'l' || ch == 'I' || ch == 'j' || ch == 'f' || ch == 't' || ch == '1')
-        return 0.42f;
-    if (ch == 'm' || ch == 'w' || ch == 'M' || ch == 'W') return 0.82f;
-    if (ch == '(' || ch == ')' || ch == '[' || ch == ']') return 0.42f;
-    return 0.62f;
-}
-
-static Box scale_box(Box b, float s) {
-    b.w *= s;
-    b.h *= s;
-    b.d *= s;
-    return b;
-}
-
-static Box measure(Node *n) {
-    Box z = {0, 0, 0};
-    if (!n) return z;
-    switch (n->kind) {
-    case N_SYM: {
-        Box b;
-        b.w = glyph_w(n->ch);
-        b.h = 0.72f;
-        b.d = 0.22f;
-        if (n->ch == 'g' || n->ch == 'y' || n->ch == 'p' || n->ch == 'q' || n->ch == 'j' ||
-            n->ch == MG(MG_MU) || n->ch == MG(MG_GAMMA) || n->ch == MG(MG_CHI))
-            b.d = 0.32f;
-        return b;
-    }
-    case N_SPACE: {
-        Box b = z;
-        b.w = n->space_em;
-        return b;
-    }
-    case N_LIST: {
-        Box b = z;
-        Node *c;
-        for (c = n->a; c; c = c->next) {
-            Box u = measure(c);
-            b.w += u.w;
-            if (u.h > b.h) b.h = u.h;
-            if (u.d > b.d) b.d = u.d;
-        }
-        if (b.w < 0) b.w = 0;
-        return b;
-    }
-    case N_SCRIPTS: {
-        Box nuc = measure(n->a);
-        Box sup = n->b ? scale_box(measure(n->b), 0.7f) : z;
-        Box sub = n->c ? scale_box(measure(n->c), 0.7f) : z;
-        Box b;
-        float extra = 0;
-        if (sup.w > extra) extra = sup.w;
-        if (sub.w > extra) extra = sub.w;
-        b.w = nuc.w + extra * 0.95f;
-        b.h = nuc.h;
-        if (0.42f + sup.h > b.h) b.h = 0.42f + sup.h;
-        b.d = nuc.d;
-        if (0.22f + sub.d > b.d) b.d = 0.22f + sub.d;
-        return b;
-    }
-    case N_FRAC: {
-        float sc = n->display ? 1.0f : 0.72f;
-        Box num = scale_box(measure(n->a), sc);
-        Box den = scale_box(measure(n->b), sc);
-        Box b;
-        b.w = num.w > den.w ? num.w : den.w;
-        b.w += 0.18f;
-        b.h = num.h + num.d + 0.28f;
-        b.d = den.h + den.d + 0.18f;
-        return b;
-    }
-    case N_SQRT: {
-        Box c = measure(n->a);
-        Box b;
-        b.w = c.w + 0.85f;
-        b.h = c.h + 0.18f;
-        b.d = c.d;
-        if (n->c) {
-            Box idx = scale_box(measure(n->c), 0.55f);
-            if (idx.h + 0.2f > b.h) b.h = idx.h + 0.2f;
-        }
-        return b;
-    }
-    case N_OVER: {
-        Box c = measure(n->a);
-        c.h += 0.14f;
-        return c;
-    }
-    }
-    return z;
-}
-
-static void geom_push(FcTexGeom *g, int kind, float x, float y, float w, float h, int gid,
-                      int italic, int bold, float size) {
-    FcTexOp *o;
-    if (g->n >= g->cap) {
-        int ncap = g->cap ? g->cap * 2 : 32;
-        FcTexOp *np = (FcTexOp *)realloc(g->ops, (size_t)ncap * sizeof(FcTexOp));
-        if (!np) return;
-        g->ops = np;
-        g->cap = ncap;
-    }
-    o = &g->ops[g->n++];
-    o->kind = kind;
-    o->x = x;
-    o->y = y;
-    o->w = w;
-    o->h = h;
-    o->glyph = gid;
-    o->italic = italic;
-    o->bold = bold;
-    o->size = size;
-}
-
-static void emit(FcTexGeom *g, Node *n, float x, float y, float size) {
-    if (!n) return;
-    switch (n->kind) {
-    case N_SYM:
-        geom_push(g, 0, x, y, glyph_w(n->ch) * size, size, n->ch, n->italic, n->bold, size);
-        break;
-    case N_SPACE:
-        break;
-    case N_LIST: {
-        Node *c;
-        for (c = n->a; c; c = c->next) {
-            Box u = measure(c);
-            emit(g, c, x, y, size);
-            x += u.w * size;
-        }
-        break;
-    }
-    case N_SCRIPTS: {
-        Box nuc = measure(n->a);
-        emit(g, n->a, x, y, size);
-        if (n->b)
-            emit(g, n->b, x + nuc.w * size + 0.02f * size, y + 0.48f * size, size * 0.7f);
-        if (n->c)
-            emit(g, n->c, x + nuc.w * size + 0.02f * size, y - 0.22f * size, size * 0.7f);
-        break;
-    }
-    case N_FRAC: {
-        float sc = n->display ? 1.0f : 0.72f;
-        Box num = measure(n->a), den = measure(n->b);
-        Box B = measure(n);
-        float nw = num.w * sc * size, dw = den.w * sc * size;
-        float barw = B.w * size;
-        float nx = x + (barw - nw) * 0.5f;
-        float dx = x + (barw - dw) * 0.5f;
-        float axis = y + 0.22f * size;
-        emit(g, n->a, nx, axis + 0.12f * size + num.d * sc * size, size * sc);
-        emit(g, n->b, dx, axis - 0.12f * size - den.h * sc * size, size * sc);
-        geom_push(g, 1, x, axis, barw, 0.05f * size, 0, 0, 0, size);
-        break;
-    }
-    case N_SQRT: {
-        Box c = measure(n->a);
-        float rad = 0.72f * size;
-        emit(g, n->a, x + rad, y, size);
-        /* vinculum */
-        geom_push(g, 1, x + rad * 0.55f, y + c.h * size + 0.08f * size, c.w * size + 0.18f * size,
-                  0.05f * size, 0, 0, 0, size);
-        /* radical check */
-        geom_push(g, 0, x, y, rad, size, MG(MG_SQRT), 0, 0, size);
-        if (n->c) emit(g, n->c, x, y + c.h * size * 0.55f, size * 0.5f);
-        break;
-    }
-    case N_OVER: {
-        Box c = measure(n->a);
-        emit(g, n->a, x, y, size);
-        geom_push(g, 1, x, y + c.h * size + 0.02f * size, c.w * size, 0.05f * size, 0, 0, 0, size);
-        break;
-    }
-    }
-}
-
-int fc_tex_compile(const char *latex, int display, FcTexGeom *g) {
-    FcArena a = {NULL, NULL, 0};
-    P p;
-    Node *root;
-    Box b;
-    char *tmp;
-    size_t n;
+int fc_tex_compile(const char *source, int display, FcTexGeom *g) {
+    TexImage **link, *im;
     memset(g, 0, sizeof *g);
-    if (!latex) return 0;
-    n = fc_strlen(latex);
-    tmp = fc_arena_strndup(&a, latex, n);
-    p.p = tmp;
-    p.end = tmp + n;
-    p.arena = &a;
-    p.err = 0;
-    p.display = display;
-    p.italic = 1;
-    p.bold = 0;
-    p.roman = 0;
-    root = parse_list(&p, 0);
-    if (!root || p.err) {
-        fc_arena_free(&a);
-        return 0;
+    if (!source || !*source || strlen(source) > TEX_SOURCE_MAX) return 0;
+    lock_tex();
+    for (link = &images; (im = *link); link = &im->next)
+        if (im->display == !!display && strcmp(im->source, source) == 0) break;
+    if (im) *link = im->next; /* most recently used first */
+    else {
+        im = compile(source, display);
+        if (!im) { unlock_tex(); return 0; }
+        ++cache_count;
+        cache_bytes += im->bytes;
     }
-    b = measure(root);
-    g->w = b.w;
-    g->h = b.h;
-    g->d = b.d;
-    emit(g, root, 0, 0, 1);
-    fc_arena_free(&a);
-    return 1;
+    im->next = images;
+    images = im;
+    if (im->ok) { ++im->refs; *g = im->geom; }
+    while (cache_count > TEX_CACHE_COUNT || cache_bytes > TEX_CACHE_BYTES) {
+        TexImage **tail = &images, *old;
+        while ((*tail)->next) tail = &(*tail)->next;
+        old = *tail;
+        *tail = NULL;
+        cache_bytes -= old->bytes;
+        --cache_count;
+        release(old);
+    }
+    unlock_tex();
+    return g->owner != NULL;
 }
 
 void fc_tex_geom_free(FcTexGeom *g) {
-    free(g->ops);
+    if (g->owner) {
+        lock_tex();
+        release(g->owner);
+        unlock_tex();
+    }
     memset(g, 0, sizeof *g);
 }
 
-int fc_tex_measure(const char *latex, int display, float *w, float *h, float *d) {
+int fc_tex_measure(const char *source, int display, float *w, float *h, float *d) {
     FcTexGeom g;
-    int ok = fc_tex_compile(latex, display, &g);
+    int ok = fc_tex_compile(source, display, &g);
     if (w) *w = g.w;
     if (h) *h = g.h;
     if (d) *d = g.d;

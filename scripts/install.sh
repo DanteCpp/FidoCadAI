@@ -1,71 +1,54 @@
 #!/bin/sh
-# FidoCadAI — system installer / updater.
+# FidoCadAI — per-user installer / updater.
 #
-#   scripts/install.sh install      build and install under /opt/FidoCadAI
+#   scripts/install.sh install      build and install under ~/.local
 #   scripts/install.sh update       refresh an existing install (also run by
 #                                   the post-commit git hook)
-#   scripts/install.sh uninstall    remove the install, the /usr/local/bin
-#                                   links, the git hook and the agent skill
+#   scripts/install.sh uninstall    remove the installed files, the git hook
+#                                   and the agent skill links
 #   scripts/install.sh status       show what is installed where
 #   scripts/install.sh hook [enable|disable]
 #
-# install/update build the tree, stage a `make install` into the prefix, create
-# the user library directory (~/.fcai/lib) and deliver
-# share/skills/fidocad to the local coding agents: when the Omarchy
-# default-agents channel is present (Linux) it gets one canonical copy with a
-# symlink at /usr/share/omarchy/default/agents/skills/fidocad, otherwise every
-# agent's skills directory gets a symlink to the installed copy. That keeps a
-# single skill on disk and pi/like agents deduplicate it.
+# FidoCadAI always installs into the invoking user's ~/.local: the binaries go
+# to ~/.local/bin/{fcai,fcai-gui} and the data (libraries, fonts, skill) to
+# ~/.local/share/fidocad. No sudo is needed, so run it as yourself.
 #
-# Works on Linux and macOS: system PATH files are /etc/profile.d +
-# environment.d + fish on Linux and /etc/paths.d on macOS, and the Omarchy
-# channel is used only where it exists.
+# install/update build the tree, stage a `make install`, create the user
+# library directory (~/.fcai/lib) and deliver share/skills/fidocad to the
+# local coding agents: when the Omarchy default-agents channel is present and
+# writable it gets a symlink at <channel>/fidocad, otherwise every agent's
+# skills directory gets a symlink to the installed copy. That keeps a single
+# skill on disk and pi/like agents deduplicate it.
 #
-# The first install may need sudo for /opt, /usr/local/bin and the system PATH
-# files; the prefix is then owned by the invoking user, so later updates run
-# without sudo.
+# Works on Linux and macOS. ~/.local/bin must be on PATH; the installer warns
+# when it is not.
 #
 # Options:
-#   --prefix DIR     install prefix (default: $FIDO_PREFIX or /opt/FidoCadAI)
 #   --omarchy DIR    default-agents skills channel (default: $FIDO_OMARCHY_SKILLS
 #                    or $OMARCHY_PATH/default/agents/skills)
 #   --no-omarchy     do not use the Omarchy channel (agents link to the prefix)
 #   --no-gui         do not build/install fcai-gui
-#   --no-build       use the existing build/ binaries (install from a build done as the user)
-#   --no-path        do not add the install prefix to system PATH files
+#   --no-build       use the existing build/ binaries
 #   --no-skill       do not register the agent skill
 #   --no-userlib     do not create ~/.fcai/lib
 #   --no-hook        do not install/refresh the auto-update git hook
-#   --link           create the /usr/local/bin symlinks (default: only for the
-#                    default prefix)
-#   --no-link        never create the symlinks
-#   --force          overwrite files/symlinks not owned by FidoCadAI
+#   --force          uninstall even without the install-info marker
 #   -q, --quiet      only progress errors (git hook mode)
 set -eu
 
 APP="FidoCadAI"
-DEFAULT_PREFIX="/opt/FidoCadAI"
-LINK_DIR="/usr/local/bin"
 MARKER="install-info"
 HOOK_MARK="# FidoCadAI automatic update"
-UNAME_S=$(uname -s 2>/dev/null || echo unknown)
-PROFILE_FILE="/etc/profile.d/fidocadai.sh"
-ENV_FILE="/etc/environment.d/99-fidocadai.conf"
-FISH_FILE="/etc/fish/conf.d/fidocadai.fish"
-PATHS_FILE="/etc/paths.d/fidocadai"
 
 CMD="install"
 HOOK_ACTION="enable"
-PREFIX="${FIDO_PREFIX:-$DEFAULT_PREFIX}"
 QUIET=0
 WITH_GUI=1
 WITH_BUILD=1
-WITH_PATH=1
 WITH_SKILL=1
 WITH_USERLIB=1
 WITH_HOOK=1
 FORCE=0
-LINK="auto"
 WITH_OMARCHY=1
 OMARCHY_SKILLS="${FIDO_OMARCHY_SKILLS:-${OMARCHY_PATH:-/usr/share/omarchy}/default/agents/skills}"
 STAGE=""
@@ -90,43 +73,21 @@ run() {
     if [ "$QUIET" -eq 1 ]; then "$@" 1>/dev/null; else "$@"; fi
 }
 
-run_root() {
-    if [ "$(id -u)" -eq 0 ]; then
-        run "$@"
-    else
-        run sudo "$@"
-    fi
-}
-
 # ---- environment --------------------------------------------------------
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
-if [ "$(id -u)" -eq 0 ]; then
-    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
-        RUN_USER=$SUDO_USER
-    elif [ -n "${PKEXEC_UID:-}" ]; then
-        RUN_USER=$(getent passwd "$PKEXEC_UID" 2>/dev/null | cut -d: -f1 || true)
-        [ -n "$RUN_USER" ] || RUN_USER=root
-    else
-        RUN_USER=root
-    fi
-else
-    RUN_USER=$(id -un)
+if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}${PKEXEC_UID:-}" ]; then
+    err "$APP installs into your ~/.local and needs no sudo; run it as yourself"
+    exit 1
 fi
-RUN_HOME=""
-if command -v getent >/dev/null 2>&1; then
-    RUN_HOME=$(getent passwd "$RUN_USER" 2>/dev/null | cut -d: -f6 || true)
-fi
-if [ -z "$RUN_HOME" ] && [ "$RUN_USER" = "$(id -un)" ]; then
-    RUN_HOME="${HOME:-}"
-fi
-if [ -z "$RUN_HOME" ]; then
-    RUN_HOME=$(eval echo "~$RUN_USER" 2>/dev/null || true)
-fi
-[ -n "$RUN_HOME" ] || RUN_HOME=/root
-RUN_UID=$(id -u "$RUN_USER" 2>/dev/null || echo 0)
-RUN_GID=$(id -g "$RUN_USER" 2>/dev/null || echo 0)
+
+RUN_HOME="${HOME:-}"
+[ -n "$RUN_HOME" ] || { err "HOME is not set"; exit 1; }
+RUN_HOME=${RUN_HOME%/}
+PREFIX="$RUN_HOME/.local"
+BINDIR="$PREFIX/bin"
+DATADIR="$PREFIX/share/fidocad"
 
 # ---- arguments ----------------------------------------------------------
 
@@ -145,12 +106,6 @@ fi
 while [ $# -gt 0 ]; do
     case $1 in
         install|update|uninstall|status|help|-h|--help) CMD=$1 ;;
-        --prefix)
-            shift
-            [ $# -gt 0 ] || { err "--prefix needs a directory"; exit 2; }
-            PREFIX=$1
-            ;;
-        --prefix=*) PREFIX=${1#--prefix=} ;;
         --quiet|-q) QUIET=1 ;;
         --omarchy)
             shift
@@ -162,12 +117,9 @@ while [ $# -gt 0 ]; do
         --no-omarchy) WITH_OMARCHY=0 ;;
         --no-gui) WITH_GUI=0 ;;
         --no-build) WITH_BUILD=0 ;;
-        --no-path) WITH_PATH=0 ;;
         --no-skill) WITH_SKILL=0 ;;
         --no-userlib) WITH_USERLIB=0 ;;
         --no-hook) WITH_HOOK=0 ;;
-        --link) LINK="yes" ;;
-        --no-link) LINK="no" ;;
         --force) FORCE=1 ;;
         *) err "unknown argument '$1' (try --help)"; exit 2 ;;
     esac
@@ -177,17 +129,6 @@ done
 case $CMD in
     help|-h|--help) usage; exit 0 ;;
 esac
-
-# Sanity-check the prefix before anything can delete or write through it.
-while [ "${PREFIX%/}" != "$PREFIX" ] && [ "$PREFIX" != "/" ]; do
-    PREFIX=${PREFIX%/}
-done
-[ -n "$PREFIX" ] || { err "empty --prefix"; exit 2; }
-case $PREFIX in
-    /*) ;;
-    *) err "prefix must be an absolute path: $PREFIX"; exit 2 ;;
-esac
-[ "$PREFIX" != "/" ] || { err "refusing to use / as the prefix"; exit 2; }
 
 # ---- helpers ------------------------------------------------------------
 
@@ -234,7 +175,7 @@ do_stage() {
     log "staging make install -> $STAGE"
     run make -C "$ROOT" install DESTDIR="$STAGE" PREFIX="$PREFIX"
 
-    ver=$("$STAGE$PREFIX/bin/fcai" version 2>/dev/null || echo "unknown")
+    ver=$("$STAGE$BINDIR/fcai" version 2>/dev/null || echo "unknown")
     rev="-"
     if command -v git >/dev/null 2>&1; then
         rev=$(git -C "$ROOT" describe --always --dirty --tags 2>/dev/null || echo "-")
@@ -245,9 +186,8 @@ do_stage() {
         printf 'revision = %s\n' "$rev"
         printf 'prefix = %s\n' "$PREFIX"
         printf 'source = %s\n' "$ROOT"
-        printf 'user = %s\n' "$RUN_USER"
         printf 'installed = %s\n' "$when"
-    } > "$STAGE$PREFIX/share/fidocad/$MARKER"
+    } > "$STAGE$DATADIR/$MARKER"
 }
 
 cleanup_stage() {
@@ -255,69 +195,39 @@ cleanup_stage() {
     STAGE=""
 }
 
-# ---- prefix & links -----------------------------------------------------
+# ---- install tree --------------------------------------------------------
 
+# ~/.local is shared with other software, so only FidoCadAI's own files are
+# touched: the two binaries and share/fidocad (replaced whole, so files
+# dropped from the source tree do not linger).
 install_tree() {
     src="$STAGE$PREFIX"
     [ -d "$src" ] || { err "staging failed: $src missing"; exit 1; }
-    # Find the first existing ancestor to test writability against.
-    base=$PREFIX
-    while [ ! -e "$base" ] && [ "$base" != "/" ]; do
-        base=$(dirname "$base")
-    done
-    if [ -w "$base" ]; then
-        need_root=0
-    else
-        need_root=1
-    fi
-    if [ "$need_root" -eq 1 ] && [ "$(id -u)" -ne 0 ] && ! command -v sudo >/dev/null 2>&1; then
-        err "cannot write $PREFIX and sudo is not installed"
-        exit 1
-    fi
-    if [ "$need_root" -eq 1 ]; then
-        run_root mkdir -p "$PREFIX"
-        run_root cp -a "$src/." "$PREFIX/"
-    else
-        mkdir -p "$PREFIX"
-        cp -a "$src/." "$PREFIX/"
-    fi
-    # After the first install the prefix belongs to the invoking user so that
-    # updates (in particular the git hook) never need privileges again. This
-    # also covers a whole-script run as root (sudo/pkexec when the caller has
-    # no terminal): `cp -a` then leaves root-owned files behind.
-    if [ "$need_root" -eq 1 ] || { [ "$(id -u)" -eq 0 ] && [ "$RUN_USER" != "root" ]; }; then
-        run_root chown -R "$RUN_UID:$RUN_GID" "$PREFIX"
-    fi
-    log "installed into $PREFIX"
-}
-
-link_bins() {
-    [ "$LINK" = "no" ] && return 0
-    if [ "$LINK" = "auto" ] && [ "$PREFIX" != "$DEFAULT_PREFIX" ]; then
-        log "custom prefix: skipping $LINK_DIR symlinks (use --link)"
-        return 0
-    fi
+    mkdir -p "$BINDIR" "$PREFIX/share"
     for b in fcai fcai-gui; do
-        [ -x "$PREFIX/bin/$b" ] || continue
-        dst="$LINK_DIR/$b"
-        if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$PREFIX/bin/$b" ]; then
-            continue
+        if [ -f "$src/bin/$b" ]; then
+            # Replace through a temporary name: a running fcai-gui keeps its inode.
+            cp -p "$src/bin/$b" "$BINDIR/.$b.new"
+            mv -f "$BINDIR/.$b.new" "$BINDIR/$b"
         fi
-        if { [ -e "$dst" ] || [ -L "$dst" ]; } && [ ! -L "$dst" ] && [ "$FORCE" -ne 1 ]; then
-            warn "$dst exists and is not a symlink; leaving it (use --force)"
-            continue
-        fi
-        [ -d "$LINK_DIR" ] || run_root mkdir -p "$LINK_DIR"
-        if [ -w "$LINK_DIR" ]; then
-            ln -sfn "$PREFIX/bin/$b" "$dst"
-        else
-            run_root ln -sfn "$PREFIX/bin/$b" "$dst"
-        fi
-        log "$dst -> $PREFIX/bin/$b"
     done
+    rm -rf "$DATADIR"
+    cp -R "$src/share/fidocad" "$DATADIR"
+    log "installed into $BINDIR and $DATADIR"
 }
 
-# ---- PATH ----------------------------------------------------------------
+remove_tree() {
+    for b in fcai fcai-gui; do
+        if [ -e "$BINDIR/$b" ] || [ -L "$BINDIR/$b" ]; then
+            rm -f "$BINDIR/$b"
+            log "removed $BINDIR/$b"
+        fi
+    done
+    if [ -d "$DATADIR" ]; then
+        rm -rf "$DATADIR"
+        log "removed $DATADIR"
+    fi
+}
 
 path_has() {
     case ":${PATH}:" in
@@ -326,94 +236,10 @@ path_has() {
     esac
 }
 
-# Install a root-owned file in /etc (writable by the invoking user afterwards,
-# so `update` never needs privileges again for it). $1 destination, $2 content.
-write_etc_file() {
-    if [ -f "$1" ] && cmp -s "$2" "$1"; then
-        return 0
-    fi
-    dir=$(dirname "$1")
-    [ -d "$dir" ] || run_root mkdir -p "$dir"
-    if [ -w "$dir" ] && { [ ! -e "$1" ] || [ -w "$1" ]; }; then
-        install -m 644 "$2" "$1"
-    else
-        run_root install -m 644 "$2" "$1"
-    fi
-}
-
-# Make `fcai` (and `fcai-gui`) callable everywhere. Linux: POSIX login shells
-# via /etc/profile.d, systemd user sessions (graphical agents) via
-# environment.d, fish via conf.d. macOS: /etc/paths.d, read by path_helper in
-# login shells. The /usr/local/bin symlinks cover the common case; these
-# guarantee it even where that directory is missing from PATH.
-ensure_path() {
-    [ "$WITH_PATH" -eq 1 ] || return 0
-    bindir="$PREFIX/bin"
-    tmp=$(mktemp)
-
-    if [ "$UNAME_S" = "Darwin" ]; then
-        printf '%s\n' "$bindir" > "$tmp"
-        if ! write_etc_file "$PATHS_FILE" "$tmp"; then
-            warn "cannot write $PATHS_FILE; fcai may not be on PATH"
-        fi
-    elif [ -d /etc/profile.d ]; then
-        {
-            printf '# FidoCadAI: put fcai/fcai-gui on PATH (managed by scripts/install.sh).\n'
-            printf 'case ":$PATH:" in\n'
-            printf '    *:%s:*) ;;\n' "$bindir"
-            printf '    *) export PATH="%s:$PATH" ;;\n' "$bindir"
-            printf 'esac\n'
-        } > "$tmp"
-        if ! write_etc_file "$PROFILE_FILE" "$tmp"; then
-            warn "cannot write $PROFILE_FILE; fcai may not be on PATH"
-        fi
-    fi
-
-    if [ -d /usr/lib/environment.d ] || [ -d /etc/environment.d ]; then
-        {
-            printf '# FidoCadAI: put fcai/fcai-gui on PATH (managed by scripts/install.sh).\n'
-            printf 'PATH=$PATH:%s\n' "$bindir"
-        } > "$tmp"
-        if ! write_etc_file "$ENV_FILE" "$tmp"; then
-            warn "cannot write $ENV_FILE; graphical sessions may not see fcai"
-        fi
-    fi
-
-    if [ -d /etc/fish/conf.d ]; then
-        {
-            printf '# FidoCadAI: put fcai/fcai-gui on PATH (managed by scripts/install.sh).\n'
-            printf 'if not contains %s $PATH\n' "$bindir"
-            printf '    set -gx PATH %s $PATH\n' "$bindir"
-            printf 'end\n'
-        } > "$tmp"
-        if ! write_etc_file "$FISH_FILE" "$tmp"; then
-            warn "cannot write $FISH_FILE; fish shells may not see fcai"
-        fi
-    fi
-
-    rm -f "$tmp"
-    log "PATH: $bindir (system PATH files and /usr/local/bin symlinks)"
-}
-
-remove_path_files() {
-    for f in "$PROFILE_FILE" "$ENV_FILE" "$FISH_FILE"; do
-        if [ -f "$f" ] && head -n 1 "$f" 2>/dev/null | grep -q "FidoCadAI"; then
-            if [ -w "$f" ]; then
-                rm -f "$f"
-            else
-                run_root rm -f "$f" || true
-            fi
-            log "removed $f"
-        fi
-    done
-    if [ -f "$PATHS_FILE" ] && grep -qxF "$PREFIX/bin" "$PATHS_FILE" 2>/dev/null; then
-        if [ -w "$PATHS_FILE" ]; then
-            rm -f "$PATHS_FILE"
-        else
-            run_root rm -f "$PATHS_FILE" || true
-        fi
-        log "removed $PATHS_FILE"
-    fi
+check_path() {
+    path_has "$BINDIR" && return 0
+    warn "$BINDIR is not on PATH; add it to your shell profile, e.g."
+    warn "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 }
 
 # ---- user library directory --------------------------------------------
@@ -444,9 +270,6 @@ Agents: when a pattern or element occurs more than once in a drawing, write it
 once as a macro here and place `MC` instances instead of copying primitives.
 EOF
     fi
-    if [ "$(id -u)" -eq 0 ] && [ "$RUN_USER" != "root" ]; then
-        chown -R "$RUN_UID:$RUN_GID" "$libdir"
-    fi
     log "user library directory: $libdir"
 }
 
@@ -457,31 +280,27 @@ channel_link() {
 }
 
 channel_target() {
-    printf '%s/share/fidocad/skills/fidocad\n' "$PREFIX"
+    printf '%s/skills/fidocad\n' "$DATADIR"
 }
 
-# Point the Omarchy default-agents channel at the installed skill (a symlink,
-# so updates never need sudo again). Returns 0 when the channel serves it.
+# Point the Omarchy default-agents channel at the installed skill when the
+# channel is writable without privileges. Returns 0 when the channel serves it.
 ensure_channel_link() {
     link=$(channel_link)
     target=$(channel_target)
-    [ -d "$OMARCHY_SKILLS" ] || return 1
+    [ -d "$OMARCHY_SKILLS" ] && [ -w "$OMARCHY_SKILLS" ] || return 1
     if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
         return 0
     fi
-    if [ -e "$link" ]; then
+    if [ -e "$link" ] || [ -L "$link" ]; then
         if [ -L "$link" ] || [ -f "$link/SKILL.md" ]; then
-            run_root rm -rf "$link" || true
+            rm -rf "$link" || return 1
         else
             warn "$link exists and is not a fidocad skill; leaving it"
             return 1
         fi
     fi
-    if [ -w "$OMARCHY_SKILLS" ]; then
-        ln -sfn "$target" "$link" || true
-    else
-        run_root ln -sfn "$target" "$link" || true
-    fi
+    ln -sfn "$target" "$link" || return 1
     [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]
 }
 
@@ -489,46 +308,37 @@ remove_channel_link() {
     link=$(channel_link)
     target=$(channel_target)
     if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
-        if [ -w "$OMARCHY_SKILLS" ]; then
-            rm -f "$link"
-        else
-            run_root rm -f "$link" || true
-        fi
+        rm -f "$link" || { warn "cannot remove $link"; return 0; }
         log "removed channel link $link"
     fi
 }
 
 do_skill() {
     [ "$WITH_SKILL" -eq 1 ] || return 0
-    [ -x "$PREFIX/bin/fcai" ] || { warn "fcai not installed; skill skipped"; return 0; }
-    skill_source="$PREFIX/share/fidocad/skills"
+    [ -x "$BINDIR/fcai" ] || { warn "fcai not installed; skill skipped"; return 0; }
+    skill_source="$DATADIR/skills"
     if [ "$WITH_OMARCHY" -eq 1 ]; then
         if ensure_channel_link; then
             skill_source="$OMARCHY_SKILLS"
             log "omarchy channel: $(channel_link) -> $(channel_target)"
         elif [ -d "$OMARCHY_SKILLS" ]; then
-            warn "cannot link $(channel_link); agents link to $skill_source instead"
+            log "omarchy channel $OMARCHY_SKILLS is not writable; agents link to $skill_source"
         else
             log "no omarchy channel at $OMARCHY_SKILLS; agents link to $skill_source"
         fi
     fi
     log "linking the fidocad skill into the local agents"
     if [ "$QUIET" -eq 1 ]; then
-        HOME="$RUN_HOME" FIDO_SKILL_DIR="$skill_source" "$PREFIX/bin/fcai" skill install 1>/dev/null || warn "some skill directories could not be written"
-    elif ! HOME="$RUN_HOME" FIDO_SKILL_DIR="$skill_source" "$PREFIX/bin/fcai" skill install; then
+        FIDO_SKILL_DIR="$skill_source" "$BINDIR/fcai" skill install 1>/dev/null || warn "some skill directories could not be written"
+    elif ! FIDO_SKILL_DIR="$skill_source" "$BINDIR/fcai" skill install; then
         warn "some skill directories could not be written"
-    fi
-    if [ "$(id -u)" -eq 0 ] && [ "$RUN_USER" != "root" ]; then
-        HOME="$RUN_HOME" "$PREFIX/bin/fcai" skill status | while IFS= read -r d; do
-            chown -hR "$RUN_UID:$RUN_GID" "$d"
-        done
     fi
 }
 
-# Needs the installed fcai, so it runs before the prefix is removed.
+# Needs the installed fcai, so it runs before the files are removed.
 remove_skill() {
-    [ -x "$PREFIX/bin/fcai" ] || { warn "fcai not installed; skill links kept"; return 0; }
-    run env HOME="$RUN_HOME" "$PREFIX/bin/fcai" skill uninstall || warn "some skill links could not be removed"
+    [ -x "$BINDIR/fcai" ] || { warn "fcai not installed; skill links kept"; return 0; }
+    run "$BINDIR/fcai" skill uninstall || warn "some skill links could not be removed"
 }
 
 # ---- git auto-update hook ----------------------------------------------
@@ -558,9 +368,6 @@ hook_enable() {
         printf '# --- end FidoCadAI ---\n'
     } >> "$hook"
     chmod 755 "$hook"
-    if [ "$(id -u)" -eq 0 ] && [ "$RUN_USER" != "root" ]; then
-        chown "$RUN_UID:$RUN_GID" "$hook"
-    fi
     log "update hook: $hook (runs scripts/install.sh update after every commit)"
 }
 
@@ -590,19 +397,18 @@ do_install() {
     trap cleanup_stage EXIT INT TERM
     do_stage
     install_tree
-    link_bins
-    ensure_path
     do_userlib
     do_skill
     if [ "$WITH_HOOK" -eq 1 ]; then hook_enable; fi
     cleanup_stage
     trap - EXIT INT TERM
+    check_path
     log "$APP installed; update later with: scripts/install.sh update"
 }
 
 do_update() {
-    if [ ! -x "$PREFIX/bin/fcai" ] && [ ! -f "$PREFIX/share/fidocad/$MARKER" ]; then
-        err "$PREFIX is not installed yet; run: scripts/install.sh install"
+    if [ ! -x "$BINDIR/fcai" ] && [ ! -f "$DATADIR/$MARKER" ]; then
+        err "$APP is not installed in $PREFIX yet; run: scripts/install.sh install"
         exit 1
     fi
     check_source
@@ -610,8 +416,6 @@ do_update() {
     trap cleanup_stage EXIT INT TERM
     do_stage
     install_tree
-    link_bins
-    ensure_path
     do_userlib
     do_skill
     if hook_enabled; then hook_enable; fi
@@ -621,38 +425,18 @@ do_update() {
 }
 
 do_uninstall() {
-    if [ ! -f "$PREFIX/share/fidocad/$MARKER" ] && [ "$FORCE" -ne 1 ]; then
-        if [ -e "$PREFIX" ]; then
-            err "$PREFIX does not look like a FidoCadAI install (use --force)"
+    if [ ! -f "$DATADIR/$MARKER" ] && [ "$FORCE" -ne 1 ]; then
+        if [ -e "$BINDIR/fcai" ] || [ -e "$DATADIR" ]; then
+            err "$PREFIX does not hold a FidoCadAI install from this script (use --force)"
             exit 1
         fi
     fi
     if [ "$WITH_SKILL" -eq 1 ]; then
         remove_skill
     fi
-    for b in fcai fcai-gui; do
-        dst="$LINK_DIR/$b"
-        if [ -L "$dst" ]; then
-            target=$(readlink "$dst")
-            case $target in
-                "$PREFIX"/*)
-                    if [ -w "$LINK_DIR" ]; then rm -f "$dst"; else run_root rm -f "$dst"; fi
-                    log "removed $dst"
-                    ;;
-            esac
-        fi
-    done
-    if [ -d "$PREFIX" ]; then
-        if [ -w "$PREFIX" ] || [ "$(id -u)" -eq 0 ]; then
-            rm -rf "$PREFIX"
-        else
-            run_root rm -rf "$PREFIX"
-        fi
-        log "removed $PREFIX"
-    fi
-    hook_disable
-    remove_path_files
     remove_channel_link
+    remove_tree
+    hook_disable
     log "kept $(user_lib_dir) (your libraries)"
 }
 
@@ -673,8 +457,8 @@ real_path() {
 
 do_status() {
     printf '%s\n' "prefix:   $PREFIX"
-    if [ -f "$PREFIX/share/fidocad/$MARKER" ]; then
-        sed 's/^/          /' "$PREFIX/share/fidocad/$MARKER"
+    if [ -f "$DATADIR/$MARKER" ]; then
+        sed 's/^/          /' "$DATADIR/$MARKER"
     else
         printf '          not installed (run: scripts/install.sh install)\n'
     fi
@@ -689,14 +473,10 @@ do_status() {
     libdir=$(user_lib_dir)
     n=$(find "$libdir" -maxdepth 1 -name '*.fcl' 2>/dev/null | wc -l | tr -d ' ')
     printf 'user lib: %s (%s .fcl)\n' "$libdir" "$n"
-    if command -v fcai >/dev/null 2>&1; then
-        printf 'path:     fcai callable (%s)\n' "$(command -v fcai)"
-    elif path_has "$PREFIX/bin"; then
-        printf 'path:     %s on PATH\n' "$PREFIX/bin"
-    elif [ -f "$PROFILE_FILE" ] || [ -f "$ENV_FILE" ] || [ -f "$FISH_FILE" ] || [ -f "$PATHS_FILE" ]; then
-        printf 'path:     system PATH files present (%s; new shells/sessions pick it up)\n' "$PREFIX/bin"
+    if path_has "$BINDIR"; then
+        printf 'path:     %s on PATH\n' "$BINDIR"
     else
-        printf 'path:     fcai not on PATH (run scripts/install.sh install)\n'
+        printf 'path:     %s not on PATH (add it to your shell profile)\n' "$BINDIR"
     fi
     if [ -L "$(channel_link)" ]; then
         printf 'channel:  %s -> %s\n' "$(channel_link)" "$(readlink "$(channel_link)")"
@@ -709,8 +489,8 @@ do_status() {
         printf 'git hook: disabled\n'
     fi
     printf 'skill:\n'
-    if [ -x "$PREFIX/bin/fcai" ]; then
-        HOME="$RUN_HOME" "$PREFIX/bin/fcai" skill status | sed 's/^/          /'
+    if [ -x "$BINDIR/fcai" ]; then
+        "$BINDIR/fcai" skill status | sed 's/^/          /'
     fi
 }
 

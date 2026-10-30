@@ -15,7 +15,7 @@ BINDIR  ?= $(PREFIX)/bin
 DATADIR ?= $(PREFIX)/share/fidocad
 
 SRC := src/util.c src/sys.c src/parse.c src/emit.c src/edit.c src/lint.c src/lib.c src/tex.c src/font.c src/ttf.c src/vendor_impl.c src/render.c
-OBJ := $(patsubst src/%.c,build/%.o,$(SRC))
+OBJ := $(patsubst src/%.c,build/%.o,$(SRC)) build/mimetex.o
 CLI_OBJ := build/cli.o build/style.o
 TEST_OBJ := build/test_core.o
 
@@ -70,8 +70,12 @@ build:
 	mkdir -p build
 
 build/font.o: src/font_stroke.h
-build/render.o: src/font8x8.h src/font_stroke.h src/font_math.h
-build/tex.o: src/font8x8.h src/font_math.h
+build/render.o: src/font8x8.h src/font_stroke.h
+build/tex.o: vendor/mimetex/embedded.h
+
+# Upstream uses legacy declarations; keep its warning policy separate from ours.
+build/mimetex.o: vendor/mimetex/embedded.c vendor/mimetex/embedded.h vendor/mimetex/mimetex.c vendor/mimetex/mimetex.h vendor/mimetex/texfonts.h | build
+	$(CC) -MMD -MP $(CFLAGS) $(CPPFLAGS) -w -c $< -o $@
 
 build/%.o: src/%.c include/fidocad.h src/internal.h | build
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
@@ -137,6 +141,8 @@ install: all
 	if [ -f build/fcai-gui ]; then install -m 755 build/fcai-gui $(DESTDIR)$(BINDIR)/fcai-gui; fi
 	install -m 644 share/lib/*.fcl $(DESTDIR)$(DATADIR)/lib/
 	install -m 644 share/fonts/*.ttf $(DESTDIR)$(DATADIR)/fonts/
+	install -m 644 LICENSE $(DESTDIR)$(DATADIR)/LICENSE
+	install -m 644 vendor/mimetex/COPYING $(DESTDIR)$(DATADIR)/mimetex-COPYING
 	rm -rf $(DESTDIR)$(DATADIR)/skills/fidocad
 	cp -R share/skills/fidocad $(DESTDIR)$(DATADIR)/skills/
 ifeq ($(DESTDIR),)
@@ -151,11 +157,11 @@ install-skill:
 		"$(BINDIR)/fcai" skill install; \
 	fi
 
-# System-wide install under the project's install script (Linux and macOS).
+# Per-user install into ~/.local with the project's install script (Linux and macOS).
 system-install:
 	scripts/install.sh install
 
-# Refresh the system-wide copy after a source change.
+# Refresh the ~/.local copy after a source change.
 system-update:
 	scripts/install.sh update
 

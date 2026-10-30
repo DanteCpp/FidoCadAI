@@ -248,8 +248,9 @@ void Canvas::sketch(QPainter &p, const FcDrawing &flat, const QList<int> *origin
             break;
         case FC_TEXT: {
             const FcLabel &l = q.u.text;
-            double w = (l.text ? strlen(l.text) : 1) * (l.size_x > 0 ? l.size_x : 3);
-            p.drawRect(QRectF(l.p.x, l.p.y, w, l.size_y > 0 ? l.size_y : 4));
+            FcRect box;
+            fc_label_bounds(&l, settings_->getBool("tex"), &box);
+            p.drawRect(QRectF(QPointF(box.min_x, box.min_y), QPointF(box.max_x, box.max_y)));
             break;
         }
         case FC_MACRO:

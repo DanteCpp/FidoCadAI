@@ -345,42 +345,154 @@ static void test_json_and_describe(void) {
     fc_drawing_free(&d);
 }
 
+#define TEX_WIDTH 700
+#define TEX_HEIGHT 360
+static void draw_tex_case(const char *text, int rotation, int mirror, int tex, uint8_t *pixels) {
+    FcDrawing drawing;
+    FcView view = {0};
+    char source[8192];
+    fc_drawing_init(&drawing);
+    snprintf(source, sizeof source, "[FIDOCAD]\nTY 50 40 10 7.5 %d %d 0 * %s\n", rotation, mirror ? 4 : 0, text);
+    EXPECT(fc_parse(&drawing, source, 0) == FC_OK);
+    view.ox = 200; view.oy = 80; view.scale = 2; view.bg = 0xFFFFFF; view.tex = tex;
+    EXPECT(fc_render_rgb(&drawing, NULL, &view, pixels, TEX_WIDTH, TEX_HEIGHT, TEX_WIDTH * 3) == FC_OK);
+    if (tex) {
+        FcRect box;
+        int x, y, ink = 0;
+        fc_label_bounds(&drawing.prims[0].u.text, 1, &box);
+        for (y = 0; y < TEX_HEIGHT; ++y)
+            for (x = 0; x < TEX_WIDTH; ++x)
+                if (pixels[(y * TEX_WIDTH + x) * 3] < 245) {
+                    ++ink;
+                    EXPECT(x >= box.min_x * 2 + 200 - 2 && x <= box.max_x * 2 + 200 + 2 &&
+                           y >= box.min_y * 2 + 80 - 2 && y <= box.max_y * 2 + 80 + 2);
+                }
+        EXPECT(ink > 30);
+    }
+    fc_drawing_free(&drawing);
+}
+
 static void test_tex(void) {
-    float w = 0, h = 0, d = 0;
+    static const char *equations[] = {
+        "S_{v,R}=4kTR",
+        "S_{v,out}(f)=\\frac{4kTR}{1+(2\\pi fRC)^2}",
+        "\\sigma_v^2=\\int_0^\\infty S_{v,out}(f)\\,df=\\frac{kT}{C}",
+        "v_{n,rms}=\\sqrt{\\frac{kT}{C}}",
+        "T=300\\,K=26.85\\,^{\\circ}C",
+        "k=1.380649\\times10^{-23}\\,J/K",
+        "C=1\\,nF:\\quad v_{n,rms}=\\sqrt{\\frac{1.380649\\times10^{-23}\\times300}{10^{-9}}}=2.035\\,\\mu V",
+        "\\frac{1}{\\frac{a+b}{c+d}}",
+        "\\dfrac{a}{b}+\\tfrac{c}{d}",
+        "\\sqrt[3]{x^2+y^2}",
+        "\\sum_{n=0}^{\\infty}\\frac{x^n}{n!}",
+        "\\prod_{k=1}^{n} k=n!",
+        "\\left(\\frac{x}{y}\\right)^2",
+        "\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}",
+        "\\begin{bmatrix}1&0\\\\0&1\\end{bmatrix}",
+        "f(x)=\\begin{cases}x^2&x\\geq0\\\\-x&x<0\\end{cases}",
+        "\\begin{aligned}a&=b+c\\\\d&=e+f\\end{aligned}",
+        "\\begin{gathered}a=b\\\\c=d\\end{gathered}",
+        "\\begin{array}{cc}1&\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}\\\\0&1\\end{array}",
+        "\\hat{x}+\\vec{v}+\\bar{y}+\\overline{ab}",
+        "\\binom{n}{k}=\\frac{n!}{k!(n-k)!}",
+        "\\mathbb{R} \\quad \\mathcal{F} \\quad \\operatorname{Var}(x)",
+        "\\text{thermal noise}\\quad\\mathrm{V}/\\sqrt{\\mathrm{Hz}}",
+        "\\int x² dx", "α+β=π", "\\partial_x f \\ne \\nabla f"
+    };
+    const char *bad[] = {"\\", "\\frac", "\\frac{a}", "\\sqrt", "\\sqrt[",
+        "\\left(", "\\begin{matrix}", "\\begin{aligned}a&=\\unknown{x}\\end{aligned}",
+        "\\rule{999999}{999999}", "\\begin{array}{cc}\\longUnknownToken{x} & a\\end{array}"};
+    float w = 0, h = 0, d = 0, wi = 0, hi = 0, di = 0;
+    size_t i;
+    FcTexGeom held;
     FcDrawing dr;
     FcRenderOpts o;
     FILE *fp;
     unsigned char sig[8];
+
     EXPECT(fc_tex_has_math("foo $R_1$ bar"));
     EXPECT(!fc_tex_has_math("hello"));
-    EXPECT(fc_tex_measure("R_1", 0, &w, &h, &d) == 1);
-    EXPECT(w > 0.7f);
-    EXPECT(h > 0.5f);
-    w = h = 0;
-    EXPECT(fc_tex_measure("\\frac{1}{2}", 0, &w, &h, &d) == 1);
-    EXPECT(h > 0.9f);
-    w = 0;
-    EXPECT(fc_tex_measure("\\Omega", 0, &w, &h, &d) == 1);
-    EXPECT(w > 0.4f);
-    w = h = d = 0;
-    EXPECT(fc_tex_measure("a+b", 0, &w, &h, &d) == 1);
-    EXPECT(w > 2.0f); /* binary operators get TeX-style medium spaces */
-    w = h = d = 0;
-    EXPECT(fc_tex_measure("-x", 0, &w, &h, &d) == 1);
-    EXPECT(w < 1.5f); /* a leading sign stays unary, no space */
-    {
-        /* a typed symbol is the same table row as its command, and an
-         * unknown typed character does not swallow the rest of the formula */
-        FcTexGeom a, b;
-        fc_tex_compile("\\zeta", 0, &a);
-        fc_tex_compile("\xce\xb6", 0, &b);
-        EXPECT(a.n == 1 && b.n == 1 && a.ops[0].glyph == b.ops[0].glyph);
-        fc_tex_geom_free(&a);
-        fc_tex_geom_free(&b);
-        fc_tex_compile("a \xe2\x89\xa4 b \xe2\x9c\x93 c", 0, &a); /* a ≤ b ✓ c */
-        EXPECT(a.n == 5 && a.ops[3].glyph == '?' && a.ops[4].glyph == 'c');
-        fc_tex_geom_free(&a);
+    for (i = 0; i < sizeof equations / sizeof *equations; ++i) {
+        if (!fc_tex_measure(equations[i], 1, &w, &h, &d))
+            fprintf(stderr, "equation failed: %s\n", equations[i]);
+        EXPECT(fc_tex_measure(equations[i], 1, &w, &h, &d));
+        EXPECT(w > 0 && h > 0 && h + d > 0 && isfinite(w + h + d));
     }
+    EXPECT(fc_tex_measure("\\frac{a}{b}", 0, &wi, &hi, &di));
+    EXPECT(fc_tex_measure("\\frac{a}{b}", 1, &w, &h, &d));
+    EXPECT(h + d > hi + di && w > wi);
+    EXPECT(fc_tex_measure("\\sum_{i=0}^n i", 0, &wi, &hi, &di));
+    EXPECT(fc_tex_measure("\\sum_{i=0}^n i", 1, &w, &h, &d));
+    EXPECT(h + d > hi + di);
+    EXPECT(fc_tex_measure("x²", 0, &w, &h, &d));
+    EXPECT(fc_tex_measure("x^{2}", 0, &wi, &hi, &di));
+    EXPECT(w == wi && h == hi && d == di);
+    EXPECT(!fc_tex_measure("\\notARealCommand{x}", 0, &w, &h, &d));
+    EXPECT(!fc_tex_measure("\\begin{unknown}x\\end{unknown}", 0, &w, &h, &d));
+    EXPECT(!fc_tex_measure("\\frac{a}{b", 0, &w, &h, &d));
+    EXPECT(!fc_tex_measure("x}", 0, &w, &h, &d));
+    EXPECT(!fc_tex_measure("\\input{/etc/passwd}", 0, &w, &h, &d));
+    EXPECT(!fc_tex_measure("\\mathtex{x}", 0, &w, &h, &d));
+    EXPECT(!fc_tex_measure("\\counter{/tmp/fcai-counter}", 0, &w, &h, &d));
+    EXPECT(!fc_tex_measure("\\environment", 0, &w, &h, &d));
+    EXPECT(fc_tex_compile("\\sqrt{\\frac{1}{x}}", 1, &held));
+    wi = held.w; hi = held.h; di = held.d;
+    for (i = 0; i < 100; ++i) {
+        char source[64];
+        snprintf(source, sizeof source, "x^{%zu}+%zu", i, i);
+        EXPECT(fc_tex_measure(source, i % 2, &w, &h, &d));
+    }
+    EXPECT(held.pixels && held.sum && held.sum[(held.height + 1) * (held.width + 1) - 1] > 0);
+    EXPECT(fc_tex_measure("\\sqrt{\\frac{1}{x}}", 1, &w, &h, &d));
+    EXPECT(w == wi && h == hi && d == di);
+    fc_tex_geom_free(&held);
+    {
+        char deep[200];
+        memset(deep, '{', 70); deep[70] = 'x'; memset(deep + 71, '}', 70); deep[141] = 0;
+        EXPECT(!fc_tex_measure(deep, 1, &w, &h, &d));
+    }
+    for (i = 0; i < sizeof bad / sizeof *bad; ++i) {
+        fc_tex_measure(bad[i], 1, &w, &h, &d);
+        EXPECT(fc_tex_measure("x^2+1", 1, &w, &h, &d));
+    }
+    {
+        char longscript[900];
+        strcpy(longscript, "x_{"); memset(longscript + 3, 'a', 800); strcpy(longscript + 803, "}");
+        fc_tex_measure(longscript, 0, &w, &h, &d);
+        EXPECT(fc_tex_measure("x^2+1", 1, &w, &h, &d));
+    }
+    {
+        FcTexSeg s[20];
+        const char *text = "cost \\$5; $x^2$ and $$\\frac{a}{b}$$.";
+        int n = fc_tex_split(text, s, 20);
+        EXPECT(n == 5 && s[0].math == 0 && s[1].math == 1 && s[3].math == 2);
+        EXPECT(s[1].n == 3 && !memcmp(s[1].p, "x^2", 3));
+        text = "$\\text{\\$5}+x$";
+        n = fc_tex_split(text, s, 20);
+        EXPECT(n == 1 && s[0].math == 1 && s[0].n == (int)strlen(text) - 2);
+        text = "unclosed $$x";
+        n = fc_tex_split(text, s, 20);
+        EXPECT(n == 2 && s[1].math == 0 && s[1].n == 3);
+        EXPECT(!fc_tex_has_math("literal \\$"));
+    }
+    {
+        uint8_t *a = malloc(TEX_WIDTH * TEX_HEIGHT * 3), *b = malloc(TEX_WIDTH * TEX_HEIGHT * 3);
+        int rotations[] = {0, 90, 180, 270, 37};
+        for (i = 0; i < 5; ++i) {
+            draw_tex_case("$$\\frac{1+x^2}{\\sqrt{a+b}}$$", rotations[i], 0, 1, a);
+            draw_tex_case("$$\\frac{1+x^2}{\\sqrt{a+b}}$$", rotations[i], 1, 1, b);
+        }
+        draw_tex_case("before $x^2$ after", 0, 0, 1, a);
+        draw_tex_case("$$\\invalid{x}$$", 0, 0, 1, a);
+        draw_tex_case("$$\\invalid{x}$$", 0, 0, 0, b);
+        EXPECT(!memcmp(a, b, TEX_WIDTH * TEX_HEIGHT * 3));
+        draw_tex_case("$\\frac{a}{b$", 0, 0, 1, a);
+        draw_tex_case("$\\frac{a}{b$", 0, 0, 0, b);
+        EXPECT(!memcmp(a, b, TEX_WIDTH * TEX_HEIGHT * 3));
+        free(a);
+        free(b);
+    }
+
     fc_drawing_init(&dr);
     fc_parse(&dr,
              "[FIDOCAD]\n"

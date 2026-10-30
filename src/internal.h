@@ -57,21 +57,20 @@ typedef struct {
 } FcTexSeg;
 
 typedef struct {
-    int kind; /* 0 glyph, 1 rule */
-    float x, y, w, h, size;
-    int glyph, italic, bold;
-} FcTexOp;
-
-typedef struct {
-    FcTexOp *ops;
-    int n, cap;
+    const uint8_t *pixels;
+    const uint32_t *sum; /* summed coverage, (width+1) x (height+1) */
+    int width, height, baseline;
+    float em; /* pixels/em of the source bitmap */
     float w, h, d;
+    void *owner;
 } FcTexGeom;
 
 int fc_tex_split(const char *text, FcTexSeg *out, int maxn);
 int fc_tex_compile(const char *latex, int display, FcTexGeom *g);
 void fc_tex_geom_free(FcTexGeom *g);
-const unsigned char *fc_tex_glyph_bits(int gid);
+/* Local text-space bounds, including math ascent/descent. */
+void fc_text_extents(const FcLabel *label, int tex, FcRect *box);
+int fc_render_bounds(const FcDrawing *drawing, int tex, FcRect *box);
 
 int fc_utf8_next(const char **p, const char *end);
 int fc_font_is_mono(const char *name);
@@ -115,6 +114,7 @@ int fc_ttf_init(void);
 int fc_ttf_ready(void);
 int fc_ttf_resolve(int family, int bold, int italic, int *fake_italic);
 float fc_ttf_ascent(int slot, float px_size);
+float fc_ttf_advance(int slot, float px_size, float xratio, int cp);
 /* shift_x/shift_y: sub-pixel origin in [0,1), quantized to FC_TTF_SUBPIX steps */
 #define FC_TTF_SUBPIX 4
 float fc_ttf_quantize(float px_size); /* the size glyphs are actually cached at */

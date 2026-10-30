@@ -521,43 +521,6 @@ static float draw_cp_stroke(const Pen *p, const Font *f, int cp, float x) {
     return adv * f->sx;
 }
 
-static void blit_rule(const Pen *p, float px, float py, float w, float h) {
-    int ix, iy;
-    int rw = (int)ceil(w), rh = (int)ceil(h);
-    if (rw < 1) rw = 1;
-    if (rh < 1) rh = 1;
-    for (iy = 0; iy < rh; iy++)
-        for (ix = 0; ix < rw; ix++) pen_put(p, px + (float)ix, py + (float)iy, 1.0f);
-}
-
-static void blit_bitmap_glyph(const Pen *p, int gid, float px, float py, float gw, float gh,
-                              int italic, int bold) {
-    const unsigned char *g = fc_tex_glyph_bits(gid);
-    int row, col, ix, iy, qx, qy;
-    int cw = (int)(gw / 8.0f) + 1;
-    int ch = (int)(gh / 8.0f) + 1;
-    if (cw < 1) cw = 1;
-    if (ch < 1) ch = 1;
-    for (row = 0; row < 8; row++) {
-        for (col = 0; col < 8; col++) {
-            int gx0, gy0;
-            if (!((g[row] >> (7 - col)) & 1)) continue;
-            gx0 = (int)(col * gw / 8.0f);
-            gy0 = (int)(row * gh / 8.0f);
-            for (iy = 0; iy < ch; iy++) {
-                for (ix = 0; ix < cw; ix++) {
-                    float gx = px + (float)gx0 + (float)ix;
-                    float gy = py + (float)gy0 + (float)iy;
-                    if (italic) gx += 0.22f * (gh * 0.75f - ((float)gy0 + (float)iy));
-                    pen_map(p, gx, gy, &qx, &qy);
-                    put_px(p->r, qx, qy, p->rgb, p->a);
-                    if (bold) put_px(p->r, qx + 1, qy, p->rgb, p->a);
-                }
-            }
-        }
-    }
-}
-
 static float draw_cp_ttf(const Pen *p, const Font *f, int cp, float x, float base) {
     FcTtfGlyph g;
     float ascent, bx, by;
@@ -600,51 +563,163 @@ static void draw_plain_run(const Pen *p, const Font *f, const char *s, int n, fl
     }
 }
 
-static void draw_math_run(const Pen *p, const char *latex, int n, int display, float *x, float em) {
-    const Font stroke = {.sx = em / 12.0f, .sy = em / 12.0f, .slot = -1, .xratio = 1};
+/* Bilinear interpolation of the summed-area image integrates the exact box
+ * footprint during minification. A minimum one-source-pixel footprint also
+ * interpolates smoothly when zooming beyond the embedded font resolution. */
+static double tex_integral(const FcTexGeom *g, double x, double y) {
+    int ix, iy, pitch = g->width + 1;
+    double fx, fy;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x > g->width) x = g->width;
+    if (y > g->height) y = g->height;
+    ix = (int)x; iy = (int)y;
+    fx = x - ix; fy = y - iy;
+    if (ix == g->width) { --ix; fx = 1; }
+    if (iy == g->height) { --iy; fy = 1; }
+    return (1-fy)*((1-fx)*g->sum[iy*pitch+ix] + fx*g->sum[iy*pitch+ix+1]) +
+           fy*((1-fx)*g->sum[(iy+1)*pitch+ix] + fx*g->sum[(iy+1)*pitch+ix+1]);
+}
+
+static float tex_coverage(const FcTexGeom *g, double x, double y, double dx, double dy) {
+    double area;
+    if (dx < 1) dx = 1;
+    if (dy < 1) dy = 1;
+    area = tex_integral(g, x+dx/2, y+dy/2) - tex_integral(g, x-dx/2, y+dy/2) -
+           tex_integral(g, x+dx/2, y-dy/2) + tex_integral(g, x-dx/2, y-dy/2);
+    return (float)(area / (255 * dx * dy));
+}
+
+static void draw_math_bitmap(const Pen *p, const FcTexGeom *g, float x, float baseline,
+                             float em, float xratio) {
+    double sx = em * xratio / g->em, sy = em / g->em;
+    double top = baseline - g->baseline * sy;
+    double left = x, right = x + g->width * sx, bottom = top + g->height * sy;
+    double minx = p->r->w, miny = p->r->h, maxx = 0, maxy = 0;
+    int i, ix, iy, x0, y0, x1, y1;
+    double corners[4][2] = {{left,top},{right,top},{right,bottom},{left,bottom}};
+    if (sx <= 0 || sy <= 0) return;
+    for (i = 0; i < 4; ++i) {
+        double u = p->mirror ? -corners[i][0] : corners[i][0], v = corners[i][1];
+        double px = p->x0 + u*p->ca - v*p->sa, py = p->y0 + u*p->sa + v*p->ca;
+        if (px < minx) minx = px;
+        if (px > maxx) maxx = px;
+        if (py < miny) miny = py;
+        if (py > maxy) maxy = py;
+    }
+    x0 = clampi(floor(minx)-1); y0 = clampi(floor(miny)-1);
+    x1 = clampi(ceil(maxx)+1); y1 = clampi(ceil(maxy)+1);
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 >= p->r->w) x1 = p->r->w-1;
+    if (y1 >= p->r->h) y1 = p->r->h-1;
+    /* Inverse mapping fills destination pixels, including at arbitrary angles;
+     * forward mapping individual source pixels leaves holes at high zoom. */
+    for (iy = y0; iy <= y1; ++iy) for (ix = x0; ix <= x1; ++ix) {
+        double px = ix + .5 - p->x0, py = iy + .5 - p->y0;
+        double u = px*p->ca + py*p->sa, v = -px*p->sa + py*p->ca;
+        float coverage;
+        if (p->mirror) u = -u;
+        coverage = tex_coverage(g, (u-x)/sx, (v-top)/sy, 1/sx, 1/sy);
+        if (coverage > 0) put_px(p->r, ix, iy, p->rgb, p->a * coverage);
+    }
+}
+
+/* Returns false for unsupported/malformed TeX, allowing a literal fallback
+ * using the label's font, including the original $ or $$ delimiters. */
+static int draw_math_run(const Pen *p, const char *source, int n, int display,
+                         float *x, float baseline, float em, float xratio) {
     FcTexGeom g;
-    char *buf;
-    int i;
-    float base;
-    buf = (char *)malloc((size_t)n + 1);
-    if (!buf) return;
-    memcpy(buf, latex, (size_t)n);
+    char *buf = malloc((size_t)n + 1);
+    if (!buf) return 0;
+    memcpy(buf, source, (size_t)n);
     buf[n] = 0;
-    if (!fc_tex_compile(buf, display, &g)) { /* not typeset: the source between dollars */
-        *x += draw_cp_stroke(p, &stroke, '$', *x);
-        draw_plain_run(p, &stroke, buf, n, x, 0);
-        *x += draw_cp_stroke(p, &stroke, '$', *x);
-        free(buf);
-        fc_tex_geom_free(&g);
-        return;
-    }
-    base = em * 0.78f;
-    for (i = 0; i < g.n; i++) {
-        FcTexOp *o = &g.ops[i];
-        float gx = *x + o->x * em;
-        if (o->kind == 0) {
-            float gh = o->size * em;
-            float gy = base - o->y * em - 0.78f * gh;
-            if (o->glyph >= 32 && o->glyph <= 126) {
-                const Font glyph = {.sx = gh / 12.0f, .sy = gh / 12.0f, .italic = o->italic,
-                                    .bold = o->bold, .slot = -1, .xratio = 1};
-                Pen raised = *p;
-                raised.y0 += (int)gy;
-                draw_cp_stroke(&raised, &glyph, o->glyph, gx);
-            } else {
-                float gw = (o->w > 0 ? o->w : 0.62f * o->size) * em;
-                blit_bitmap_glyph(p, o->glyph, gx, gy, gw, gh, o->italic, o->bold);
-            }
-        } else {
-            float rh = o->h * em;
-            float rw = o->w * em;
-            float gy = base - o->y * em - rh * 0.5f;
-            blit_rule(p, gx, gy, rw, rh);
-        }
-    }
-    *x += g.w * em;
+    if (!fc_tex_compile(buf, display, &g)) { free(buf); return 0; }
+    draw_math_bitmap(p, &g, *x, baseline, em, xratio);
+    *x += g.w * em * xratio;
     fc_tex_geom_free(&g);
     free(buf);
+    return 1;
+}
+
+/* Shared measurement for fitting, export crops, hit testing and selection.
+ * The same baseline, advances and equation bitmaps are used for painting. */
+void fc_text_extents(const FcLabel *l, int tex, FcRect *box) {
+    const char *s = l->text ? l->text : "", *q;
+    float em = l->size_y > 0 ? (float)l->size_y : 4;
+    float ratio = l->size_y > .1 ? (float)(l->size_x/l->size_y * 4.0/3.0) : 1;
+    float ph = em * 1.15f, x = 0, baseline;
+    int slot = -1, fake = 0, maxn = 2, ns, i;
+    FcTexSeg *segments;
+    if (ratio < .4f) ratio = .4f;
+    if (ratio > 2.5f) ratio = 2.5f;
+    fc_ttf_init();
+    if (fc_ttf_ready()) slot = fc_ttf_resolve(fc_font_family(l->font),
+        !!(l->style & FC_STYLE_BOLD), !!(l->style & FC_STYLE_ITALIC), &fake);
+    baseline = slot >= 0 ? fc_ttf_ascent(slot, ph) : em;
+    *box = (FcRect){0, 0, 0, slot >= 0 ? ph : em};
+    for (q = s; *q; ++q) if (*q == '$') maxn += 2;
+    segments = malloc((size_t)maxn * sizeof *segments);
+    if (!segments) return;
+    if (tex) ns = fc_tex_split(s, segments, maxn);
+    else { segments[0] = (FcTexSeg){0, s, (int)strlen(s)}; ns = 1; }
+    for (i = 0; i < ns; ++i) {
+        const char *text = segments[i].p, *end = text + segments[i].n;
+        if (segments[i].math) {
+            char *source = malloc((size_t)segments[i].n + 1);
+            FcTexGeom g;
+            int ok = 0, delim = segments[i].math == 2 ? 2 : 1;
+            if (source) {
+                memcpy(source, text, (size_t)segments[i].n);
+                source[segments[i].n] = 0;
+                ok = fc_tex_compile(source, segments[i].math == 2, &g);
+                free(source);
+            }
+            if (ok) {
+                double top = baseline-g.h*em, bottom = baseline+g.d*em;
+                if (top < box->min_y) box->min_y = top;
+                if (bottom > box->max_y) box->max_y = bottom;
+                x += g.w * em * ratio;
+                fc_tex_geom_free(&g);
+                continue;
+            }
+            text -= delim;
+            end += delim;
+        }
+        while (text < end) {
+            int cp = fc_utf8_next(&text, end);
+            if (slot >= 0) x += fc_ttf_advance(slot, ph, ratio, cp);
+            else {
+                FcStroke glyph;
+                fc_stroke_glyph(cp, &glyph);
+                x += (fc_font_is_mono(l->font) ? 10 : glyph.right-glyph.left) *
+                     (l->size_x > 0 ? l->size_x : 3) / 10.0f;
+            }
+        }
+    }
+    box->max_x = x;
+    free(segments);
+}
+
+void fc_label_bounds(const FcLabel *label, int tex, FcRect *box) {
+    FcRect local;
+    double angle = label->rotation * 3.141592653589793 / 180.0;
+    double ca = cos(angle), sa = sin(angle);
+    int i;
+    fc_text_extents(label, tex, &local);
+    for (i = 0; i < 4; ++i) {
+        double x = i & 1 ? local.max_x : local.min_x;
+        double y = i & 2 ? local.max_y : local.min_y;
+        double px, py;
+        if (label->style & FC_STYLE_MIRROR) x = -x;
+        px = label->p.x + ca*x-sa*y;
+        py = label->p.y + sa*x+ca*y;
+        if (!i) *box = (FcRect){px, py, px, py};
+        if (px < box->min_x) box->min_x = px;
+        if (px > box->max_x) box->max_x = px;
+        if (py < box->min_y) box->min_y = py;
+        if (py > box->max_y) box->max_y = py;
+    }
 }
 
 static void draw_text(Raster *r, const FcLabel *l, uint32_t rgb, float a) {
@@ -712,9 +787,14 @@ static void draw_text(Raster *r, const FcLabel *l, uint32_t rgb, float a) {
         if (!segs) return;
         ns = fc_tex_split(s, segs, maxn);
         for (i = 0; i < ns; i++) {
-            if (segs[i].math)
-                draw_math_run(&pen, segs[i].p, segs[i].n, segs[i].math == 2, &x, em);
-            else
+            if (segs[i].math) {
+                float baseline = base + (f.slot >= 0 ? fc_ttf_ascent(f.slot, f.ph) : em);
+                if (!draw_math_run(&pen, segs[i].p, segs[i].n, segs[i].math == 2,
+                                   &x, baseline, em, f.xratio)) {
+                    int delim = segs[i].math == 2 ? 2 : 1;
+                    draw_plain_run(&pen, &f, segs[i].p - delim, segs[i].n + 2*delim, &x, base);
+                }
+            } else
                 draw_plain_run(&pen, &f, segs[i].p, segs[i].n, &x, base);
         }
         free(segs);
@@ -972,7 +1052,7 @@ int fc_render_file(const FcDrawing *d, const FcLib *lib, const FcRenderOpts *opt
         src = &exp;
         own = 1;
     }
-    if (!fc_bounds(src, NULL, &bb)) {
+    if (!fc_render_bounds(src, o.tex, &bb)) {
         bb.min_x = bb.min_y = 0;
         bb.max_x = bb.max_y = 20;
     }

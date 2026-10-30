@@ -32,6 +32,7 @@ public:
     std::function<void()> onClosed;
 
 protected:
+    void paintEvent(QPaintEvent *event) override;
     bool eventFilter(QObject *o, QEvent *e) override;
 
 private:

@@ -427,8 +427,9 @@ Do not auto-remove dots at symbol pins based only on a lint warning.
 
 ## If something is missing
 
-FidoCadAI installs system-wide to `/opt/FidoCadAI` with the project's install
-script:
+FidoCadAI installs per user into `~/.local` (`~/.local/bin/fcai`,
+`~/.local/bin/fcai-gui`, data in `~/.local/share/fidocad`) with the project's
+install script; no sudo is needed:
 
 ```bash
 scripts/install.sh install     # build, install, create ~/.fcai/lib,

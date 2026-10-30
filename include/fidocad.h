@@ -350,6 +350,9 @@ void fc_fmt_num(char *buf, size_t cap, double v);
 int fc_tex_has_math(const char *s);
 int fc_tex_measure(const char *latex, int display, float *width_em, float *height_em,
                    float *depth_em);
+/* Axis-aligned drawing-space bounds of a label, including rotation/mirroring
+ * and the actual math layout. tex=0 measures its literal source instead. */
+void fc_label_bounds(const FcLabel *label, int tex, FcRect *box);
 
 #ifdef __cplusplus
 }

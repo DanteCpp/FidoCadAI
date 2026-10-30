@@ -7,6 +7,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPainter>
 #include <QRegularExpression>
 #include <algorithm>
 #include <vector>
@@ -15,6 +16,7 @@ InlineForm::InlineForm(QWidget *parent, const QString &title) : QFrame(parent) {
     setObjectName("chrome");
     setFrameShape(QFrame::Box);
     setAutoFillBackground(true);
+    setAttribute(Qt::WA_StyledBackground, true);
     form_ = new QFormLayout(this);
     form_->setContentsMargins(10, 8, 10, 8);
     form_->setVerticalSpacing(4);
@@ -24,6 +26,16 @@ InlineForm::InlineForm(QWidget *parent, const QString &title) : QFrame(parent) {
     error_ = new QLabel(this);
     error_->setObjectName("dim");
     error_->hide();
+}
+
+void InlineForm::paintEvent(QPaintEvent *event) {
+    /* The form overlays the drawing. Paint an opaque panel even when a Qt
+     * style disables autoFillBackground for styled frames. Canvas equations
+     * must never show through the source fields or the spaces between them. */
+    QPainter painter(this);
+    painter.fillRect(rect(), palette().color(QPalette::Window));
+    painter.end();
+    QFrame::paintEvent(event);
 }
 
 void InlineForm::watch(QWidget *w) {
