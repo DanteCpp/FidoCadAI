@@ -129,6 +129,24 @@ void Canvas::fit() {
     update();
 }
 
+bool Canvas::fitRect(const QRectF &bounds) {
+    if (!std::isfinite(bounds.left()) || !std::isfinite(bounds.top()) ||
+        !std::isfinite(bounds.right()) || !std::isfinite(bounds.bottom()) ||
+        std::abs(bounds.left()) > FC_MAX_COORD || std::abs(bounds.top()) > FC_MAX_COORD ||
+        std::abs(bounds.right()) > FC_MAX_COORD || std::abs(bounds.bottom()) > FC_MAX_COORD ||
+        bounds.width() <= 0 || bounds.height() <= 0 || width() <= 0 || height() <= 0)
+        return false;
+    const QRectF b = bounds.adjusted(-10, -10, 10, 10);
+    scale_ = std::min({width() / b.width(), height() / b.height(), 60.0});
+    ox_ = width() / 2.0 - b.center().x() * scale_;
+    oy_ = height() / 2.0 - b.center().y() * scale_;
+    auto_fit_ = false;
+    dirty_ = true;
+    status();
+    update();
+    return true;
+}
+
 void Canvas::zoomBy(double f, QPointF at) {
     auto_fit_ = false;
     double ns = std::clamp(scale_ * f, 0.25, 60.0);

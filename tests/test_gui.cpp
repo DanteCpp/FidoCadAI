@@ -141,6 +141,32 @@ static void test_session_feedback(QApplication &app) {
     EXPECT(!request("reload-libs", {}, 1)["ok"].toBool());
     EXPECT(fc_lib_find(doc.lib(), "parts.new") != nullptr); /* retain last good library */
 
+    /* Focus an off-drawing region through the public CLI without editing. */
+    const QByteArray beforeFit = doc.fcd();
+    const bool modifiedBeforeFit = doc.modified();
+    auto *canvas = win.canvas();
+    EXPECT(request("fit-rect", {"-20.5", "10", "80", "60"})["ok"].toBool());
+    const QPointF centre = canvas->toPixel(QPointF(29.75, 35));
+    EXPECT(QLineF(centre, QPointF(canvas->width() / 2.0, canvas->height() / 2.0)).length() < 0.01);
+    const QPointF lo = canvas->toPixel(QPointF(-20.5, 10));
+    const QPointF hi = canvas->toPixel(QPointF(80, 60));
+    EXPECT(lo.x() >= 0 && lo.y() >= 0 && hi.x() <= canvas->width() && hi.y() <= canvas->height());
+    EXPECT(doc.fcd() == beforeFit && doc.modified() == modifiedBeforeFit);
+    EXPECT(canvas->selection() == QList<int>{0});
+    EXPECT(!canvas->fitRect(QRectF(0, 0, 0, 10)));
+    EXPECT(!canvas->fitRect(QRectF(0, 0, -10, 10)));
+    for (const QString &bad : {QString("nan"), QString("inf"), QString("1000001"), QString("oops")})
+        cli({"session", "fit-rect", dir, "0", "0", bad, "10"}, 1);
+    cli({"session", "fit-rect", dir, "10", "0", "0", "10"}, 1);
+    cli({"session", "fit-rect", dir, "0", "0", "10"}, 1);
+    EXPECT(canvas->toPixel(QPointF(29.75, 35)) == centre);
+    appendLine(dir + "/commands.jsonl", R"({"cmd":"fit-rect","id":"bad-fit","rect":[0,0,0,10]})");
+    QTest::qWait(200);
+    EXPECT(readAll(dir + "/events.jsonl").contains("fit-rect requires"));
+    EXPECT(canvas->toPixel(QPointF(29.75, 35)) == centre);
+    QTest::keyClick(canvas, Qt::Key_Space);
+    EXPECT(canvas->toPixel(QPointF(29.75, 35)) != centre);
+
     /* A same-content atomic replacement must not detach subsequent watching. */
     auto until = [](const std::function<bool()> &ready) {
         QElapsedTimer clock;

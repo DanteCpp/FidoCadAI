@@ -577,6 +577,14 @@ void MainWindow::applyCommand(const QJsonObject &c) {
             canvas_->refresh();
             canvas_->fitIfOutside();
         }
+    } else if (cmd == "fit-rect") {
+        reply = true;
+        const QJsonArray r = c["rect"].toArray();
+        if (r.size() != 4 || !r[0].isDouble() || !r[1].isDouble() ||
+            !r[2].isDouble() || !r[3].isDouble() ||
+            !canvas_->fitRect(QRectF(QPointF(r[0].toDouble(), r[1].toDouble()),
+                                    QPointF(r[2].toDouble(), r[3].toDouble()))))
+            error = "fit-rect requires [X0,Y0,X1,Y1] with finite bounded coordinates, X1 > X0 and Y1 > Y0";
     } else if (cmd == "set") {
         QString k = c["key"].toString(), v = c["value"].toString();
         QString e = settings_->set(k, v);

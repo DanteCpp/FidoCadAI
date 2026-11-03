@@ -89,9 +89,18 @@ fcai session push /tmp/sketch.session /tmp/new.fcd --base /tmp/base.fcd --wait
 fcai session save /tmp/sketch.session --wait         # persist GUI document
 fcai session reload-libs /tmp/sketch.session --wait  # updated .fcl files, same window
 fcai session set /tmp/sketch.session grid 10         # settings live
+fcai session fit-rect /tmp/sketch.session 20 10 80 60 --wait # focus a canvas region
 fcai session ack /tmp/sketch.session "got your edit"
 fcai session quit /tmp/sketch.session                # Done
 ```
+
+Use `session fit-rect DIR X0 Y0 X1 Y1 --wait` to zoom and centre the live
+canvas on a rectangle in logical drawing coordinates (not screen pixels).
+Coordinates may be fractional or negative; X1 must exceed X0 and Y1 must
+exceed Y0. The view includes a 10-unit margin and preserves the drawing and
+selection. Check the correlated `applied` reply and `ok`. This is a manual
+view: Space/0 restores fitting the entire drawing. Existing GUI windows must
+be reopened after upgrading to receive the new command.
 
 ### Apply feedback and confirm the live update
 
@@ -126,7 +135,7 @@ what the user did on the canvas: read it before acting on each user turn.
    increments using fresh GUI snapshots. Continue until the requested work is
    complete and the checks below are done.
 
-`--wait` on get/push/save/reload/reload-libs returns the matching reply,
+`--wait` on get/push/save/reload/reload-libs/fit-rect returns the matching reply,
 without consuming queued user events. This requires the updated CLI and GUI
 (protocol 2). Reopen a pre-update window after preserving its edits if needed;
 guarded pushes probe support before sending any drawing replacement. Do not

@@ -98,3 +98,13 @@ compositor or physical input device.
 * **Core & GUI:** Licensed under [GPLv3](LICENSE).
 * **Reference Projects:** [FidoCadJ](https://github.com/DarwinNE/FidoCadJ) (Java) by Davide Bucci and [FidoCadJS](https://github.com/DarwinNE/FidoCadJ) (TypeScript).
 * **Rasterizer & Fonts:** Vendors [stb](https://github.com/nothings/stb) (`stb_truetype`, `stb_image_write`), [mimeTeX](vendor/mimetex/README.md) (GPLv3+) for native LaTeX math, and [Liberation Fonts](https://github.com/liberationfonts/liberation-fonts) (SIL Open Font License 1.1).
+
+Agents can focus the live canvas on a rectangle in drawing coordinates:
+
+```sh
+fcai session fit-rect /tmp/sketch.session 20 10 80 60 --wait
+```
+
+This centres and fits the region with a 10-unit margin, preserving the drawing
+and selection. Use ordered corners (`X1 > X0`, `Y1 > Y0`); fractional and
+negative coordinates are supported. Space/0 restores fitting the whole drawing.

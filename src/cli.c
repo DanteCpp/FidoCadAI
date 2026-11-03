@@ -706,17 +706,18 @@ static void session_usage(void) {
           "  save DIR                    save the current GUI drawing\n"
           "  reload DIR [--force]        reload disk (refuses unsaved GUI edits)\n"
           "  reload-libs DIR             reload libraries without restarting\n"
+          "  fit-rect DIR X0 Y0 X1 Y1    fit a rectangle in drawing coordinates\n"
           "  ack DIR [TEXT]              acknowledge the user's changes\n"
           "  quit DIR                    ask the GUI to close (Done)\n"
           "  path FILE                   print the default session dir\n"
-          "get/push/save/reload/reload-libs: --wait [--timeout SECS] prints a\n"
+          "get/push/save/reload/reload-libs/fit-rect: --wait [--timeout SECS] prints a\n"
           "correlated reply without consuming pending events (default 5 s).\n",
           stderr);
 }
 
 static int cmd_session(int argc, char **argv) {
     const char *sub = argc > 1 ? argv[1] : NULL, *dir;
-    const char *args[3], *base = NULL;
+    const char *args[4], *base = NULL;
     int nargs = 0, wait_reply = 0, timeout = 5, force = 0, i, rc;
     char id[100] = "";
     FcBuf b;
@@ -737,7 +738,7 @@ static int cmd_session(int argc, char **argv) {
             if (!fc_parse_int(argv[++i], &timeout) || timeout <= 0) {
                 fprintf(stderr, "fcai: timeout must be a positive integer\n"); return 1;
             }
-        } else if (nargs < 3 && (argv[i][0] != '-' || fc_streq(argv[i], "-"))) args[nargs++] = argv[i];
+        } else if (nargs < 4 && (fc_streq(sub, "fit-rect") || argv[i][0] != '-' || fc_streq(argv[i], "-"))) args[nargs++] = argv[i];
         else { session_usage(); return 1; }
     }
     if (base && !fc_streq(sub, "push")) { session_usage(); return 1; }
@@ -745,7 +746,7 @@ static int cmd_session(int argc, char **argv) {
     if (fc_streq(sub, "wait") && !nargs && !wait_reply) return session_wait(dir, timeout);
     if (fc_streq(sub, "status") && !nargs && !wait_reply) return session_status(dir);
     if (wait_reply && !(fc_streq(sub, "get") || fc_streq(sub, "push") ||
-                       fc_streq(sub, "save") || fc_streq(sub, "reload") || fc_streq(sub, "reload-libs"))) {
+                       fc_streq(sub, "save") || fc_streq(sub, "reload") || fc_streq(sub, "reload-libs") || fc_streq(sub, "fit-rect"))) {
         session_usage(); return 1;
     }
     fc_buf_init(&b);
@@ -764,6 +765,19 @@ static int cmd_session(int argc, char **argv) {
             if (fc_read_file(base, &content, &len) != FC_OK) goto bad_file;
             fc_buf_puts(&b, ",\"base\":"); fc_json_escape(&b, content); free(content);
         }
+    } else if (fc_streq(sub, "fit-rect") && nargs == 4) {
+        double r[4];
+        for (i = 0; i < 4; i++) {
+            if (!fc_parse_double(args[i], &r[i]) || !isfinite(r[i]) || fabs(r[i]) > FC_MAX_COORD) {
+                fprintf(stderr, "fcai: fit-rect requires finite drawing coordinates within +/- %.0f\n", FC_MAX_COORD);
+                fc_buf_free(&b); return 1;
+            }
+        }
+        if (r[2] <= r[0] || r[3] <= r[1]) {
+            fprintf(stderr, "fcai: fit-rect requires X1 > X0 and Y1 > Y0\n");
+            fc_buf_free(&b); return 1;
+        }
+        fc_buf_printf(&b, ",\"rect\":[%.17g,%.17g,%.17g,%.17g]", r[0], r[1], r[2], r[3]);
     } else if (fc_streq(sub, "set") && nargs == 2) {
         fc_buf_puts(&b, ",\"key\":"); fc_json_escape(&b, args[0]);
         fc_buf_puts(&b, ",\"value\":"); fc_json_escape(&b, args[1]);

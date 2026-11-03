@@ -27,6 +27,7 @@ public:
     void selectAll();
 
     void fit();
+    bool fitRect(const QRectF &bounds); /* drawing coordinates; preserves document and selection */
     void fitIfOutside(); /* keep agent updates visible without moving an already-fitting view */
     void zoomBy(double factor, QPointF at);
     void refresh(); /* settings/theme changed */
