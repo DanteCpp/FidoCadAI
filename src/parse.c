@@ -325,7 +325,11 @@ static void handle_line(ParseCtx *cx, const char **tok, int ntok) {
 
     if (is_fcj) return; /* stray FCJ */
     if (fc_streq(tok[0], "FJC")) {
-        apply_fjc(cx, tok, ntok);
+        if (ntok > 1 && fc_streq(tok[1], "IMAGE")) {
+            if (!fc_image_parse(cx->d, tok, ntok))
+                fc_drawing_diag(cx->d, cx->line, FC_DIAG_ERR, "invalid embedded PNG/JPEG image");
+            else cx->d->prims[cx->d->nprims - 1].src_line = cx->line;
+        } else apply_fjc(cx, tok, ntok);
         return;
     }
     if (is_ty || is_te) {

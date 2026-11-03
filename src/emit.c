@@ -93,6 +93,16 @@ void fc_emit_prim(FcBuf *b, const FcPrim *p, int extensions) {
     int i, n;
     const FcPoint *pts = fc_prim_points(p, &n);
     if (drop_degenerate(p)) return;
+    if (p->kind == FC_IMAGE) {
+        if (!extensions || !p->u.image.bitmap) return;
+        char h[32], a[32];
+        fc_fmt_num(x, 32, p->u.image.p.x); fc_fmt_num(y, 32, p->u.image.p.y);
+        fc_fmt_num(w[0], 32, p->u.image.width); fc_fmt_num(h, 32, p->u.image.height);
+        fc_fmt_num(a, 32, p->u.image.opacity);
+        fc_buf_printf(b, "FJC IMAGE %s %s %s %s %d %d %s %d %s\n", x,y,w[0],h,
+                      p->u.image.rotation, p->u.image.mirror, a, p->layer, p->u.image.bitmap->base64);
+        return;
+    }
     if (p->kind == FC_TEXT) {
         emit_label(b, &p->u.text); /* text has no FCJ/labels */
         return;
@@ -241,6 +251,12 @@ static void json_prim(FcBuf *b, const FcPrim *p) {
                       p->u.macro.mirror ? "true" : "false");
         fc_json_escape(b, p->u.macro.key ? p->u.macro.key : "");
     }
+    if (p->kind == FC_IMAGE) {
+        int iw, ih; fc_image_size(p->u.image.bitmap, &iw, &ih);
+        fc_buf_printf(b, ",\"width\":%.10g,\"height\":%.10g,\"rotation\":%d,\"mirror\":%s,\"opacity\":%.10g,\"pixels\":[%d,%d]",
+                      p->u.image.width, p->u.image.height, p->u.image.rotation,
+                      p->u.image.mirror ? "true" : "false", p->u.image.opacity, iw, ih);
+    }
     if (p->has_ext || p->ext.dash || p->ext.arrows || p->ext.width > 0) {
         char al[32], ah[32], w[32];
         fc_fmt_num(al, 32, p->ext.arrow_len);
@@ -285,6 +301,9 @@ static void include_prim_bounds(FcRect *r, const FcPrim *p, int *any, int tex) {
     const FcPoint *pts = fc_prim_points(p, &n);
     if (p->kind == FC_TEXT) {
         include_label(r, &p->u.text, any, tex);
+    } else if (p->kind == FC_IMAGE) {
+        FcPoint corners[4]; fc_image_corners(p, corners);
+        for (i = 0; i < 4; ++i) include_pt(r, corners[i], any);
     } else if (p->kind == FC_MACRO) {
         /* only unexpanded macros reach here; leave room for the render placeholder */
         FcPoint q = p->u.macro.p;
@@ -366,7 +385,7 @@ void fc_stats(const FcDrawing *d, const FcLib *lib, FcStats *out) {
     }
     for (i = 0; i < d->nprims; i++) {
         const FcPrim *p = &d->prims[i];
-        if ((int)p->kind >= 0 && (int)p->kind < 11) out->by_kind[p->kind]++;
+        if ((int)p->kind >= 0 && (int)p->kind < FC_KIND_COUNT) out->by_kind[p->kind]++;
         if (p->kind == FC_MACRO) {
             out->nmacros++;
             if (p->unresolved || (lib && !fc_lib_find(lib, p->u.macro.key))) out->nunresolved++;
@@ -397,6 +416,11 @@ static void describe_prim(FcBuf *b, const FcPrim *p, int i) {
         fc_buf_printf(b, " %s @(%s,%s) o=%d m=%d", p->u.macro.key ? p->u.macro.key : "?", a, c,
                       p->u.macro.orient, p->u.macro.mirror);
         if (p->unresolved) fc_buf_puts(b, " UNRESOLVED");
+        break;
+    case FC_IMAGE:
+        fc_buf_printf(b, " @(%.10g,%.10g) %.10gx%.10g rotation=%d mirror=%d opacity=%.10g",
+                      p->u.image.p.x,p->u.image.p.y,p->u.image.width,p->u.image.height,
+                      p->u.image.rotation,p->u.image.mirror,p->u.image.opacity);
         break;
     case FC_TEXT:
         fc_fmt_num(a, 32, p->u.text.p.x);
@@ -450,11 +474,11 @@ char *fc_describe(const FcDrawing *d, const FcLib *lib, int verbose) {
     fc_buf_printf(&b, ", %d macros", st.nmacros);
     if (st.nunresolved) fc_buf_printf(&b, " (%d unresolved)", st.nunresolved);
     fc_buf_putc(&b, '\n');
-    fc_buf_printf(&b, "kinds: LI=%d BE=%d RV/RP=%d EV/EP=%d PV/PP=%d CV/CP=%d SA=%d PL=%d PA=%d MC=%d TY=%d\n",
+    fc_buf_printf(&b, "kinds: LI=%d BE=%d RV/RP=%d EV/EP=%d PV/PP=%d CV/CP=%d SA=%d PL=%d PA=%d MC=%d TY=%d IMAGE=%d\n",
                   st.by_kind[FC_LINE], st.by_kind[FC_BEZIER], st.by_kind[FC_RECT],
                   st.by_kind[FC_OVAL], st.by_kind[FC_POLY], st.by_kind[FC_CURVE],
                   st.by_kind[FC_CONN], st.by_kind[FC_PCB_LINE], st.by_kind[FC_PCB_PAD],
-                  st.by_kind[FC_MACRO], st.by_kind[FC_TEXT]);
+                  st.by_kind[FC_MACRO], st.by_kind[FC_TEXT], st.by_kind[FC_IMAGE]);
     fc_buf_puts(&b, "layers:");
     {
         int any = 0;

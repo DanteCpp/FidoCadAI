@@ -57,9 +57,12 @@ typedef enum {
     FC_PCB_LINE,
     FC_PCB_PAD,
     FC_MACRO,
-    FC_TEXT
+    FC_TEXT,
+    FC_IMAGE
 } FcKind;
+#define FC_KIND_COUNT (FC_IMAGE + 1)
 
+typedef struct FcImage FcImage;
 struct FcArenaBlock;
 typedef struct FcArena {
     struct FcArenaBlock *blocks;
@@ -141,6 +144,12 @@ typedef struct {
             int orient, mirror;
             const char *key;
         } macro;
+        struct {
+            FcPoint p;
+            double width, height, opacity;
+            int rotation, mirror;
+            const FcImage *bitmap;
+        } image;
         FcLabel text;
     } u;
 } FcPrim;
@@ -164,6 +173,8 @@ typedef struct FcDrawing {
     FcArena arena;
     FcPrim *prims;
     int nprims, cap_prims;
+    FcImage **images; /* shared immutable image resources owned by this drawing */
+    int nimages, cap_images;
     FcLayer layers[FC_MAX_LAYERS];
     FcConfig cfg;
     FcDiag *diags;
@@ -183,7 +194,7 @@ typedef struct FcLib FcLib;
 
 typedef struct {
     int nprims;
-    int by_kind[11];
+    int by_kind[FC_KIND_COUNT];
     int nmacros;
     int nunresolved;
     int nlabels;
@@ -206,6 +217,17 @@ typedef struct {
     int has_crop;   /* use crop bounds in logical units instead of drawing bounds */
     FcRect crop;
 } FcRenderOpts;
+
+/* Embedded PNG/JPEG images. Dimensions <= 0 preserve the native aspect ratio;
+ * both <= 0 give a 100-unit-wide image. Returns primitive index, or -1 on failure.
+ * Encoded input is limited to 24 MiB, decoded images to 16 megapixels / 8192 per side. */
+#define FC_IMAGE_MAX_BYTES (24u * 1024u * 1024u)
+int fc_drawing_add_image(FcDrawing *d, const void *bytes, size_t len,
+                         double x, double y, double width, double height, int layer);
+void fc_image_corners(const FcPrim *p, FcPoint corners[4]);
+void fc_image_size(const FcImage *image, int *width, int *height);
+/* Borrowed, tightly packed RGBA8 pixels; valid while the drawing owns image. */
+const uint8_t *fc_image_pixels(const FcImage *image);
 
 /* Viewport for interactive rendering: pixel = logical * scale + origin. */
 typedef struct {

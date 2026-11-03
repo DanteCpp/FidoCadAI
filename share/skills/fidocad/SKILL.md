@@ -240,6 +240,15 @@ array of `{layer, before, after}` with `rgb`, `alpha`, `name`); `changes`
 counts them too. With a GUI open, write the result and `session push` it (or
 edit the open file) so the window reloads with the new colours.
 
+## Embedded pictures
+
+Use `fcai image drawing.fcd --from picture.png --at 20 30 --width 100 -o next.fcd`
+to embed a PNG/JPEG. Omit one dimension to preserve aspect ratio. Images live
+inside the drawing as `FJC IMAGE` records and render in the CLI and GUI.
+GUI: Shift+I imports a path, drop image files, or Ctrl+V pastes an image.
+Select to move, resize with corner handles, or press P for dimensions, rotation,
+mirror, opacity and layer.
+
 ## Drawing in the GUI
 
 `K`: searchable keyboard map; `I`: status bar (cursor, zoom, layer, selection).

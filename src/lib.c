@@ -442,6 +442,10 @@ static FcPrim *copy_prim(FcDrawing *dst, const FcPrim *src) {
     FcPrim *p = fc_drawing_push(dst);
     if (!p) return NULL;
     *p = *src;
+    if (src->kind == FC_IMAGE && !fc_image_hold(dst, src->u.image.bitmap)) {
+        dst->nprims--;
+        return NULL;
+    }
     if ((src->kind == FC_POLY || src->kind == FC_CURVE) && src->u.poly.n > 0) {
         size_t size = (size_t)src->u.poly.n * sizeof(FcPoint);
         p->u.poly.pts = (FcPoint *)fc_arena_alloc(&dst->arena, size);

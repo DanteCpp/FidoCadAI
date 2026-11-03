@@ -348,6 +348,7 @@ void fc_drawing_init(FcDrawing *d) {
 }
 
 void fc_drawing_free(FcDrawing *d) {
+    fc_images_release(d);
     free(d->prims);
     free(d->diags);
     fc_arena_free(&d->arena);
@@ -355,6 +356,7 @@ void fc_drawing_free(FcDrawing *d) {
 }
 
 void fc_drawing_clear(FcDrawing *d) {
+    fc_images_release(d);
     free(d->prims);
     free(d->diags);
     fc_arena_free(&d->arena);
@@ -427,8 +429,9 @@ static const struct {
     [FC_PCB_PAD] = {"pcb_pad", "PA", NULL, 1, FC_KIND_LABELS},
     [FC_MACRO] = {"macro", "MC", NULL, 1, FC_KIND_LABELS},
     [FC_TEXT] = {"text", "TY", NULL, 1, 0},
+    [FC_IMAGE] = {"image", "FJC IMAGE", NULL, 1, 0},
 };
-#define KIND_OK(k) ((unsigned)(k) <= (unsigned)FC_TEXT)
+#define KIND_OK(k) ((unsigned)(k) < (unsigned)FC_KIND_COUNT)
 
 /* fc_prim_points relies on every fixed-size member starting with its points. */
 _Static_assert(offsetof(FcPrim, u.line.b) == offsetof(FcPrim, u) + sizeof(FcPoint), "line");
@@ -453,7 +456,7 @@ FcPoint *fc_prim_points(const FcPrim *p, int *n) {
 int fc_code_kind(const char *tok, FcKind *kind, int *filled) {
     int k;
     if (!tok) return 0;
-    for (k = 0; k <= FC_TEXT; k++) {
+    for (k = 0; k < FC_KIND_COUNT; k++) {
         *filled = fc_streq(tok, k_kinds[k].filled_code);
         if (*filled || fc_streq(tok, k_kinds[k].code)) {
             *kind = (FcKind)k;
@@ -532,6 +535,15 @@ void fc_xform_prim(FcPrim *p, int orient, int mirror, double ox, double oy) {
     FcPoint *pts = fc_prim_points(p, &n);
     if (p->kind == FC_TEXT) {
         fc_xform_label(&p->u.text, orient, mirror, ox, oy);
+    } else if (p->kind == FC_IMAGE) {
+        FcLabel l = {0};
+        l.p = p->u.image.p;
+        l.rotation = p->u.image.rotation;
+        l.style = p->u.image.mirror ? FC_STYLE_MIRROR : 0;
+        fc_xform_label(&l, orient, mirror, ox, oy);
+        p->u.image.p = l.p;
+        p->u.image.rotation = l.rotation;
+        p->u.image.mirror = !!(l.style & FC_STYLE_MIRROR);
     } else {
         for (i = 0; i < n; i++) fc_xform_point(&pts[i], orient, mirror, ox, oy);
     }

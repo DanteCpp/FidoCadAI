@@ -14,7 +14,7 @@ PREFIX  ?= /usr/local
 BINDIR  ?= $(PREFIX)/bin
 DATADIR ?= $(PREFIX)/share/fidocad
 
-SRC := src/util.c src/sys.c src/parse.c src/emit.c src/edit.c src/lint.c src/lib.c src/tex.c src/font.c src/ttf.c src/vendor_impl.c src/render.c
+SRC := src/util.c src/sys.c src/parse.c src/emit.c src/edit.c src/lint.c src/lib.c src/tex.c src/font.c src/ttf.c src/vendor_impl.c src/image.c src/render.c
 OBJ := $(patsubst src/%.c,build/%.o,$(SRC)) build/mimetex.o
 CLI_OBJ := build/cli.o build/style.o
 TEST_OBJ := build/test_core.o
@@ -27,12 +27,12 @@ CXX      ?= c++
 # (macOS) does not know it, so only pass it when the compiler is not clang.
 CXX_IS_CLANG := $(findstring clang,$(shell $(CXX) --version 2>/dev/null))
 CXXFLAGS ?= -std=c++17 -Wall -Wextra $(if $(CXX_IS_CLANG),,-Wno-sfinae-incomplete) -O2 -g
-QT_PKGS  := Qt6Widgets
+QT_PKGS  := Qt6Widgets Qt6OpenGLWidgets
 HAVE_QT  := $(shell pkg-config --exists $(QT_PKGS) 2>/dev/null && echo 1)
 HAVE_QT_TEST := $(shell pkg-config --exists Qt6Test 2>/dev/null && echo 1)
 QT_CFLAGS = $(shell pkg-config --cflags $(QT_PKGS))
 QT_LIBS   = $(shell pkg-config --libs $(QT_PKGS))
-GUI_SRC  := gui/main.cpp gui/window.cpp gui/canvas.cpp gui/session.cpp gui/document.cpp gui/settings.cpp gui/theme.cpp gui/props.cpp gui/keysheet.cpp
+GUI_SRC  := gui/main.cpp gui/window.cpp gui/canvas.cpp gui/scene.cpp gui/session.cpp gui/document.cpp gui/settings.cpp gui/theme.cpp gui/props.cpp gui/keysheet.cpp
 GUI_OBJ  := $(patsubst gui/%.cpp,build/gui/%.o,$(GUI_SRC))
 GUI_HDR  := $(wildcard gui/*.h) include/fidocad.h
 
@@ -60,14 +60,38 @@ build/test_gui: $(OBJ) $(filter-out build/gui/main.o,$(GUI_OBJ)) build/gui/test_
 build/test_ui: $(OBJ) $(filter-out build/gui/main.o,$(GUI_OBJ)) build/gui/test_ui.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(QT_LIBS) $(shell pkg-config --libs Qt6Test) $(LDLIBS)
 
+build/test_gpu: $(OBJ) $(filter-out build/gui/main.o,$(GUI_OBJ)) build/gui/test_gpu.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(QT_LIBS) $(shell pkg-config --libs Qt6Test) $(LDLIBS)
+
+build/test_scene: $(OBJ) build/gui/scene.o build/gui/test_scene.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(QT_LIBS) $(LDLIBS)
+
+# Requires a real display and OpenGL context (not Qt's offscreen platform).
+.PHONY: test-gpu
+test-gpu: build/test_gpu
+	./build/test_gpu
+
+build/test_images_gui: $(OBJ) $(filter-out build/gui/main.o,$(GUI_OBJ)) build/gui/test_images_gui.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(QT_LIBS) $(LDLIBS)
+
+build/test_images: $(OBJ) build/test_images.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+
+build/test_images.o: tests/test_images.c include/fidocad.h src/internal.h | build
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+
 # LeakSanitizer flags fontconfig/pango caches owned by Qt, not by us.
-test-gui: build/test_gui build/test_ui build/fcai-gui build/fcai
+test-gui: build/test_scene build/test_images_gui build/test_gui build/test_ui build/fcai-gui build/fcai
+	QT_QPA_PLATFORM=offscreen ./build/test_scene
+	QT_QPA_PLATFORM=offscreen ASAN_OPTIONS=detect_leaks=0 ./build/test_images_gui
 	QT_QPA_PLATFORM=offscreen ASAN_OPTIONS=detect_leaks=0 ./build/test_gui
 	QT_QPA_PLATFORM=offscreen ASAN_OPTIONS=detect_leaks=0 ./build/test_ui
 	QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 ASAN_OPTIONS=detect_leaks=0 ./build/test_ui
 
 build:
 	mkdir -p build
+
+build/image.o: vendor/stb_image.h
 
 build/font.o: src/font_stroke.h
 build/render.o: src/font8x8.h src/font_stroke.h
@@ -92,7 +116,8 @@ build/fcai: $(OBJ) $(CLI_OBJ)
 build/test_core: $(OBJ) $(TEST_OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
-test: build/test_core build/fcai
+test: build/test_images build/test_core build/fcai
+	./build/test_images
 	./build/test_core
 	sh tests/test_cli.sh ./build/fcai
 	sh tests/test_style.sh ./build/fcai
@@ -141,6 +166,7 @@ install: all
 	if [ -f build/fcai-gui ]; then install -m 755 build/fcai-gui $(DESTDIR)$(BINDIR)/fcai-gui; fi
 	install -m 644 share/lib/*.fcl $(DESTDIR)$(DATADIR)/lib/
 	install -m 644 share/fonts/*.ttf $(DESTDIR)$(DATADIR)/fonts/
+	install -m 644 vendor/stb_image-LICENSE $(DESTDIR)$(DATADIR)/stb_image-LICENSE
 	install -m 644 LICENSE $(DESTDIR)$(DATADIR)/LICENSE
 	install -m 644 vendor/mimetex/COPYING $(DESTDIR)$(DATADIR)/mimetex-COPYING
 	rm -rf $(DESTDIR)$(DATADIR)/skills/fidocad

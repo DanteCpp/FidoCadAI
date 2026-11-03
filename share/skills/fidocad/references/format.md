@@ -760,3 +760,22 @@ A reader is conforming if it:
   primitive.
 
 A writer is conforming if it follows §9 and produces idempotent output.
+
+## Embedded PNG/JPEG pictures (FidoCadAI extension)
+
+```
+FJC IMAGE x y width height rotation mirror opacity layer base64
+```
+
+The final token embeds the original PNG/JPEG bytes as base64. Position is the
+image's local top-left anchor; width/height are positive drawing units, rotation
+is clockwise in whole degrees, mirror is 0/1 about the local vertical axis, and
+opacity is 0..1 multiplied by layer opacity. Layer RGB does not tint the image.
+Records survive normal emit, editing, expansion, diff and save/load. They are
+omitted when extensions are disabled. `FJC IMG` remains the separate legacy
+background-placement configuration record.
+
+Use `fcai image FILE --from IMAGE --at X Y [--width W] [--height H] [--layer N]
+[-o OUT]` to encode pictures without constructing base64 by hand. Native bounds,
+hit-testing, handles and PNG/PPM rendering include pictures. Limits: 24 MiB
+encoded, 16 megapixels decoded, 8192 pixels per side.

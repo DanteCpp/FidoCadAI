@@ -28,6 +28,7 @@ static const char *k_help =
     "  lint       Advisory wire/dot geometry checks (--json supported)\n"
     "  hit FILE --at X Y [--tol N]   Pick a primitive index\n"
     "  find FILE --bbox X0 Y0 X1 Y1  Indices intersecting bounds\n"
+    "  image FILE --from PNG_OR_JPEG --at X Y [--width W] [--height H] [--layer N] [-o OUT]\n"
     "  edit move|rm|add|set|layer FILE  Structured edit; emit result to stdout/-o\n"
     "  config     Show effective settings\n"
     "  diff A B   Primitive-level changes from A to B (--json for ops)\n"
@@ -109,6 +110,7 @@ typedef struct {
     FcRect box;
     double x, y, tolerance, dx, dy, stroke, alpha;
     const char *action, *from, *name, *value, *text;
+    const char *image_width, *image_height;
     int has_color, reset;
     uint32_t color;
 } Opt;
@@ -401,6 +403,37 @@ static int edit_drawing(const Opt *o, FcDrawing *d) {
     return FC_OK;
 }
 
+static int cmd_image(const Opt *o, FcDrawing *d, FcLib *lib) {
+    (void)lib;
+    double w = 0, h = 0;
+    struct stat st;
+    if (!o->from || !o->has_at || !o->extensions ||
+        (o->image_width && (!fc_parse_double(o->image_width, &w) || !isfinite(w) || w <= 0)) ||
+        (o->image_height && (!fc_parse_double(o->image_height, &h) || !isfinite(h) || h <= 0))) {
+        fprintf(stderr, "fcai: image requires --from IMAGE --at X Y, positive dimensions and extensions enabled\n");
+        return FC_ERR_ARG;
+    }
+    for (int i = 0; i < d->ndiags; ++i) if (d->diags[i].level == FC_DIAG_ERR) {
+        fprintf(stderr, "fcai: invalid drawing: %s\n", d->diags[i].msg);
+        return FC_ERR_ARG;
+    }
+    if (stat(o->from, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 || st.st_size > FC_IMAGE_MAX_BYTES) {
+        fprintf(stderr, "fcai: cannot read image %s (maximum 24 MiB)\n", o->from);
+        return FC_ERR_IO;
+    }
+    char *bytes = NULL, *out = NULL;
+    size_t n = 0;
+    if (fc_read_file(o->from, &bytes, &n) != FC_OK ||
+        fc_drawing_add_image(d, bytes, n, o->x, o->y, w, h, o->layer < 0 ? 0 : o->layer) < 0) {
+        free(bytes);
+        fprintf(stderr, "fcai: cannot import image; use PNG/JPEG within image and placement limits\n");
+        return FC_ERR_ARG;
+    }
+    free(bytes);
+    fc_emit(d, &out, 1);
+    return put(o, out);
+}
+
 static int cmd_edit(const Opt *o, FcDrawing *d, FcLib *lib) {
     char *s = NULL;
     (void)lib;
@@ -558,7 +591,7 @@ static const Command k_commands[] = {
     {"validate", cmd_validate, 1}, {"render", cmd_render, 1},   {"expand", cmd_expand, 1},
     {"lint", cmd_lint, 1},       {"edit", cmd_edit, 1},         {"hit", cmd_query, 1},
     {"find", cmd_query, 1},      {"lib", cmd_lib, 0},           {"config", cmd_config, 0},
-    {"diff", cmd_diff, 0},       {"macro", cmd_macro, 0},
+    {"image", cmd_image, 1},     {"diff", cmd_diff, 0},       {"macro", cmd_macro, 0},
 };
 
 static const Command *find_command(const char *name) {
@@ -1178,6 +1211,8 @@ int main(int argc, char **argv) {
                 continue;
             }
             if (st && i + 1 < argc) {
+                if (fc_streq(a, "--width")) o.image_width = argv[i + 1];
+                if (fc_streq(a, "--height")) o.image_height = argv[i + 1];
                 set_value(&o, st, argv[++i]);
                 continue;
             }

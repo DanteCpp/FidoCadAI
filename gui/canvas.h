@@ -3,15 +3,16 @@
 #include "document.h"
 #include "settings.h"
 #include "theme.h"
+#include "scene.h"
 
 #include <QImage>
 #include <QPointF>
+#include <QTimer>
 #include <QWidget>
 #include <functional>
 
-/* Point-and-click editor. The drawing itself is painted by the C renderer
- * (fc_render_rgb) so it matches `fcai render`; selection and tool previews are
- * drawn on top with QPainter. */
+/* Point-and-click editor, with an OpenGL canvas on desktop platforms and the
+ * core raster renderer for headless operation / explicit software fallback. */
 class Canvas : public QWidget {
 public:
     enum Tool { Select, Line, Rect, Oval, Dot, Text, Macro };
@@ -39,6 +40,8 @@ public:
     void duplicateSelection();
     void copySelection();
     void paste();
+    void importImage(); /* Shift+I: inline file-path form */
+    bool importImageFile(const QString &path, QPointF at, QString *error = nullptr);
     /* Properties form drawn inside the canvas (P, F2, double-click). No
      * separate window: Hyprland can bury a modal dialog behind the drawing. */
     void editSelection();
@@ -54,6 +57,7 @@ public:
 
     QPointF toPixel(QPointF lg) const;     /* logical -> widget coordinates */
     QColor paper() const;                  /* canvas background (palette preview uses it) */
+    QString gpuRenderer() const;           /* actual GL renderer, empty on software path */
 
     std::function<void()> onSelectionChanged;
     std::function<void(const QString &)> onStatus;
@@ -71,6 +75,8 @@ protected:
     bool event(QEvent *) override; /* touchpad pinch / pan gestures */
     void keyPressEvent(QKeyEvent *) override;
     void leaveEvent(QEvent *) override;
+    void dragEnterEvent(QDragEnterEvent *) override;
+    void dropEvent(QDropEvent *) override;
 
 private:
     QPointF toLogical(QPointF px) const;
@@ -79,6 +85,11 @@ private:
     int layer() const;
     QColor layerColor(int l) const; /* layer ink, adapted for dark paper */
     void renderCache();
+    void paint(class QPainter &p, bool gpu);
+    void paintScene(class QPainter &p);
+    void updateCanvas();
+    QPointF imagePosition() const;
+    bool importImageBytes(const QByteArray &bytes, QPointF at, QString *error);
     void finishLine();
     void cancelOp();
     void status();
@@ -110,7 +121,12 @@ private:
     void panBy(QPointF d);
     bool auto_fit_ = true; /* follow canvas resizes until the user pans or zooms */
     QImage cache_;
+    QTimer view_settle_;
+    QPointF cache_origin_;
+    double cache_scale_ = 4;
     bool dirty_ = true;
+    class CanvasSurface *surface_ = nullptr;
+    Scene scene_;
 
     enum Op { None, Panning, Moving, Resizing, Banding, Drawing, RulerArmed } op_ = None;
     QPointF press_px_, press_lg_, cursor_lg_, moved_;

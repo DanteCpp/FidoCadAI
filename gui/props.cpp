@@ -10,6 +10,7 @@
 #include <QPainter>
 #include <QRegularExpression>
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 InlineForm::InlineForm(QWidget *parent, const QString &title) : QFrame(parent) {
@@ -176,7 +177,7 @@ QString coordsHint(const FcPrim &p) {
 bool parseNum(const QString &s, double *out) {
     bool ok;
     *out = s.trimmed().toDouble(&ok);
-    return ok;
+    return ok && std::isfinite(*out);
 }
 
 } // namespace
@@ -193,6 +194,7 @@ InlineForm *editProperties(QWidget *parent, Document *doc, int i) {
 
     QLineEdit *text = nullptr, *font = nullptr, *sizeY = nullptr, *sizeX = nullptr, *rot = nullptr;
     QCheckBox *bold = nullptr, *italic = nullptr, *mirrorTxt = nullptr;
+    QLineEdit *imageW = nullptr, *imageH = nullptr, *opacity = nullptr;
     QLineEdit *key = nullptr;
     QComboBox *orient = nullptr;
     QCheckBox *mirror = nullptr;
@@ -215,7 +217,7 @@ InlineForm *editProperties(QWidget *parent, Document *doc, int i) {
         orient = f->addChoice("Rotation", kOrient, p0.u.macro.orient & 3);
         mirror = f->addCheck("Mirrored", p0.u.macro.mirror);
     }
-    if (k != FC_TEXT) {
+    if (k != FC_TEXT && k != FC_IMAGE) {
         name = f->addText("Name", oldName, "e.g. R1");
         value = f->addText("Value", oldValue, "e.g. 10k");
     }
@@ -245,6 +247,13 @@ InlineForm *editProperties(QWidget *parent, Document *doc, int i) {
         mirrorTxt = f->addCheck("Mirrored", t.style & 4);
         font = f->addText("Font", QString::fromUtf8(t.font && *t.font ? t.font : "*"),
                           "* (default), Sans-serif, Courier New, Times New Roman, ...");
+    }
+    if (k == FC_IMAGE) {
+        imageW = f->addText("Width", num(p0.u.image.width));
+        imageH = f->addText("Height", num(p0.u.image.height));
+        rot = f->addText("Rotation (deg)", QString::number(p0.u.image.rotation));
+        mirror = f->addCheck("Mirrored", p0.u.image.mirror);
+        opacity = f->addText("Opacity", num(p0.u.image.opacity), "0 transparent · 1 opaque");
     }
     if (k == FC_PCB_LINE) width = f->addText("Width", num(p0.u.pcb_line.width));
     if (k == FC_PCB_PAD) {
@@ -328,6 +337,18 @@ InlineForm *editProperties(QWidget *parent, Document *doc, int i) {
                 !parseNum(hole->text(), &p.u.pad.hole))
                 return "pad sizes must be numbers";
             p.u.pad.style = padStyle->currentIndex();
+        }
+        if (k == FC_IMAGE) {
+            if (!parseNum(imageW->text(), &p.u.image.width) || p.u.image.width < .001 || p.u.image.width > FC_MAX_COORD ||
+                !parseNum(imageH->text(), &p.u.image.height) || p.u.image.height < .001 || p.u.image.height > FC_MAX_COORD)
+                return "image dimensions must be between 0.001 and 1000000";
+            if (!parseNum(opacity->text(), &p.u.image.opacity) || p.u.image.opacity < 0 || p.u.image.opacity > 1)
+                return "opacity must be between 0 and 1";
+            bool ok; p.u.image.rotation = rot->text().trimmed().toInt(&ok);
+            if (!ok) return "rotation must be whole degrees";
+            p.u.image.mirror = mirror->isChecked();
+            if (p.u.image.p.x < 0 || p.u.image.p.y < 0 || p.u.image.p.x > FC_MAX_COORD || p.u.image.p.y > FC_MAX_COORD)
+                return "image coordinates must be between 0 and 1000000";
         }
         /* labels move with the layer */
         p.name.layer = p.value.layer = p.layer;

@@ -37,6 +37,7 @@ static void shift(FcPoint *p, double dx, double dy) {
 
 static int geometry_handles(const FcPrim *p) {
     int n = 0;
+    if (p && p->kind == FC_IMAGE) return 4;
     if (p) fc_prim_points(p, &n);
     return n;
 }
@@ -68,7 +69,9 @@ int fc_prim_handle(const FcPrim *p, int i, FcPoint *out) {
     if (!p || !out || i < 0 || i >= fc_prim_handles(p)) return 0;
     label = label_handle_slot(p, i);
     if (label) *out = label == 1 ? p->name.p : p->value.p;
-    else *out = fc_prim_points(p, &n)[i];
+    else if (p->kind == FC_IMAGE) {
+        FcPoint corners[4]; fc_image_corners(p, corners); *out = corners[i];
+    } else *out = fc_prim_points(p, &n)[i];
     return 1;
 }
 
@@ -81,7 +84,21 @@ void fc_prim_set_handle(FcPrim *p, int i, double x, double y) {
     label = label_handle_slot(p, i);
     if (label == 1) p->name.p = q;
     else if (label == 2) p->value.p = q;
-    else fc_prim_points(p, &n)[i] = q;
+    else if (p->kind == FC_IMAGE) {
+        FcPoint corners[4]; fc_image_corners(p, corners);
+        FcPoint fixed = corners[(i + 2) % 4];
+        double a = (p->u.image.rotation % 360) * 0.017453292519943295;
+        double m = p->u.image.mirror ? -1 : 1;
+        FcPoint u = {m*cos(a), m*sin(a)}, v = {-sin(a), cos(a)};
+        double dx = q.x - fixed.x, dy = q.y - fixed.y;
+        int right = i == 1 || i == 2, bottom = i == 2 || i == 3;
+        double w = fmin(FC_MAX_COORD, fmax(.01, (right ? 1 : -1) * (dx*u.x + dy*u.y)));
+        double h = fmin(FC_MAX_COORD, fmax(.01, (bottom ? 1 : -1) * (dx*v.x + dy*v.y)));
+        FcPoint anchor = {fixed.x - (right ? 0 : w)*u.x - (bottom ? 0 : h)*v.x,
+                               fixed.y - (right ? 0 : w)*u.y - (bottom ? 0 : h)*v.y};
+        if (anchor.x < FC_MIN_COORD || anchor.y < FC_MIN_COORD || anchor.x > FC_MAX_COORD || anchor.y > FC_MAX_COORD) return;
+        p->u.image.width = w; p->u.image.height = h; p->u.image.p = anchor;
+    } else fc_prim_points(p, &n)[i] = q;
 }
 
 void fc_prim_translate(FcPrim *p, double dx, double dy) {
@@ -218,6 +235,10 @@ static double prim_dist(FcPoint p, const FcPrim *q) {
     case FC_MACRO:
         best = hypot(p.x - q->u.macro.p.x, p.y - q->u.macro.p.y);
         break;
+    case FC_IMAGE:
+        fc_image_corners(q, pts);
+        best = inside_poly(p, pts, 4) ? 0 : poly_dist(p, pts, 4, 1);
+        break;
     case FC_TEXT:
         best = label_dist(p, &q->u.text);
         break;
@@ -303,7 +324,7 @@ int fc_prim_set_text(FcDrawing *d, int index, int which, const char *text) {
         p->u.text.text = fc_arena_strdup(&d->arena, text);
         return p->u.text.text ? FC_OK : FC_ERR_NOMEM;
     }
-    if (p->kind == FC_TEXT) return FC_ERR_ARG;
+    if (p->kind == FC_TEXT || p->kind == FC_IMAGE) return FC_ERR_ARG;
     l = which == 1 ? &p->name : &p->value;
     has = which == 1 ? &p->has_name : &p->has_value;
     if (!text[0]) {

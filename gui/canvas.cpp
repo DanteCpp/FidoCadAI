@@ -4,12 +4,23 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QBuffer>
+#include <QCompleter>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QFile>
+#include <QFileSystemModel>
+#include <QMimeData>
+#include <QUrl>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QMouseEvent>
 #include <QNativeGestureEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QOpenGLWidget>
+#include <QOpenGLContext>
+#include <QOpenGLFunctions>
 #include <QWheelEvent>
 #include <cmath>
 #include <cstring>
@@ -36,13 +47,63 @@ QString toolName(Canvas::Tool t) {
 
 } // namespace
 
+/* Keep event handling and inline forms on Canvas. This child supplies the
+ * OpenGL paint device; it does not intercept editor input. */
+class CanvasSurface : public QOpenGLWidget {
+public:
+    CanvasSurface(QWidget *parent, std::function<void(QPainter &)> draw)
+        : QOpenGLWidget(parent), draw_(std::move(draw)) {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setFocusPolicy(Qt::NoFocus);
+        QSurfaceFormat f = format();
+        f.setSamples(4);
+        f.setSwapInterval(1);
+        setFormat(f);
+    }
+    QString renderer;
+protected:
+    void initializeGL() override {
+        const auto *name = context()->functions()->glGetString(GL_RENDERER);
+        renderer = QString::fromLatin1(reinterpret_cast<const char *>(name));
+        qInfo("fcai-gui: OpenGL canvas: %s", qPrintable(renderer));
+    }
+    void paintGL() override {
+        QPainter p(this);
+        draw_(p);
+    }
+private:
+    std::function<void(QPainter &)> draw_;
+};
+
 Canvas::Canvas(Document *doc, Settings *settings, const Theme *theme, QWidget *parent)
     : QWidget(parent), doc_(doc), settings_(settings), theme_(theme) {
+    setAcceptDrops(true);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     setAttribute(Qt::WA_OpaquePaintEvent);
     setMinimumSize(320, 240);
+    view_settle_.setSingleShot(true);
+    view_settle_.setInterval(120);
+    connect(&view_settle_, &QTimer::timeout, this, [this] {
+        dirty_ = true;
+        updateCanvas();
+    });
+    const QString platform = QGuiApplication::platformName();
+    if (platform != "offscreen" && platform != "minimal" &&
+        qgetenv("FCAI_RENDERER") != "software") {
+        surface_ = new CanvasSurface(this, [this](QPainter &p) { paint(p, true); });
+        surface_->setGeometry(rect());
+        surface_->lower();
+    }
     sheet_ = new KeySheet(theme_, this);
+}
+
+QString Canvas::gpuRenderer() const { return surface_ ? surface_->renderer : QString(); }
+
+void Canvas::updateCanvas() {
+    // Schedule the GL child directly, without an extra parent repaint first.
+    if (surface_) surface_->update();
+    else QWidget::update();
 }
 
 int Canvas::grid() const {
@@ -87,7 +148,7 @@ void Canvas::setTool(Tool t) {
     }
     setCursor(t == Select ? Qt::ArrowCursor : Qt::CrossCursor);
     status();
-    update();
+    updateCanvas();
 }
 
 void Canvas::setMacro(const QString &key) {
@@ -104,7 +165,7 @@ void Canvas::setSelection(const QList<int> &sel) {
         if (i >= 0 && i < doc_->count() && !sel_.contains(i)) sel_ << i;
     if (onSelectionChanged) onSelectionChanged();
     status();
-    update();
+    updateCanvas();
 }
 
 void Canvas::selectAll() {
@@ -126,7 +187,7 @@ void Canvas::fit() {
     auto_fit_ = true;
     dirty_ = true;
     status();
-    update();
+    updateCanvas();
 }
 
 bool Canvas::fitRect(const QRectF &bounds) {
@@ -143,20 +204,21 @@ bool Canvas::fitRect(const QRectF &bounds) {
     auto_fit_ = false;
     dirty_ = true;
     status();
-    update();
+    updateCanvas();
     return true;
 }
 
 void Canvas::zoomBy(double f, QPointF at) {
+    if (!std::isfinite(f) || f <= 0) return;
     auto_fit_ = false;
     double ns = std::clamp(scale_ * f, 0.25, 60.0);
     QPointF lg = toLogical(at);
     scale_ = ns;
     ox_ = at.x() - lg.x() * scale_;
     oy_ = at.y() - lg.y() * scale_;
-    dirty_ = true;
+    view_settle_.start();
     status();
-    update();
+    updateCanvas();
 }
 
 void Canvas::panBy(QPointF d) {
@@ -164,8 +226,8 @@ void Canvas::panBy(QPointF d) {
     auto_fit_ = false;
     ox_ += d.x();
     oy_ += d.y();
-    dirty_ = true;
-    update();
+    view_settle_.start();
+    updateCanvas();
 }
 
 void Canvas::fitIfOutside() {
@@ -178,7 +240,7 @@ void Canvas::fitIfOutside() {
 void Canvas::refresh() {
     dirty_ = true;
     status();
-    update();
+    updateCanvas();
 }
 
 void Canvas::docChanged() {
@@ -193,20 +255,23 @@ void Canvas::docChanged() {
     }
     dirty_ = true;
     status();
-    update();
+    updateCanvas();
 }
 
 /* ---------- painting ---------- */
 
 void Canvas::renderCache() {
+    /* Overscan keeps newly exposed edges available during small gestures. */
+    constexpr int margin = 192;
     qreal dpr = devicePixelRatioF();
-    int w = std::max(1, (int)std::ceil(width() * dpr)), h = std::max(1, (int)std::ceil(height() * dpr));
+    int w = std::max(1, (int)std::ceil((width() + 2 * margin) * dpr));
+    int h = std::max(1, (int)std::ceil((height() + 2 * margin) * dpr));
     if (cache_.size() != QSize(w, h)) cache_ = QImage(w, h, QImage::Format_RGB888);
     cache_.setDevicePixelRatio(dpr);
     FcView v;
     memset(&v, 0, sizeof v);
-    v.ox = ox_ * dpr;
-    v.oy = oy_ * dpr;
+    v.ox = (ox_ + margin) * dpr;
+    v.oy = (oy_ + margin) * dpr;
     v.scale = scale_ * dpr;
     v.bg = toRgb(paper());
     v.grid = settings_->getBool("show_grid") ? grid() : 0;
@@ -217,6 +282,8 @@ void Canvas::renderCache() {
     for (int i = 0; i < FC_MAX_LAYERS; i++) ink[i] = layerColor(i).rgb() & 0xFFFFFFu;
     v.layer_rgb = ink;
     fc_render_rgb(&doc_->drawing(), doc_->lib(), &v, cache_.bits(), w, h, (int)cache_.bytesPerLine());
+    cache_origin_ = QPointF(ox_ + margin, oy_ + margin);
+    cache_scale_ = scale_;
     dirty_ = false;
 }
 
@@ -264,6 +331,12 @@ void Canvas::sketch(QPainter &p, const FcDrawing &flat, const QList<int> *origin
         case FC_PCB_PAD:
             p.drawEllipse(pt(q.u.pad.p), q.u.pad.rx / 2, q.u.pad.ry / 2);
             break;
+        case FC_IMAGE: {
+            FcPoint corners[4]; fc_image_corners(&q, corners);
+            QPolygonF poly; for (const auto &corner : corners) poly << pt(corner);
+            p.drawPolygon(poly);
+            break;
+        }
         case FC_TEXT: {
             const FcLabel &l = q.u.text;
             FcRect box;
@@ -370,9 +443,63 @@ void Canvas::drawRuler(QPainter &p) const {
 }
 
 void Canvas::paintEvent(QPaintEvent *) {
-    if (dirty_ || cache_.isNull()) renderCache();
+    if (surface_) {
+        surface_->update();
+        return;
+    }
     QPainter p(this);
-    p.drawImage(QPointF(0, 0), cache_);
+    paint(p, false);
+}
+
+void Canvas::paintScene(QPainter &p) {
+    if (dirty_) {
+        std::array<QColor, FC_MAX_LAYERS> colors;
+        for (int i = 0; i < FC_MAX_LAYERS; ++i) colors[i] = layerColor(i);
+        scene_.rebuild(doc_->drawing(), doc_->lib(), colors, settings_->getBool("tex"),
+                       scale_ * devicePixelRatioF());
+        dirty_ = false;
+    }
+    p.fillRect(rect(), paper());
+    double step = grid() * scale_;
+    if (settings_->getBool("show_grid") && step * devicePixelRatioF() >= 4) {
+        const qreal pixel = 1.0 / devicePixelRatioF();
+        p.setPen(QPen(Theme::isDark(paper()) ? theme_->muted : QColor(190, 190, 200), pixel));
+        QList<QPointF> points;
+        auto firstX = static_cast<qint64>(std::floor(-ox_ / step));
+        auto firstY = static_cast<qint64>(std::floor(-oy_ / step));
+        for (qint64 y = firstY; y * step + oy_ < height(); ++y) {
+            for (qint64 x = firstX; x * step + ox_ < width(); ++x) {
+                QPointF dot(x * step + ox_, y * step + oy_);
+                points << dot;
+                if (x % 5 == 0 && y % 5 == 0)
+                    points << dot + QPointF(pixel, 0) << dot - QPointF(pixel, 0)
+                           << dot + QPointF(0, pixel) << dot - QPointF(0, pixel);
+            }
+        }
+        p.drawPoints(points);
+    }
+    p.save();
+    p.setTransform(QTransform(scale_, 0, 0, scale_, ox_, oy_));
+    scene_.paint(p, QRectF(toLogical({0, 0}), toLogical({double(width()), double(height())})));
+    p.restore();
+}
+
+void Canvas::paint(QPainter &p, bool gpu) {
+    if (gpu) {
+        paintScene(p);
+    } else {
+        auto cacheRect = [this] {
+            double ratio = scale_ / cache_scale_;
+            return QRectF(QPointF(ox_, oy_) - cache_origin_ * ratio,
+                          QSizeF(cache_.size()) * (ratio / cache_.devicePixelRatio()));
+        };
+        /* View changes transform the existing raster. Content edits still redraw
+         * immediately; exhausting the overscan also redraws to avoid blank edges. */
+        if (dirty_ || cache_.isNull() || cache_.devicePixelRatio() != devicePixelRatioF() ||
+            !cacheRect().contains(QRectF(rect()))) renderCache();
+        p.setRenderHint(QPainter::SmoothPixmapTransform, scale_ != cache_scale_);
+        p.drawImage(cacheRect(), cache_);
+    }
     p.setRenderHint(QPainter::Antialiasing);
 
     QColor acc = theme_->accent;
@@ -457,6 +584,7 @@ void Canvas::paintEvent(QPaintEvent *) {
 
 void Canvas::resizeEvent(QResizeEvent *) {
     if (auto_fit_) fit();
+    if (surface_) surface_->setGeometry(rect());
     sheet_->setGeometry(rect());
     dirty_ = true;
 }
@@ -534,12 +662,12 @@ void Canvas::cancelOp() {
     if (op_ == Moving || op_ == Resizing) doc_->endChange();
     op_ = None;
     have_start_ = false;
-    update();
+    updateCanvas();
 }
 
 void Canvas::finishLine() {
     have_start_ = false;
-    update();
+    updateCanvas();
 }
 
 void Canvas::place(QPointF a) {
@@ -683,7 +811,7 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
 
     if (tool_ != Select) {
         toolClick(s, e->modifiers());
-        update();
+        updateCanvas();
         return;
     }
     int hh = -1;
@@ -694,7 +822,7 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
             if (selected_handles_.contains(handle)) selected_handles_.removeAll(handle);
             else selected_handles_ << handle;
             status();
-            update();
+            updateCanvas();
             return;
         }
         if (!selected_handles_.contains(handle)) selected_handles_ = {handle};
@@ -717,7 +845,7 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
             doc_->beginChange();
         }
     }
-    update();
+    updateCanvas();
 }
 
 void Canvas::mouseMoveEvent(QMouseEvent *e) {
@@ -731,7 +859,7 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
         if (ruler_dragged_) {
             ruler_b_ = lg; /* unsnapped, like FidoCadJS */
             ruler_active_ = true;
-            update();
+            updateCanvas();
         }
         status();
         return;
@@ -744,7 +872,7 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
         int anchor = selected_handles_.indexOf(qMakePair(drag_prim_, drag_handle_));
         if (anchor >= 0) moveHandles(s - handle_starts_[anchor]);
         cursor_lg_ = s;
-        update();
+        updateCanvas();
     } else if (op_ == Panning) {
         panBy(e->position() - press_px_);
         press_px_ = e->position();
@@ -757,7 +885,7 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
         }
     }
     status();
-    update();
+    updateCanvas();
 }
 
 void Canvas::mouseReleaseEvent(QMouseEvent *e) {
@@ -771,7 +899,7 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
         op_ = None;
         if (ruler_dragged_) {
             /* leave the measurement on screen until the next press */
-            update();
+            updateCanvas();
             return;
         }
         ruler_active_ = false;
@@ -785,7 +913,7 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
             if (tool_ == Select) selectAt(lg, e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier));
             else toolClick(snap(lg), e->modifiers());
             op_ = None;
-            update();
+            updateCanvas();
         }
         return;
     }
@@ -833,7 +961,7 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
                 setSelection(s2);
             }
         }
-        update();
+        updateCanvas();
         return;
     }
     if (op_ == Drawing) {
@@ -845,7 +973,7 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
             have_start_ = false;
         }
     }
-    update();
+    updateCanvas();
 }
 
 void Canvas::mouseDoubleClickEvent(QMouseEvent *e) {
@@ -873,7 +1001,7 @@ void Canvas::wheelEvent(QWheelEvent *e) {
         return;
     }
     /* Ctrl+scroll zooms; some stacks deliver pinch that way too */
-    double steps = e->angleDelta().y() / 120.0;
+    double steps = !pd.isNull() ? pd.y() / 100.0 : e->angleDelta().y() / 120.0;
     if (steps != 0) zoomBy(std::pow(1.2, steps), e->position());
 }
 
@@ -901,7 +1029,7 @@ bool Canvas::event(QEvent *e) {
 
 void Canvas::leaveEvent(QEvent *) {
     has_cursor_ = false;
-    update();
+    updateCanvas();
 }
 
 /* ---------- keyboard-level actions (bound as QActions by the window) ---------- */
@@ -913,6 +1041,7 @@ void Canvas::keyPressEvent(QKeyEvent *e) {
         switch (e->key()) {
         case Qt::Key_K: toggleCheatsheet(); return;
         case Qt::Key_I:
+            if (shift) { importImage(); return; }
             if (onToggleBar) onToggleBar();
             return;
         case Qt::Key_S: setTool(Select); return;
@@ -940,7 +1069,7 @@ void Canvas::keyPressEvent(QKeyEvent *e) {
         }
     }
     if (e->key() == Qt::Key_Escape) {
-        if (ruler_active_) { ruler_active_ = false; update(); return; }
+        if (ruler_active_) { ruler_active_ = false; updateCanvas(); return; }
         if (tool_ == Line && have_start_) finishLine();
         else if (tool_ != Select) setTool(Select);
         else setSelection({});
@@ -964,7 +1093,7 @@ void Canvas::keyPressEvent(QKeyEvent *e) {
 void Canvas::rotateSelection() {
     if (tool_ == Macro) {
         macro_orient_ = (macro_orient_ + 1) & 3;
-        update();
+        updateCanvas();
         return;
     }
     doc_->rotate(sel_);
@@ -973,7 +1102,7 @@ void Canvas::rotateSelection() {
 void Canvas::mirrorSelection() {
     if (tool_ == Macro) {
         macro_mirror_ = !macro_mirror_;
-        update();
+        updateCanvas();
         return;
     }
     doc_->mirror(sel_);
@@ -1001,7 +1130,33 @@ void Canvas::copySelection() {
 }
 
 void Canvas::paste() {
-    QString text = QApplication::clipboard()->text();
+    const QMimeData *mime = QApplication::clipboard()->mimeData();
+    if (!mime) return;
+    QString text = mime->text();
+    if (!text.trimmed().startsWith("[FIDOCAD]")) {
+        QString error;
+        if (mime->hasUrls()) {
+            doc_->beginChange();
+            QList<int> added;
+            QPointF at = imagePosition();
+            for (const auto &url : mime->urls()) if (url.isLocalFile()) {
+                if (importImageFile(url.toLocalFile(), at, &error)) {
+                    added.append(selection()); at += QPointF(10,10);
+                }
+            }
+            if (!added.isEmpty()) setSelection(added);
+            doc_->endChange();
+            if (!error.isEmpty() && onStatus) onStatus(error);
+            return;
+        }
+        if (mime->hasImage()) {
+            QImage image = qvariant_cast<QImage>(mime->imageData());
+            QByteArray bytes; QBuffer buffer(&bytes); buffer.open(QIODevice::WriteOnly);
+            if (image.save(&buffer, "PNG")) importImageBytes(bytes, imagePosition(), &error);
+            if (!error.isEmpty() && onStatus) onStatus(error);
+            return;
+        }
+    }
     if (text.trimmed().isEmpty()) return;
     doc_->beginChange();
     QList<int> added = doc_->append(text);
@@ -1013,6 +1168,85 @@ void Canvas::paste() {
     doc_->endChange();
     if (tool_ != Select) setTool(Select);
     setSelection(added);
+}
+
+QPointF Canvas::imagePosition() const {
+    QPointF at = snap(has_cursor_ ? cursor_lg_ : toLogical(rect().center()));
+    return QPointF(qMax(0.,at.x()), qMax(0.,at.y()));
+}
+
+bool Canvas::importImageBytes(const QByteArray &bytes, QPointF at, QString *error) {
+    int i = doc_->addImage(bytes, at, layer(), error);
+    if (i < 0) return false;
+    setTool(Select); setSelection({i}); fitIfOutside();
+    if (onStatus) onStatus("Image embedded · drag to move · corner handles resize · P for properties");
+    return true;
+}
+
+bool Canvas::importImageFile(const QString &path, QPointF at, QString *error) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error) *error = "Cannot open image: " + file.errorString();
+        return false;
+    }
+    if (file.size() > FC_IMAGE_MAX_BYTES) {
+        if (error) *error = "Image exceeds 24 MiB.";
+        return false;
+    }
+    return importImageBytes(file.read(FC_IMAGE_MAX_BYTES + 1), at, error);
+}
+
+void Canvas::importImage() {
+    cancelOp();
+    if (form_) form_->cancel();
+    auto *f = new InlineForm(this, "Import image · PNG / JPEG");
+    auto *path = f->addText("File", QString(), "/path/to/image.png");
+    auto *model = new QFileSystemModel(f);
+    model->setRootPath(QString());
+    auto *completer = new QCompleter(model, f); path->setCompleter(completer);
+    const QPointF at = imagePosition();
+    f->onApply = [this,path,at]() -> QString {
+        QString error;
+        return importImageFile(path->text().trimmed(), at, &error) ? QString() : error;
+    };
+    f->onClosed = [this] { form_ = nullptr; };
+    form_ = f; f->popup(rect().center());
+}
+
+void Canvas::dragEnterEvent(QDragEnterEvent *event) {
+    const auto *mime = event->mimeData();
+    if (mime->hasImage()) { event->acceptProposedAction(); return; }
+    for (const auto &url : mime->urls()) {
+        const QString path = url.toLocalFile().toLower();
+        if (url.isLocalFile() && (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".jpeg"))) {
+            event->acceptProposedAction(); return;
+        }
+    }
+}
+
+void Canvas::dropEvent(QDropEvent *event) {
+    if (form_) form_->cancel();
+    const auto *mime = event->mimeData();
+    QPointF at = snap(toLogical(event->position()));
+    at = QPointF(qMax(0.,at.x()), qMax(0.,at.y()));
+    QString error; bool imported = false;
+    doc_->beginChange();
+    if (mime->hasUrls()) {
+        QList<int> added;
+        for (const auto &url : mime->urls()) if (url.isLocalFile()) {
+            if (importImageFile(url.toLocalFile(), at, &error)) {
+                added.append(selection()); imported = true; at += QPointF(10,10);
+            }
+        }
+        if (!added.isEmpty()) setSelection(added);
+    } else if (mime->hasImage()) {
+        QImage image = qvariant_cast<QImage>(mime->imageData());
+        QByteArray bytes; QBuffer buffer(&bytes); buffer.open(QIODevice::WriteOnly);
+        if (image.save(&buffer,"PNG")) imported = importImageBytes(bytes, at, &error);
+    }
+    doc_->endChange();
+    if (!error.isEmpty() && onStatus) onStatus(error);
+    if (imported) event->acceptProposedAction();
 }
 
 void Canvas::nudge(int dx, int dy) {
@@ -1046,7 +1280,7 @@ void Canvas::cycleLayer(int step) {
     settings_->set("layer", QString::number(l));
     if (!sel_.isEmpty()) doc_->setLayer(sel_, l);
     if (onSettingChanged) onSettingChanged("layer");
-    update();
+    updateCanvas();
 }
 
 void Canvas::flipSetting(const QString &key) {

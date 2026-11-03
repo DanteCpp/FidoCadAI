@@ -818,6 +818,49 @@ static void draw_placeholder(Raster *r, const FcPrim *p, uint32_t rgb, float a) 
     }
 }
 
+/* Inverse mapping keeps rotated/scaled images clipped to the viewport. Bilinear
+ * filtering uses premultiplied alpha so transparent edges have no dark halo. */
+static void draw_image(Raster *r, const FcPrim *p, float alpha) {
+    const FcImage *im = p->u.image.bitmap;
+    if (!im || p->u.image.width <= 0 || p->u.image.height <= 0 || alpha <= 0) return;
+    FcPoint corners[4]; fc_image_corners(p, corners);
+    double minx = corners[0].x, maxx = minx, miny = corners[0].y, maxy = miny;
+    for (int i = 1; i < 4; ++i) {
+        minx = fmin(minx, corners[i].x); maxx = fmax(maxx, corners[i].x);
+        miny = fmin(miny, corners[i].y); maxy = fmax(maxy, corners[i].y);
+    }
+    int x0 = mapx(r,minx)-1, x1 = mapx(r,maxx)+1, y0 = mapy(r,miny)-1, y1 = mapy(r,maxy)+1;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 >= r->w) x1 = r->w-1;
+    if (y1 >= r->h) y1 = r->h-1;
+    double a = (p->u.image.rotation % 360) * 0.017453292519943295;
+    double c = cos(a), s = sin(a), m = p->u.image.mirror ? -1 : 1;
+    for (int y = y0; y <= y1; ++y) for (int x = x0; x <= x1; ++x) {
+        double dx = (x + .5 - r->ox) / r->scale - p->u.image.p.x;
+        double dy = (y + .5 - r->oy) / r->scale - p->u.image.p.y;
+        double u = m*(c*dx+s*dy)/p->u.image.width, v = (-s*dx+c*dy)/p->u.image.height;
+        if (u < 0 || v < 0 || u >= 1 || v >= 1) continue;
+        double sx = fmax(0, fmin(im->width-1, u*im->width-.5));
+        double sy = fmax(0, fmin(im->height-1, v*im->height-.5));
+        int ix = (int)sx, iy = (int)sy;
+        double fx = sx-ix, fy = sy-iy, sum[4] = {0};
+        for (int j = 0; j < 2; ++j) for (int i = 0; i < 2; ++i) {
+            int xx = ix+i < im->width ? ix+i : ix;
+            int yy = iy+j < im->height ? iy+j : iy;
+            const uint8_t *src = im->rgba + ((size_t)yy*im->width+xx)*4;
+            double weight = (i ? fx : 1-fx)*(j ? fy : 1-fy)*src[3]/255.;
+            sum[3] += weight;
+            for (int k = 0; k < 3; ++k) sum[k] += weight*src[k];
+        }
+        if (sum[3] > 0) {
+            uint32_t rgb = (uint32_t)(sum[0]/sum[3]+.5) << 16 |
+                           (uint32_t)(sum[1]/sum[3]+.5) << 8 | (uint32_t)(sum[2]/sum[3]+.5);
+            put_px(r,x,y,rgb,(float)(sum[3]*alpha*p->u.image.opacity));
+        }
+    }
+}
+
 static void draw_prim(Raster *r, const FcDrawing *d, const FcPrim *p) {
     r->dash_phase = 0;
     uint32_t rgb;
@@ -832,6 +875,9 @@ static void draw_prim(Raster *r, const FcDrawing *d, const FcPrim *p) {
     if (lwc < 1) lwc = 1;
     dash = p->ext.dash;
     switch (p->kind) {
+    case FC_IMAGE:
+        draw_image(r, p, a);
+        break;
     case FC_LINE:
         line_aa(r, mapx(r, p->u.line.a.x), mapy(r, p->u.line.a.y), mapx(r, p->u.line.b.x),
                 mapy(r, p->u.line.b.y), rgb, a, lw, dash);

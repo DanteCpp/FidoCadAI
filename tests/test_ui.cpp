@@ -434,7 +434,12 @@ static void test_view_and_ruler_shortcuts(QApplication &app) {
     CHECK(e.c->toPixel({0, 0}) - origin == QPointF(12, -7));
     const double beforeCtrlScroll = scale();
     e.wheel(anchor, {0, 10}, {0, 120}, Qt::ControlModifier);
-    CHECK(std::abs(scale() / beforeCtrlScroll - 1.2) < 1e-6);
+    CHECK(std::abs(scale() / beforeCtrlScroll - std::pow(1.2, 0.1)) < 1e-6);
+    const double beforePixelOnly = scale();
+    const QPointF beforeAnchor = e.c->toPixel(anchor);
+    e.wheel(anchor, {0, 1}, {}, Qt::ControlModifier);
+    CHECK(std::abs(scale() / beforePixelOnly - std::pow(1.2, 0.01)) < 1e-6);
+    CHECK((e.c->toPixel(anchor) - beforeAnchor).manhattanLength() < 1);
     e.key(Qt::Key_Space);
     for (Qt::Key tool : {Qt::Key_S, Qt::Key_L, Qt::Key_B, Qt::Key_E, Qt::Key_J, Qt::Key_T}) {
         e.key(tool);
@@ -594,6 +599,31 @@ static void test_final_pointer_position(QApplication &app) {
     e.expectPrim(0, "LI 20 30 75 45 0");
 }
 
+static void test_view_cache(QApplication &app) {
+    Editor e(app, "[FIDOCAD]\nLI 20 20 100 80 0\nEV 40 30 70 60 0\n");
+    e.c->grab(); // populate the initial raster
+    const QByteArray original = e.doc.fcd();
+    e.wheel({60, 50}, {23, -17}, {});
+    e.wheel({60, 50}, {0, 35}, {}, Qt::ControlModifier);
+    QTest::qWait(160);
+    const QImage settled = e.c->grab().toImage();
+    e.c->refresh();
+    CHECK(e.c->grab().toImage() == settled);
+    // A large pan must fill newly exposed canvas even before the idle redraw.
+    e.wheel({60, 50}, {900, -700}, {});
+    const QImage largePan = e.c->grab().toImage();
+    e.c->refresh();
+    CHECK(e.c->grab().toImage() == largePan);
+    // Settings changes during a gesture invalidate the cached preview at once.
+    e.wheel({60, 50}, {-20, 10}, {});
+    e.settings.set("show_grid", "false");
+    e.c->refresh();
+    const QImage changed = e.c->grab().toImage();
+    QTest::qWait(160);
+    CHECK(e.c->grab().toImage() == changed);
+    CHECK(e.doc.fcd() == original);
+}
+
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
     app.setQuitOnLastWindowClosed(false);
@@ -608,6 +638,7 @@ int main(int argc, char **argv) {
     test_key_sheet(app);
     test_label_handle_gestures(app);
     test_native_gestures(app);
+    test_view_cache(app);
     printf("ui e2e: %d passed, %d failed\n", passed, failed);
     return failed ? 1 : 0;
 }

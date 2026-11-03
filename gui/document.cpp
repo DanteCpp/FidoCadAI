@@ -279,6 +279,20 @@ QList<int> Document::append(const QString &text) {
     return out;
 }
 
+int Document::addImage(const QByteArray &bytes, QPointF at, int layer, QString *error) {
+    FcDrawing temp; fc_drawing_init(&temp);
+    int index = fc_drawing_add_image(&temp, bytes.constData(), (size_t)bytes.size(),
+                                    qMax(0.,at.x()), qMax(0.,at.y()), 100, 0, layer);
+    if (index < 0) {
+        if (error) *error = "Cannot read image. Use PNG or JPEG (up to 24 MiB, 16 megapixels and 8192 pixels per side).";
+        fc_drawing_free(&temp); return -1;
+    }
+    char *text = fc_prim_fcd(&temp.prims[index]);
+    QList<int> added = append(QString::fromUtf8(text ? text : ""));
+    free(text); fc_drawing_free(&temp);
+    return added.isEmpty() ? -1 : added.front();
+}
+
 void Document::remove(QList<int> idx) {
     idx = sortedUnique(idx, d_.nprims);
     if (idx.isEmpty()) return;
@@ -338,7 +352,7 @@ bool Document::replace(int i, const QString &text) {
 
 bool Document::setText(int i, int which, const QString &text) {
     if (i < 0 || i >= d_.nprims || which < 0 || which > 2) return false;
-    if ((which == 0) != (d_.prims[i].kind == FC_TEXT)) return false;
+    if (d_.prims[i].kind == FC_IMAGE || (which == 0) != (d_.prims[i].kind == FC_TEXT)) return false;
     checkpoint();
     QByteArray t = text.toUtf8();
     fc_prim_set_text(&d_, i, which, t.constData());

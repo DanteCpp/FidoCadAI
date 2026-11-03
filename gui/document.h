@@ -51,6 +51,7 @@ public:
     /* edit: each call is one undo step and fires onChanged */
     void setFcd(const QByteArray &fcd);
     QList<int> append(const QString &fcd); /* returns new indices */
+    int addImage(const QByteArray &bytes, QPointF at, int layer, QString *error = nullptr);
     void remove(QList<int> idx);
     void translate(const QList<int> &idx, double dx, double dy);
     void rotate(const QList<int> &idx);  /* 90 deg clockwise about the selection centre */

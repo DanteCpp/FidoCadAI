@@ -64,4 +64,25 @@ FIDO_NO_STDLIB=1 "$fcai" config | grep -qx 'stdlib = 0'
 FIDO_NO_STDLIB=0 "$fcai" config | grep -qx 'stdlib = 1'
 FIDO_SCALE=4 "$fcai" --scale 2 --no-tex config | grep -qx 'scale = 2'
 if "$fcai" config --out 2>/dev/null; then exit 1; fi
+# Embed a native rendered PNG and retain it after deleting its source.
+"$fcai" render "$task_tmp/line.fcd" --width 20 --height 10 -o "$task_tmp/source.png"
+"$fcai" image "$task_tmp/line.fcd" --from "$task_tmp/source.png" --at 30 50 --width 12.5 --layer 2 -o "$task_tmp/image.fcd"
+grep -q '^FJC IMAGE 30 50 12.5 .* 0 0 1 2 ' "$task_tmp/image.fcd"
+"$fcai" image "$task_tmp/line.fcd" --from "$task_tmp/source.png" --at 30 50 --height 15 -o "$task_tmp/height.fcd"
+"$fcai" json "$task_tmp/height.fcd" | grep -q '"height":15'
+for invalid in '--width 0' '--height nan' '--no-extensions'; do
+    # Intentional splitting: each case is a flag and optional value.
+    if "$fcai" image "$task_tmp/line.fcd" --from "$task_tmp/source.png" --at 0 0 $invalid -o "$task_tmp/rejected.fcd" 2>/dev/null; then exit 1; fi
+    test ! -e "$task_tmp/rejected.fcd"
+done
+if "$fcai" image "$task_tmp/line.fcd" --from "$task_tmp/line.fcd" --at 0 0 -o "$task_tmp/rejected.fcd" 2>/dev/null; then exit 1; fi
+test ! -e "$task_tmp/rejected.fcd"
+rm "$task_tmp/source.png"
+"$fcai" validate "$task_tmp/image.fcd" >/dev/null
+"$fcai" render "$task_tmp/image.fcd" -o "$task_tmp/embedded.png"
+"$fcai" edit move "$task_tmp/image.fcd" --index 1 --by 5 10 -o "$task_tmp/image-moved.fcd"
+grep -q '^FJC IMAGE 35 60 ' "$task_tmp/image-moved.fcd"
+"$fcai" diff "$task_tmp/image.fcd" "$task_tmp/image-moved.fcd" | grep -q 'IMAGE'
+"$fcai" --no-extensions emit "$task_tmp/image.fcd" > "$task_tmp/plain.fcd"
+! grep -q 'IMAGE' "$task_tmp/plain.fcd"
 printf 'CLI feedback tools passed\n'

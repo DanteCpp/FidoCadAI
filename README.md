@@ -76,12 +76,25 @@ The same lines used for circuits can also describe a face. This portrait is made
 
 FidoCadAI runs on Linux and macOS with a coding agent such as Pi, Codex or Claude Code. Give your agent this repository and ask it to install FidoCadAI, read the included skill and open a drawing. Building requires a C11 compiler, Make and Qt6 for the drawing window; the [installer](scripts/install.sh) and [agent instructions](share/skills/fidocad/SKILL.md) cover setup and use.
 
+The desktop canvas uses Qt's OpenGL paint engine for vector geometry, grid,
+overlays, and image textures. Labels (including TeX) are prepared as transparent
+textures using the core's font metrics. Panning and zooming transform the retained
+scene without rasterizing the whole viewport. Building the GUI requires the Qt6
+OpenGL Widgets module as well as Widgets (on Debian/Ubuntu, `libqt6opengl6-dev`
+in addition to `qt6-base-dev`). Headless runs use the CPU renderer; set
+`FCAI_RENDERER=software` to select it explicitly on a desktop. PNG/PPM exports
+continue to use the core renderer.
+
 A first request can be as simple as “Draw an inverting buck-boost converter.” Once the drawing is open, select something you want to change and continue the conversation.
 
 ## Tests
 
-Run `make test` for the core, CLI, session, and GUI suites. With Qt6 Widgets and
+Run `make test` for the core, CLI, session, and GUI suites. With Qt6 Widgets, OpenGL Widgets and
 Qt6 Test installed, `make test-gui` runs the GUI suites alone, offscreen.
+`make test-gpu` requires a desktop display and checks the actual OpenGL canvas,
+including framebuffer pixels, pan/zoom, edit invalidation, and inline editing.
+It prints the GL renderer reported by the driver; a software GL driver such as
+llvmpipe does not provide hardware acceleration.
 
 The UI end-to-end suite sends mouse and keyboard events through the application
 window, letting Qt route them to the canvas, symbol picker, properties fields,
@@ -98,6 +111,28 @@ compositor or physical input device.
 * **Core & GUI:** Licensed under [GPLv3](LICENSE).
 * **Reference Projects:** [FidoCadJ](https://github.com/DarwinNE/FidoCadJ) (Java) by Davide Bucci and [FidoCadJS](https://github.com/DarwinNE/FidoCadJ) (TypeScript).
 * **Rasterizer & Fonts:** Vendors [stb](https://github.com/nothings/stb) (`stb_truetype`, `stb_image_write`), [mimeTeX](vendor/mimetex/README.md) (GPLv3+) for native LaTeX math, and [Liberation Fonts](https://github.com/liberationfonts/liberation-fonts) (SIL Open Font License 1.1).
+
+### Embedded pictures
+
+Import PNG/JPEG pictures with **Shift+I** and enter a file path, drop image files
+onto the canvas, or paste an image with **Ctrl+V**. Pictures are embedded in the
+`.fcd` file, so the original image file is no longer needed. Select a picture to
+move it, resize it with its corner handles, rotate or mirror it, or press **P**
+to edit its dimensions, rotation, opacity and layer. Undo/redo and copy/paste
+include pictures.
+
+The CLI can embed pictures too (omitting one dimension preserves aspect ratio;
+omitting both gives a width of 100 drawing units):
+
+```sh
+fcai image sketch.fcd --from photo.png --at 20 30 --width 100 -o illustrated.fcd
+fcai render illustrated.fcd -o illustrated.png
+```
+
+PNG transparency and layer opacity are respected in the editor and rendered
+output. Imports allow up to 24 MiB encoded, 16 megapixels decoded, and 8192 pixels
+per side. Pictures use the `FJC IMAGE` extension; older readers may ignore them,
+and `--no-extensions` output omits them.
 
 Agents can focus the live canvas on a rectangle in drawing coordinates:
 
